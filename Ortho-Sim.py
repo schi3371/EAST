@@ -1,9 +1,9 @@
 import os
-import sys  # Add sys import for PyQt compatibility
-import math  # Add math import for torque calculations
+import sys
+import queue
+from datetime import datetime
+from pathlib import Path
 
-# Import the Timer from the threading module
-from threading import Timer
 import concurrent.futures
 
 import pywinstyles
@@ -14,25 +14,24 @@ from CTkMessagebox import CTkMessagebox
 
 from customtkinter import set_default_color_theme
 
-import serial
 import csv
 import threading
 import time
-from serial.tools.list_ports import comports
 import ctypes
 import webbrowser
 
 import PIL
 from PIL import Image
 
-# Import Phidget
-from Phidget22.Phidget import *
-from Phidget22.Devices.VoltageRatioInput import *
-import time
+from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
 
-# Import Odrive
 import odrive
-from odrive.enums import *
+from odrive.enums import (
+    AXIS_STATE_CLOSED_LOOP_CONTROL,
+    AXIS_STATE_IDLE,
+    CONTROL_MODE_POSITION_CONTROL,
+    INPUT_MODE_TRAP_TRAJ,
+)
 
 # Import PyQtGraph for plotting
 import pyqtgraph as pg
@@ -40,21 +39,40 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
 
-# Phidget calibration parameters
-# gain = -8133.8  # Example value
-gain = 25014.7939492599
+from east_core import (
+    CSV_COLUMNS,
+    afo_acceleration_to_odrive_turns_s2,
+    afo_degrees_to_odrive_turns,
+    afo_speed_to_odrive_turns_s,
+    calculate_load,
+    calculate_torque_nm,
+    create_run_paths,
+    load_tester_config,
+    make_run_metadata,
+    motion_timeout_seconds,
+    odrive_turns_to_afo_degrees,
+    validate_test_parameters,
+    write_json_atomic,
+)
+
+# Runtime tare state. Fixed calibration values are stored in tester_config.json.
 offset = 0
-newton_to_grams = 1000
 calibrated = False
 
 # Variable to track if plot window is open
 plot_window_open = False
 # Global variables for plot data
 angle_data = []
-torque_data = []  # Changed from weight_data to torque_data
+torque_data = []
 plot_window = None
 plot_curve = None
 plot_timer = None
+
+
+def resource_path(relative_path):
+    """Resolve bundled assets and source-tree assets without relying on the CWD."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / relative_path
 
 class MovingAverageFilter:
     def __init__(self, window_size):
@@ -71,18 +89,35 @@ class MovingAverageFilter:
             return None
         return sum(self.values) / len(self.values)
 
+
+class TestStopped(Exception):
+    """Raised inside a motion wait when an operator or acquisition fault stops a run."""
+
 class MyInterface:
     def __init__(self, master):
         self.master = master
         self.master.title("OrthoSim")
 
-        # Threadding flags
-        self.odrive_ctrl = False
-        self.monitor_odrive_conn = False
+        self.system_config = load_tester_config(resource_path("tester_config.json"))
+        self.odrive_controller = None
+        self.voltage_ratio_input = None
+        self.run_parameters = None
+        self.run_metadata = None
+        self.metadata_file_name = None
+        self.strain_file_name = None
+        self.test_started_monotonic = None
+        self.test_stop_event = threading.Event()
+        self.finalize_lock = threading.Lock()
+        self.run_finalized = True
+        self.motion_phase = "idle"
+        self.commanded_odrive_velocity = 0.0
+        self.ui_message_queue = queue.Queue()
+        self.plot_data_queue = queue.Queue()
+
         self.strain_test_active = False
         self.strain_data_buffer = []
-        self.starting_position = 0  # Initialize starting position
-        self.current_cycle = 0  # Add cycle counter
+        self.starting_position = 0
+        self.current_cycle = 0
         
         # Add continuous movement flags
         self.continuous_movement_active = False
@@ -92,41 +127,26 @@ class MyInterface:
         # Add manual mode flag
         self.manual_mode = ctk.BooleanVar(value=False)
         
-        # Frequency tracking variables
-        self.last_sample_time = 0
         self.sample_count = 0
-        self.frequency_buffer = []
-        self.frequency_update_interval = 1.0  # Update frequency display every 1 second
-        self.last_logged_time = 0  # Track the last logged timestamp
-        self.min_time_between_samples = 0.008  # Minimum 8ms between samples (125Hz)
-        
-        # Deduplication variables
-        self.last_voltage_ratio = None
-        self.last_angle = None
-        self.last_weight = None
         
         # Moving average filters for both plot and data logging
-        self.angle_filter = MovingAverageFilter(window_size=30)  # Increased window size for smoother data
-        self.weight_filter = MovingAverageFilter(window_size=30)  # Increased window size for smoother data
-        self.torque_filter = MovingAverageFilter(window_size=30)  # Increased window size for smoother data
+        filter_window = self.system_config["acquisition"]["moving_average_window_samples"]
+        self.angle_filter = MovingAverageFilter(window_size=filter_window)
+        self.weight_filter = MovingAverageFilter(window_size=filter_window)
+        self.torque_filter = MovingAverageFilter(window_size=filter_window)
 
         set_default_color_theme("dark-blue")
         ctk.set_appearance_mode("dark")
 
         self.setup_ui()
-
-        # Your existing initialization code here
-        self.moving_avg_filter = MovingAverageFilter(window_size=8)  # Create an instance of MovingAverageFilter
-
-        # Old Threading flags
-        self.logging_active = False  # Flag to indicate whether logging is active
-        self.live_update_flag = True  # Flag to control live update thread
+        self.master.after(50, self._drain_ui_queues)
 
         # Bind window events
         self.master.bind('<Configure>', self.on_window_move)
         self.master.bind('<Unmap>', self.on_window_minimize)
         self.master.bind('<Map>', self.on_window_restore)
         self.master.bind('<FocusIn>', self.on_window_restore)  # Add binding for focus events
+        self.master.bind('<Escape>', lambda _event: self.stop_logging())
 
     def on_window_move(self, event):
         """Update plot window position when main window moves"""
@@ -151,7 +171,7 @@ class MyInterface:
 
     def setup_ui(self):
         
-        image = PIL.Image.open("images/background_image.png")
+        image = PIL.Image.open(resource_path("images/background_image.png"))
         background_image = ctk.CTkImage(image, size=(1242, 786))
 
         # Create a bg label
@@ -166,7 +186,11 @@ class MyInterface:
         IMAGE_WIDTH = 255*1.5
         IMAGE_HEIGHT = 68.2*1.5
 
-        image = ctk.CTkImage(light_image=Image.open("images/SpinSync_logo.png"), dark_image=Image.open("images/SpinSync_logo.png"), size=(IMAGE_WIDTH , IMAGE_HEIGHT))
+        image = ctk.CTkImage(
+            light_image=Image.open(resource_path("images/SpinSync_logo.png")),
+            dark_image=Image.open(resource_path("images/SpinSync_logo.png")),
+            size=(IMAGE_WIDTH, IMAGE_HEIGHT),
+        )
         
 
         # Create a label to display the image
@@ -177,7 +201,7 @@ class MyInterface:
         # Create frame for input ranges
         inputs_frame = ctk.CTkFrame(self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
         pywinstyles.set_opacity(inputs_frame, color="#000001") # just add this line
-        inputs_frame.place(x=45, y=150+20-70)  # Moved up by adjusting y position
+        inputs_frame.place(x=45, y=95)
 
         # Create input fields in a grid form for input values 
 
@@ -201,12 +225,30 @@ class MyInterface:
         self.max_angle_input.grid(row=3, column=1, padx=5, pady=5)
         self.max_angle_input.bind('<KeyRelease>', self.validate_angle_input)
 
+        self.operator_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Operator")
+        self.operator_input.grid(row=4, column=0, padx=5, pady=5)
+
+        self.afo_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="AFO ID")
+        self.afo_id_input.grid(row=4, column=1, padx=5, pady=5)
+
+        self.fixture_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Fixture ID")
+        self.fixture_id_input.grid(row=5, column=0, padx=5, pady=5)
+
+        self.calibration_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Calibration ID")
+        self.calibration_id_input.grid(row=5, column=1, padx=5, pady=5)
+
+        self.status_label = ctk.CTkLabel(
+            inputs_frame, text="DISCONNECTED", text_color="#ff6b6b",
+            font=("Arial", 12, "bold"), anchor="w"
+        )
+        self.status_label.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(0, 2))
+
         # Create four buttons stacked vertically
         button_names = ["Connect", "Start", "Stop", "Reset"]
         commands = [self.connect_system, self.start_strain_test, self.stop_logging, self.reset_display]
         button_colour = ["#28a745", "#007bff", "#dc3545", "#cc8400"]
         start_button_position_x = 50
-        start_button_position_y = 310+20-100  # Moved up by adjusting y position
+        start_button_position_y = 320
 
         button_positions_y = [start_button_position_y+0, start_button_position_y+37, start_button_position_y+74, start_button_position_y+111]
         self.buttons = []
@@ -219,7 +261,7 @@ class MyInterface:
 
         # Add manual control frame below the buttons
         manual_control_frame = ctk.CTkFrame(self.master, fg_color="#000001", bg_color="#000001")
-        manual_control_frame.place(x=45, y=start_button_position_y+160)  # Position below the buttons
+        manual_control_frame.place(x=45, y=465)
         pywinstyles.set_opacity(manual_control_frame, color="#000001") # just add this line
 
         # Add step angle input with validation
@@ -242,14 +284,14 @@ class MyInterface:
         self.left_arrow = ctk.CTkButton(arrow_frame, text="←", width=50, height=50,
                                       command=self.move_motor_left)
         self.left_arrow.grid(row=0, column=0, padx=5, pady=5)
-        # Add button release binding
+        self.left_arrow.bind('<ButtonPress-1>', lambda _event: self.begin_continuous_movement("left"))
         self.left_arrow.bind('<ButtonRelease-1>', lambda e: self.stop_continuous_movement())
 
         # Add right arrow button
         self.right_arrow = ctk.CTkButton(arrow_frame, text="→", width=50, height=50,
                                        command=self.move_motor_right)
         self.right_arrow.grid(row=0, column=1, padx=5, pady=5)
-        # Add button release binding
+        self.right_arrow.bind('<ButtonPress-1>', lambda _event: self.begin_continuous_movement("right"))
         self.right_arrow.bind('<ButtonRelease-1>', lambda e: self.stop_continuous_movement())
 
         # Add continuous/step mode toggle next to arrows
@@ -271,10 +313,10 @@ class MyInterface:
         # Create frame for the bottom section (terminal)
         terminal_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
         pywinstyles.set_opacity(terminal_frame, color="#000001") # just add this line
-        terminal_frame.place(x=35, y=452+20+35)  # Moved up by adjusting y position
+        terminal_frame.place(x=35, y=575)
 
         # Terminal (text output)
-        self.terminal = ctk.CTkTextbox(terminal_frame, height=180, width=350, corner_radius=20)
+        self.terminal = ctk.CTkTextbox(terminal_frame, height=125, width=350, corner_radius=20)
         self.terminal.pack(pady=10, padx=10)
 
 
@@ -300,7 +342,7 @@ class MyInterface:
         space_label.grid(row=0, column=2, sticky="e", padx=454, pady=5)  # Adjust padx as needed
 
         # Version label
-        version_label = ctk.CTkLabel(footer_frame, text="Version 1.0", anchor="e", font=("Arial", 12, "bold"), text_color="white")
+        version_label = ctk.CTkLabel(footer_frame, text="Version 1.1.0", anchor="e", font=("Arial", 12, "bold"), text_color="white")
         version_label.grid(row=0, column=2, sticky="e", padx=10, pady=5)  # Adjust padx as needed
 
         # Handle window closing event
@@ -311,12 +353,6 @@ class MyInterface:
             
     def change_theme(self, choice):
         ctk.set_appearance_mode(choice)
-
-    def onVoltageRatioChange(self, voltageRatio):
-        # Unused function - can be removed
-        self.readings = []
-        self.readings.append(voltageRatio)
-        print("Reading: " + str(voltageRatio))   
 
     def find_odrive_with_timeout(serial_number, timeout=5):
         start_time = time.time()
@@ -331,308 +367,187 @@ class MyInterface:
         return None
 
 
-    def connect_system(self): 
+    def get_axis(self):
+        if self.odrive_controller is None:
+            raise RuntimeError("ODrive is not connected")
+        axis_number = int(self.system_config["hardware"]["odrive_axis"])
+        return getattr(self.odrive_controller, f"axis{axis_number}")
+
+    def set_status(self, text, colour="#ffffff"):
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_message_queue.put(("status", text, colour))
+            return
+        self.status_label.configure(text=text, text_color=colour)
+
+    def collect_test_parameters(self):
+        return validate_test_parameters({
+            "file_prefix": self.file_name_input.get(),
+            "operator": self.operator_input.get(),
+            "afo_id": self.afo_id_input.get(),
+            "fixture_id": self.fixture_id_input.get(),
+            "calibration_id": self.calibration_id_input.get(),
+            "cycles": self.cycles_input.get(),
+            "speed_deg_s": self.speed_input.get(),
+            "acceleration_deg_s2": self.acceleration_input.get(),
+            "min_angle_deg": self.min_angle_input.get(),
+            "max_angle_deg": self.max_angle_input.get(),
+        }, self.system_config)
+
+    def set_test_inputs_state(self, state):
+        for entry in (
+            self.file_name_input, self.cycles_input, self.speed_input,
+            self.acceleration_input, self.min_angle_input, self.max_angle_input,
+            self.operator_input, self.afo_id_input, self.fixture_id_input,
+            self.calibration_id_input,
+        ):
+            entry.configure(state=state)
+
+    def configure_trajectory(self, speed_deg_s, acceleration_deg_s2):
+        axis = self.get_axis()
+        motion = self.system_config["motion"]
+        trajectory_velocity = afo_speed_to_odrive_turns_s(speed_deg_s, self.system_config)
+        trajectory_acceleration = afo_acceleration_to_odrive_turns_s2(
+            acceleration_deg_s2, self.system_config
+        )
+        controller_limit = trajectory_velocity * float(motion["controller_velocity_safety_multiplier"])
+        axis.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
+        axis.controller.config.input_mode = INPUT_MODE_TRAP_TRAJ
+        axis.trap_traj.config.vel_limit = trajectory_velocity
+        axis.trap_traj.config.accel_limit = trajectory_acceleration
+        axis.trap_traj.config.decel_limit = trajectory_acceleration
+        axis.controller.config.vel_limit = controller_limit
+        self.commanded_odrive_velocity = trajectory_velocity
+
+    def odrive_configuration_snapshot(self):
+        axis = self.get_axis()
+        def read(value, default=None):
+            try:
+                return value()
+            except Exception:
+                return default
+        return {
+            "axis": int(self.system_config["hardware"]["odrive_axis"]),
+            "axis_active_errors": read(lambda: int(axis.active_errors)),
+            "control_mode": read(lambda: int(axis.controller.config.control_mode)),
+            "input_mode": read(lambda: int(axis.controller.config.input_mode)),
+            "controller_velocity_limit_turns_s": read(lambda: float(axis.controller.config.vel_limit)),
+            "trajectory_velocity_limit_turns_s": read(lambda: float(axis.trap_traj.config.vel_limit)),
+            "trajectory_acceleration_limit_turns_s2": read(lambda: float(axis.trap_traj.config.accel_limit)),
+            "trajectory_deceleration_limit_turns_s2": read(lambda: float(axis.trap_traj.config.decel_limit)),
+            "position_gain": read(lambda: float(axis.controller.config.pos_gain)),
+            "velocity_gain": read(lambda: float(axis.controller.config.vel_gain)),
+            "velocity_integrator_gain": read(lambda: float(axis.controller.config.vel_integrator_gain)),
+        }
+
+    def safe_idle_motor(self, reason=None):
+        self.stop_continuous_movement()
+        if self.odrive_controller is None:
+            return
+        try:
+            self.get_axis().requested_state = AXIS_STATE_IDLE
+            self.motion_phase = "idle"
+            if reason:
+                self.update_terminal(f"Motor set to idle: {reason}\n")
+        except Exception as exc:
+            self.update_terminal(f"Unable to confirm ODrive idle state: {exc}\n")
+
+    def enter_closed_loop(self):
+        axis = self.get_axis()
+        axis.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if int(axis.active_errors):
+                raise RuntimeError(f"ODrive active errors entering closed loop: {int(axis.active_errors)}")
+            if int(axis.current_state) == int(AXIS_STATE_CLOSED_LOOP_CONTROL):
+                return axis
+            time.sleep(0.02)
+        raise TimeoutError("ODrive did not enter closed-loop control within 2 seconds")
+
+    def connect_system(self):
+        if self.strain_test_active:
+            self.update_terminal("Cannot reconnect while a strain test is active.\n")
+            return
         self.clear_terminal()
-        self.live_update_flag = False  # Reset live update flag
+        if self.odrive_controller is not None:
+            self.safe_idle_motor("reconnect")
+        self.buttons[1].configure(state="disabled")
+        self.set_status("CONNECTING", "#ffd166")
+        serial_number = self.system_config["hardware"]["odrive_serial_number"]
+        timeout_duration = self.system_config["hardware"]["odrive_connection_timeout_s"]
 
         try:
-            # Retrieve the file name as a string (no checks needed here)
-            file_name = self.file_name_input.get()
-            
-            if not self.manual_mode.get():
-                # Only validate inputs if not in manual mode
-                try:
-                    # Attempt to parse cycles, speed, acceleration, min_angle, and max_angle as float or int
-                    self.odrive_cycles = float(self.cycles_input.get())
-                    self.odrive_speed = float(self.speed_input.get())
-                    odrive_accel = float(self.acceleration_input.get())
-                    min_angle = float(self.min_angle_input.get())
-                    max_angle = float(self.max_angle_input.get())
-
-                    # Optional: Convert to int if they should be whole numbers
-                    self.odrive_cycles = int(self.cycles_input.get())
-                    
-                    print("All inputs are valid.")
-
-                except ValueError:
-                    print("Invalid input detected. Please enter numeric values for cycles, speed, acceleration, min angle, and max angle.")
-                    CTkMessagebox(title="Input Error", message="Please enter numeric values for cycles, speed, acceleration, min angle, and max angle.")
-                    return
-            else:
-                # Use default values for manual mode
-                self.odrive_speed = 10.0
-                odrive_accel = 10.0
-                # Set default angle limits for manual mode
-                min_angle = 0.0
-                max_angle = 0.0
-                self.update_terminal("Manual mode enabled - using default speed and acceleration values\n")
-            
-            odrive_serial_number = "3943355F3231"
-            timeout_duration = 5
-
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(MyInterface.find_odrive_with_timeout, odrive_serial_number, timeout_duration)
-                self.odrive_controller = future.result(timeout=timeout_duration)
+                future = executor.submit(
+                    MyInterface.find_odrive_with_timeout, serial_number, timeout_duration
+                )
+                self.odrive_controller = future.result(timeout=timeout_duration + 0.5)
+            if self.odrive_controller is None:
+                raise TimeoutError(f"ODrive {serial_number} was not found")
 
-                if self.odrive_controller is None:
-                    self.update_terminal("No serial connection established. Please connect ODrive.\n")
-                    # Ensure Start button remains disabled if connection fails
-                    self.buttons[1].configure(state="disabled")
-                    return
-                
-                # Clear ODrive S1 Errors if any
-                self.odrive_controller.clear_errors()
-                self.update_terminal("ODrive connected successfully.\n")
-                
-                # Enable Start button now that system is connected (only if not in manual mode)
-                if not self.manual_mode.get():
-                    self.buttons[1].configure(state="normal")  # Index 1 is the "Start" button
-                
-                # Set control mode only if odrive_controller is connected
-                if self.odrive_controller:
-                    self.odrive_controller.axis0.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
-                    
-                    # Enable manual control buttons if in manual mode
-                    if self.manual_mode.get():
-                        self.toggle_manual_mode()
-                    else:
-                        # Enable manual control buttons
-                        self.left_arrow.configure(state="normal")
-                        self.right_arrow.configure(state="normal")
-                        self.step_angle_input.configure(state="normal")
-                        self.mode_toggle.configure(state="normal")
-                    
-                    # Store initial position for reference
-                    self.starting_position = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-                    
-                    # Set angle limits (only used in non-manual mode)
-                    if not self.manual_mode.get():
-                        self.angle_limits = [-min_angle, max_angle]  # Arm will oscillate between these angles
+            axis = self.get_axis()
+            prior_errors = int(axis.active_errors)
+            if prior_errors:
+                self.update_terminal(f"ODrive active errors before clear: {prior_errors}\n")
+            self.odrive_controller.clear_errors()
 
-        except concurrent.futures.TimeoutError:
-            self.update_terminal(f"Connection attempt timed out after {timeout_duration} seconds.\n")
-            self.update_terminal(f"Unable to establish connection to Odrive.\n")
-            # Ensure Start button remains disabled if connection times out
-            self.buttons[1].configure(state="disabled")
-            return
-        except Exception as e:
-            self.update_terminal(f"Error connecting to ODrive: {e}\n")
-            # Ensure Start button remains disabled if connection fails
-            self.buttons[1].configure(state="disabled")
-            return
+            controller = self.system_config["controller"]
+            if controller["apply_controller_gains"]:
+                axis.controller.config.pos_gain = controller["position_gain"]
+                axis.controller.config.vel_gain = controller["velocity_gain"]
+                axis.controller.config.vel_integrator_gain = controller["velocity_integrator_gain"]
 
-        # Check if the connection is successful
-        if odrive is not None:
-            self.update_terminal(f"Connected to ODrive S1\nSerial Number: {odrive_serial_number}\n")
-            # print(f"Connected to ODrive S1 with serial number {odrive_serial_number}")
+            motion = self.system_config["motion"]
+            self.configure_trajectory(
+                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+            )
+            self.starting_position = axis.pos_vel_mapper.pos_rel
+            self.safe_idle_motor()
 
-        # Set control mode to position control and input mode to trajectory control
-        self.odrive_controller.axis0.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
-        self.odrive_controller.axis0.controller.config.input_mode = INPUT_MODE_TRAP_TRAJ
-
-        # Tune motor parameters for low-speed operation with gearbox
-        try:
-            # # Increase current limits for smoother low-speed operation
-            # self.odrive_controller.axis0.controller.config.dc_max_positive_current = 120.0  # Increase current limit (adjust based on your motor)
-            # self.odrive_controller.axis0.motor.calibration_current = 5.0  # Calibration current
-            
-            # Adjust controller gains for better low-speed performance
-            self.odrive_controller.axis0.controller.config.pos_gain = 26.600000381469727  # Position gain (default is often too high)
-            self.odrive_controller.axis0.controller.config.vel_gain = 0.8105000257492065  # Velocity gain
-            self.odrive_controller.axis0.controller.config.vel_integrator_gain = 2.385293960571289  # Velocity integrator gain
-            
-            # Set trajectory control parameters
-            self.odrive_controller.axis0.trap_traj.config.vel_limit = 500  # Velocity limit in turns/s
-            # Convert acceleration from degrees/second² to turns/second² using velocity factor
-            accel_turns_per_sec2 = odrive_accel / 2.455  # Use velocity factor for acceleration
-            self.odrive_controller.axis0.trap_traj.config.accel_limit = accel_turns_per_sec2  # Acceleration limit in turns/s^2
-            self.odrive_controller.axis0.trap_traj.config.decel_limit = accel_turns_per_sec2  # Deceleration limit in turns/s^2
-            
-            # # Add smoothing to reduce jitter
-            # self.odrive_controller.axis0.trap_traj.config.A_per_css = 0.5  # Acceleration smoothing (0.0 to 1.0)
-            
-            # Adjust velocity ramp rate for smoother acceleration
-            self.odrive_controller.axis0.controller.config.vel_ramp_rate = 1.0  # Velocity ramp rate in turns/s^2
-            
-            self.update_terminal("Motor parameters tuned for low-speed operation with gearbox\n")
-        except Exception as e:
-            self.update_terminal(f"Error tuning motor parameters: {e}\n")
-            self.update_terminal("Continuing with default parameters\n")
-        
-        # Activate closed-loop control
-        self.odrive_controller.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
-        time.sleep(0.1)  # Give some time for the state transition
-
-        # Angle Limits (in turns)
-        self.angle_limits = [-min_angle, max_angle]  # Arm will oscillate between these angles
+            self.update_terminal(
+                f"Connected to ODrive S1\nSerial number: {serial_number}\n"
+                f"Axis errors after clear: {int(axis.active_errors)}\n"
+            )
+            self.set_status("CONNECTED / IDLE", "#4dd4ac")
+            if self.manual_mode.get():
+                self.toggle_manual_mode()
+            else:
+                self.buttons[1].configure(state="normal")
+        except (concurrent.futures.TimeoutError, TimeoutError) as exc:
+            self.odrive_controller = None
+            self.update_terminal(f"Connection timed out: {exc}\n")
+            self.set_status("DISCONNECTED", "#ff6b6b")
+        except Exception as exc:
+            self.safe_idle_motor("connection/configuration error")
+            self.odrive_controller = None
+            self.update_terminal(f"Error connecting to ODrive: {exc}\n")
+            self.set_status("ERROR", "#ff6b6b")
 
     def disconnect_odrive(self):
         """Disconnect from ODrive safely"""
         try:
-            if hasattr(self, 'odrive_controller') and self.odrive_controller:
-                # Set ODrive State to Idle
-                self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
+            if self.odrive_controller:
+                self.safe_idle_motor("disconnect")
+                self.odrive_controller = None
+                self.buttons[1].configure(state="disabled")
+                self.set_status("DISCONNECTED", "#ff6b6b")
                 self.update_terminal("ODrive disconnected and set to idle state\n")
         except Exception as e:
             self.update_terminal(f"Error disconnecting ODrive: {e}\n")
 
-    def monitor_odrive_connection():
-        # Unused function - can be removed
-        while odrive is not None:
-            time.sleep(0.5)
-        else:
-            print("disconnected")
-            return  
-                
-
-    def odrive_control(self):
-        """Control the ODrive Motor"""
-        try:
-            # Activate closed-loop control
-            self.odrive_controller.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
-            time.sleep(0.1)  # Give some time for the state transition
-            
-            # Get the current position when the motor is disabled - this is our "zero" reference point
-            starting_position = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-            self.update_terminal(f"Starting position (zero point): {starting_position} turns\n")
-            
-            # Both min and max angles should be treated as absolute values
-            # Min angle is negative from current position, max angle is positive
-            min_angle_degrees = float(self.min_angle_input.get())
-            max_angle_degrees = float(self.max_angle_input.get())
-            
-            # Convert degrees to turns (corrected factor based on actual measurements)
-            min_angle_turns = min_angle_degrees / 2.055  # Fine-tuned factor
-            max_angle_turns = max_angle_degrees / 2.055  # Fine-tuned factor
-            
-            # Calculate absolute positions by adding to starting position
-            # Min is negative from starting position, max is positive
-            absolute_min_angle = starting_position - min_angle_turns  # Subtract for min angle
-            absolute_max_angle = starting_position + max_angle_turns  # Add for max angle
-            
-            self.update_terminal(f"Min angle: -{min_angle_degrees} degrees from start ({absolute_min_angle} turns)\n")
-            self.update_terminal(f"Max angle: +{max_angle_degrees} degrees from start ({absolute_max_angle} turns)\n")
-            
-            cycles = self.odrive_cycles
-            self.update_terminal(f"Starting control cycle at {self.odrive_speed} deg/sec\n")
-            
-            # Convert degrees/second to turns/second using velocity-specific conversion factor
-            velocity = self.odrive_speed / 2.455  # Velocity factor: 20°/s input → 23.9°/s actual
-            
-            # Set velocity limit
-            self.odrive_controller.axis0.controller.config.vel_limit = velocity
-            
-            for i in range(cycles):
-                # Move to minimum angle limit (negative direction from starting position)
-                self.odrive_controller.axis0.controller.input_pos = absolute_min_angle
-                self.update_terminal(f"Cycle {i+1}/{cycles}: Moving to Min Angle (-{min_angle_degrees} degrees)\n")
-                while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - absolute_min_angle) > 0.01:
-                    time.sleep(0.01)
-                
-                # Move to maximum angle limit (positive direction from starting position)
-                self.odrive_controller.axis0.controller.input_pos = absolute_max_angle
-                self.update_terminal(f"Cycle {i+1}/{cycles}: Moving to Max Angle (+{max_angle_degrees} degrees)\n")
-                while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - absolute_max_angle) > 0.01:
-                    time.sleep(0.01)
-                
-                if not self.odrive_ctrl:
-                    break
-            
-            # Return to starting position (zero point) only after all cycles are complete
-            self.odrive_controller.axis0.controller.input_pos = starting_position
-            self.update_terminal("Returning to zero position (starting point)\n")
-            
-            # Wait for the motor to reach the zero position
-            while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - starting_position) > 0.01:
-                time.sleep(0.01)
-            
-            self.update_terminal("Successfully returned to zero position\n")
-            time.sleep(1)
-            
-            # Set ODrive State to Idle
-            self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
-            self.update_terminal("Odrive Idle State\n")
-        except Exception as e:
-            self.update_terminal(f"Error: {e}\n")
-
     def stop_logging(self):
-        self.odrive_ctrl = False
-        
-        # Stop strain test if active
-        if self.strain_test_active:
-            self.stop_strain_test()
-            self.update_terminal("Strain test stopped\n")
-        
-        # Return motor to starting position if connected and NOT in manual mode
-        if self.odrive_controller and not self.manual_mode.get():
-            try:
-                # Return to starting position if we have one
-                if hasattr(self, 'starting_position'):
-                    self.update_terminal("Returning motor to starting position...\n")
-                    self.odrive_controller.axis0.controller.input_pos = self.starting_position
-                    
-                    # Wait for the motor to reach the starting position
-                    timeout_counter = 0
-                    while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - self.starting_position) > 0.01:
-                        time.sleep(0.01)
-                        timeout_counter += 1
-                        if timeout_counter > 500:  # 5 second timeout
-                            self.update_terminal("Timeout waiting for motor to return to start position\n")
-                            break
-                    
-                    self.update_terminal("Motor returned to starting position\n")
-                
-                # Set ODrive State to Idle
-                self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
-                self.update_terminal("Motor disengaged and returned to idle state\n")
-                
-                # Disable manual control buttons and Start button
-                self.left_arrow.configure(state="disabled")
-                self.right_arrow.configure(state="disabled")
-                self.step_angle_input.configure(state="disabled")
-                self.mode_toggle.configure(state="disabled")
-                self.buttons[1].configure(state="disabled")  # Disable Start button
-                
-            except Exception as e:
-                self.update_terminal(f"Error during motor stop sequence: {e}\n")
-        elif self.odrive_controller and self.manual_mode.get():
-            # In manual mode, stop any continuous movement and disengage motor
-            try:
-                # Stop any continuous movement
-                self.stop_continuous_movement()
-                
-                # Set ODrive State to Idle to disengage motor
-                self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
-                self.update_terminal("Motor disengaged in manual mode\n")
-                
-                # Disable manual control buttons
-                self.left_arrow.configure(state="disabled")
-                self.right_arrow.configure(state="disabled")
-                self.step_angle_input.configure(state="disabled")
-                self.mode_toggle.configure(state="disabled")
-                
-            except Exception as e:
-                self.update_terminal(f"Error during manual mode stop: {e}\n")
-
-        # Stop any active logging
-        if self.logging_active == True:
-            self.logging_active = False
-            
-        # Always re-enable input fields when stopping
-        self.live_update_flag = True
-        self.speed_input.configure(state="normal")
-        self.acceleration_input.configure(state="normal")
-        self.min_angle_input.configure(state="normal")
-        self.max_angle_input.configure(state="normal")
-        self.cycles_input.configure(state="normal")
-        self.file_name_input.configure(state="normal")
-        
-        self.update_terminal("All operations stopped and inputs re-enabled\n")
+        was_active = self.strain_test_active
+        self.test_stop_event.set()
+        self.strain_test_active = False
+        self.safe_idle_motor("operator stop")
+        self.set_status("STOPPED / IDLE", "#ffd166")
+        if was_active:
+            self.update_terminal("Test stop requested; the data file will be finalized as aborted.\n")
+        else:
+            self.update_terminal("Motor is idle.\n")
             
 
 
     def reset_display(self):
-        self.live_update_flag = False  # Reset live update flag
         # Stop logging
         self.stop_logging()
         
@@ -643,14 +558,13 @@ class MyInterface:
         # Clear terminal
         self.clear_terminal()
 
-        self.live_update_flag = True  # Reset live update flag
-
-        self.file_name_input.delete(0,100)
-        self.cycles_input.delete(0,100)
-        self.speed_input.delete(0,100)
-        self.acceleration_input.delete(0,100)
-        self.min_angle_input.delete(0,100)
-        self.max_angle_input.delete(0,100)
+        for entry in (
+            self.file_name_input, self.cycles_input, self.speed_input,
+            self.acceleration_input, self.min_angle_input, self.max_angle_input,
+            self.operator_input, self.afo_id_input, self.fixture_id_input,
+            self.calibration_id_input,
+        ):
+            entry.delete(0, ctk.END)
 
         self.file_name_input.configure(placeholder_text="File Name (Prefix)")
         self.cycles_input.configure(placeholder_text="Cycles")
@@ -659,25 +573,10 @@ class MyInterface:
         self.min_angle_input.configure(placeholder_text="Min Angle (Degrees)")
         self.max_angle_input.configure(placeholder_text="Max Angle (Degrees)")
 
-        self.file_name_input.configure(state= "normal")
-        self.cycles_input.configure(state= "normal")
-        self.speed_input.configure(state= "normal")
-        self.acceleration_input.configure(state= "normal")
-        self.min_angle_input.configure(state= "normal")
-        self.max_angle_input.configure(state= "normal")
-        self.file_name_input.configure(state="normal")
-        
-        # Disable Start button since we're resetting/disconnecting
-        self.buttons[1].configure(state="disabled")  # Index 1 is the "Start" button
-        
-        # Disengage the motor if connected
-        if self.odrive_controller:
-            try:
-                # Set ODrive State to Idle
-                self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
-                self.update_terminal("Motor disengaged and returned to idle state\n")
-            except Exception as e:
-                self.update_terminal(f"Error disengaging motor: {e}\n")
+        self.safe_idle_motor("reset")
+        if self.odrive_controller and not self.manual_mode.get():
+            self.buttons[1].configure(state="normal")
+            self.set_status("CONNECTED / IDLE", "#4dd4ac")
 
 
     def clear_terminal(self):
@@ -686,8 +585,40 @@ class MyInterface:
 
 
     def update_terminal(self, message):
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_message_queue.put(("terminal", message))
+            return
         self.terminal.insert(ctk.END, message)
         self.terminal.see(ctk.END)  # Scroll to the end of the text
+
+    def _drain_ui_queues(self):
+        try:
+            while True:
+                item = self.ui_message_queue.get_nowait()
+                if item[0] == "terminal":
+                    self.update_terminal(item[1])
+                elif item[0] == "status":
+                    self.set_status(item[1], item[2])
+                elif item[0] == "inputs":
+                    self.set_test_inputs_state(item[1])
+                elif item[0] == "run_buttons":
+                    self.buttons[0].configure(state=item[1])
+                    self.buttons[1].configure(state=item[1] if self.odrive_controller else "disabled")
+                    self.manual_mode_toggle.configure(state=item[1])
+        except queue.Empty:
+            pass
+
+        try:
+            while True:
+                angle, torque = self.plot_data_queue.get_nowait()
+                self.update_plot_data(angle, torque)
+        except queue.Empty:
+            pass
+
+        try:
+            self.master.after(50, self._drain_ui_queues)
+        except tk.TclError:
+            pass
 
     def on_close(self):
         """Handle application closing"""
@@ -731,6 +662,11 @@ class MyInterface:
                 # Stop any active processes first
                 if self.strain_test_active:
                     self.stop_logging()
+
+                for thread_name in ("strain_thread", "data_collection_thread"):
+                    thread = getattr(self, thread_name, None)
+                    if thread and thread.is_alive() and thread is not threading.current_thread():
+                        thread.join(timeout=2.0)
                 
                 # Close the plot window safely
                 self.close_plot_window()
@@ -739,14 +675,14 @@ class MyInterface:
                 if hasattr(self, 'odrive_controller') and self.odrive_controller:
                     try:
                         self.disconnect_odrive()
-                    except:
+                    except Exception:
                         pass  # Ignore any errors during ODrive disconnection
                 
                 # Disconnect from Phidget if connected
                 if hasattr(self, 'voltage_ratio_input') and self.voltage_ratio_input:
                     try:
                         self.voltage_ratio_input.close()
-                    except:
+                    except Exception:
                         pass
                 
                 # Destroy the main window
@@ -773,69 +709,140 @@ class MyInterface:
                 plot_window.setYRange(0, 1)  # Reset y-axis
                 plot_window.enableAutoRange()  # Enable auto-ranging for both axes
 
-        if not self.odrive_controller:
+        if self.odrive_controller is None:
             self.update_terminal("No serial connection established. Please connect ODrive first.\n")
+            return
+
+        if self.manual_mode.get():
+            self.update_terminal("Disable manual mode before starting a strain test.\n")
             return
         
         if self.strain_test_active:
             self.update_terminal("Strain test already active\n")
             return
         
-        # Initialize Phidget
         try:
+            parameters = self.collect_test_parameters()
+        except ValueError as exc:
+            CTkMessagebox(title="Input Error", message=str(exc))
+            return
+
+        confirmation = CTkMessagebox(
+            title="Confirm Test",
+            message=(
+                f"AFO: {parameters.afo_id}\n"
+                f"Range: -{parameters.min_angle_deg:g} to +{parameters.max_angle_deg:g} deg\n"
+                f"Speed: {parameters.commanded_afo_speed_deg_s:g} deg/s\n"
+                f"Cycles: {parameters.cycles}\n\n"
+                "Confirm the fixture is clear and the physical E-stop is accessible."
+            ),
+            icon="question", option_1="Cancel", option_2="Start"
+        )
+        if confirmation.get() != "Start":
+            return
+
+        self.set_test_inputs_state("disabled")
+        self.buttons[0].configure(state="disabled")
+        self.buttons[1].configure(state="disabled")
+        self.manual_mode_toggle.configure(state="disabled")
+        self.run_metadata = None
+        self.metadata_file_name = None
+        self.strain_file_name = None
+        self.test_started_monotonic = time.monotonic()
+        try:
+            axis = self.get_axis()
+            if int(axis.active_errors):
+                raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
+
             self.voltage_ratio_input = VoltageRatioInput()
-            self.voltage_ratio_input.setChannel(1)
-            
-            # Open and wait for attachment
-            self.voltage_ratio_input.openWaitForAttachment(5000)
-            
-            # Configure settings after successful attachment
-            self.voltage_ratio_input.setDataInterval(8)  # 8ms = 125Hz
-            self.voltage_ratio_input.setDataRate(125)  # Set data rate to match interval
-            
-            # Tare the scale
+            hardware = self.system_config["hardware"]
+            if hardware["phidget_serial_number"] is not None:
+                self.voltage_ratio_input.setDeviceSerialNumber(hardware["phidget_serial_number"])
+            self.voltage_ratio_input.setChannel(hardware["phidget_channel"])
+            self.voltage_ratio_input.openWaitForAttachment(hardware["phidget_attachment_timeout_ms"])
+            self.voltage_ratio_input.setDataInterval(
+                self.system_config["acquisition"]["sample_interval_ms"]
+            )
             self.tare_scale()
-            
-            # Generate file name based on current date and time
-            current_datetime = time.strftime("(%d-%m-%Y)_(%H-%M-%S)")
-            folder_path = os.path.join(os.getcwd(), "OrthoSim Logs")
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-            self.strain_file_name = os.path.join(folder_path, f"{self.file_name_input.get()}_strain_data_{current_datetime}.csv")
-            
-            # Initialize CSV file with headers including raw and moving average columns
-            with open(self.strain_file_name, mode="w", newline="") as file:
+
+            self.run_parameters = parameters
+            self.configure_trajectory(
+                parameters.commanded_afo_speed_deg_s,
+                parameters.commanded_afo_acceleration_deg_s2,
+            )
+            self.starting_position = axis.pos_vel_mapper.pos_rel
+            app_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+            csv_path, metadata_path = create_run_paths(parameters, self.system_config, app_base)
+            self.strain_file_name = str(csv_path)
+            self.metadata_file_name = str(metadata_path)
+            with open(self.strain_file_name, mode="x", newline="", encoding="utf-8") as file:
                 writer = csv.writer(file)
-                writer.writerow([
-                    "Timestamp", "Cycle", 
-                    "Raw AFO Angle (Degrees)", "Moving Avg AFO Angle (Degrees)",
-                    "Raw Weight (grams)", "Moving Avg Weight (grams)",
-                    "Raw Torque (Nm)", "Moving Avg Torque (Nm)",
-                    "Velocity (turns/s)", "Position (degrees)"
-                ])
-            
-            # Initialize data buffer and plot update counter
+                writer.writerow(CSV_COLUMNS)
+
+            self.run_metadata = make_run_metadata(
+                parameters, self.system_config, offset, csv_path,
+                self.odrive_configuration_snapshot(),
+            )
+            try:
+                self.run_metadata["hardware"]["connected_phidget_serial_number"] = (
+                    self.voltage_ratio_input.getDeviceSerialNumber()
+                )
+            except Exception:
+                self.run_metadata["hardware"]["connected_phidget_serial_number"] = "unavailable"
+            write_json_atomic(metadata_path, self.run_metadata)
+            self.run_finalized = False
+
             self.strain_data_buffer = []
             self.plot_update_counter = 0
-            # self.plot_update_interval = 1  # Update plot every sample
-            self.plot_update_interval = 5  # Update plot every 5 samples
-            
-            
-            # Start the strain test thread
+            self.plot_update_interval = 5
+            self.sample_count = 0
+            self.current_cycle = 0
+            self.completed_cycles = 0
+            self.motion_phase = "preparing"
+            filter_window = self.system_config["acquisition"]["moving_average_window_samples"]
+            self.angle_filter = MovingAverageFilter(filter_window)
+            self.weight_filter = MovingAverageFilter(filter_window)
+            self.torque_filter = MovingAverageFilter(filter_window)
+            self.test_started_monotonic = time.monotonic()
+            self.test_stop_event.clear()
+            self.acquisition_error = None
             self.strain_test_active = True
-            self.strain_thread = threading.Thread(target=self.strain_test_control)
-            self.strain_thread.start()
-            
-            # Start the data collection thread
-            self.data_collection_thread = threading.Thread(target=self.continuous_strain_read)
-            self.data_collection_thread.daemon = True
+            self.data_collection_thread = threading.Thread(
+                target=self.continuous_strain_read, name="strain-acquisition"
+            )
             self.data_collection_thread.start()
-            
-            self.update_terminal("Strain test started\n")
-            
-        except PhidgetException as e:
-            self.update_terminal(f"Error initializing strain test: {str(e)}\n")
+            self.strain_thread = threading.Thread(
+                target=self.strain_test_control, name="strain-motion"
+            )
+            self.strain_thread.start()
+            self.set_status("TEST RUNNING", "#4dd4ac")
+            self.update_terminal(
+                f"Strain test started. Data: {self.strain_file_name}\n"
+                f"Trajectory speed: {self.commanded_odrive_velocity:.6f} turns/s\n"
+            )
+        except Exception as exc:
             self.strain_test_active = False
+            self.test_stop_event.set()
+            self.safe_idle_motor("test initialization error")
+            data_thread = getattr(self, "data_collection_thread", None)
+            if data_thread and data_thread.is_alive():
+                data_thread.join(timeout=2.0)
+            if self.voltage_ratio_input is not None:
+                try:
+                    self.voltage_ratio_input.close()
+                except Exception:
+                    pass
+                self.voltage_ratio_input = None
+            self.set_status("ERROR / IDLE", "#ff6b6b")
+            self.update_terminal(f"Error initializing strain test: {exc}\n")
+            self.set_test_inputs_state("normal")
+            self.buttons[0].configure(state="normal")
+            self.manual_mode_toggle.configure(state="normal")
+            if self.odrive_controller:
+                self.buttons[1].configure(state="normal")
+            if self.run_metadata is not None and not self.run_finalized:
+                self.completed_cycles = 0
+                self.finalize_run("error", str(exc))
     
 
 
@@ -844,14 +851,13 @@ class MyInterface:
         if not calibrated:
             return 0.0
         voltage_ratio = self.voltage_ratio_input.getVoltageRatio()
-        weight_newtons = (voltage_ratio - offset) * gain
-        weight_grams = weight_newtons * newton_to_grams
+        _, weight_grams, _ = calculate_load(voltage_ratio, offset, self.system_config)
         return weight_grams
 
     def tare_scale(self):
         """Tare the Phidget scale"""
         global offset, calibrated
-        num_samples = 16
+        num_samples = int(self.system_config["load_cell"]["tare_samples"])
         
         self.update_terminal("Taring scale...\n")
         offset = 0  # Reset offset before taking new samples
@@ -862,39 +868,31 @@ class MyInterface:
         offset /= num_samples
         calibrated = True
         self.update_terminal(f"Scale tared. Offset: {offset}\n")
-        time.sleep(1)
         current_weight = self.get_current_weight()
         self.update_terminal(f"Current weight: {current_weight:.2f} grams\n")
-        time.sleep(1)
 
 
     
     def log_strain_data(self, voltage_ratio, cycle):
         """Log strain data to buffer"""
-        global calibrated, offset, gain, newton_to_grams
+        global calibrated, offset
         
         try:
             if calibrated:
-                current_time = time.time()
-                
-                # Get position data
-                if hasattr(self, 'starting_position'):
-                    current_pos_turns = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-                    relative_angle = (current_pos_turns - self.starting_position) * 2.055  # Fine-tuned factor
-                    velocity = self.odrive_controller.axis0.pos_vel_mapper.vel
-                else:
-                    relative_angle = 0
-                    velocity = 0
-                
-                # Calculate raw weight
-                raw_weight_newtons = (voltage_ratio - offset) * gain
-                raw_weight_grams = raw_weight_newtons * newton_to_grams
-                
-                # Calculate raw torque using the provided formula
-                distance_m = 0.4792  # Distance in meters
-                force_n = raw_weight_grams * 9.81 / 1000  # Convert grams to kg, then to Newtons
-                angle_component = (-0.0328 * (relative_angle**2)) - (1.0013 * relative_angle) + 90.272
-                raw_torque_nm = force_n * distance_m * math.sin(math.radians(angle_component))
+                wall_time = datetime.now().astimezone()
+                monotonic_time = time.monotonic()
+                axis = self.get_axis()
+                current_pos_turns = axis.pos_vel_mapper.pos_rel
+                relative_turns = current_pos_turns - self.starting_position
+                relative_angle = odrive_turns_to_afo_degrees(relative_turns, self.system_config)
+                velocity_turns_s = axis.pos_vel_mapper.vel
+                afo_velocity_deg_s = odrive_turns_to_afo_degrees(
+                    velocity_turns_s, self.system_config
+                )
+                mass_kg, raw_weight_grams, force_n = calculate_load(
+                    voltage_ratio, offset, self.system_config
+                )
+                raw_torque_nm = calculate_torque_nm(force_n, relative_angle, self.system_config)
                 
                 # Apply moving average filter to angle, weight, and torque
                 self.angle_filter.add_value(relative_angle)
@@ -906,47 +904,35 @@ class MyInterface:
                 avg_weight = self.weight_filter.get_smoothed_value()
                 avg_torque = self.torque_filter.get_smoothed_value()
                 
-                # Check if we have valid smoothed values
                 if avg_angle is None or avg_weight is None or avg_torque is None:
                     return
-                
-                # Check for duplicates (using averaged values)
-                if (self.last_angle == avg_angle and 
-                    self.last_weight == avg_weight):
-                    return  # Skip this sample if it's a duplicate
-                
-                # Check if enough time has passed since the last logged sample
-                if current_time - self.last_logged_time < self.min_time_between_samples:
-                    return  # Skip this sample if it's too soon after the last one
-                
-                # Create timestamp with microsecond precision
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S") + ".{:03d}".format(int((current_time % 1) * 1000))
-                
-                # Add data row to buffer with both raw and moving average values
-                # Order matches CSV headers:
-                # "Timestamp", "Cycle", "Raw AFO Angle", "Moving Avg AFO Angle", "Raw Weight", "Moving Avg Weight", "Raw Torque", "Moving Avg Torque", "Velocity", "Position"
+                elapsed = monotonic_time - self.test_started_monotonic
                 data_row = [
-                    timestamp,                    # Timestamp
-                    self.current_cycle,           # Cycle
-                    f"{relative_angle:.4f}",      # Raw AFO Angle
-                    f"{avg_angle:.4f}",           # Moving Avg AFO Angle
-                    f"{raw_weight_grams:.2f}",    # Raw Weight
-                    f"{avg_weight:.2f}",          # Moving Avg Weight
-                    f"{raw_torque_nm:.4f}",       # Raw Torque
-                    f"{avg_torque:.4f}",          # Moving Avg Torque
-                    f"{velocity:.2f}",            # Velocity
-                    f"{avg_angle:.4f}"            # Position
+                    wall_time.isoformat(timespec="milliseconds"),
+                    f"{elapsed:.6f}",
+                    self.sample_count,
+                    cycle,
+                    self.motion_phase,
+                    f"{self.run_parameters.commanded_afo_speed_deg_s:.6f}",
+                    f"{self.commanded_odrive_velocity:.6f}",
+                    f"{current_pos_turns:.8f}",
+                    f"{relative_angle:.6f}",
+                    f"{avg_angle:.6f}",
+                    f"{voltage_ratio:.12g}",
+                    f"{offset:.12g}",
+                    f"{mass_kg:.9f}",
+                    f"{raw_weight_grams:.6f}",
+                    f"{avg_weight:.6f}",
+                    f"{force_n:.6f}",
+                    f"{raw_torque_nm:.6f}",
+                    f"{avg_torque:.6f}",
+                    f"{velocity_turns_s:.8f}",
+                    f"{afo_velocity_deg_s:.6f}",
+                    int(axis.active_errors),
                 ]
                 self.strain_data_buffer.append(data_row)
-                
-                # Update the last logged time and values
-                self.last_logged_time = current_time
-                self.last_angle = avg_angle
-                self.last_weight = avg_weight
-                
-                # Write buffer to file if it reaches a certain size
-                if len(self.strain_data_buffer) >= 100:
-                    with open(self.strain_file_name, mode="a", newline="") as file:
+                if len(self.strain_data_buffer) >= self.system_config["acquisition"]["csv_flush_rows"]:
+                    with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
                         writer = csv.writer(file)
                         writer.writerows(self.strain_data_buffer)
                     self.strain_data_buffer = []
@@ -955,14 +941,13 @@ class MyInterface:
                 if plot_window_open:
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:
-                        self.update_plot_data(relative_angle, avg_torque)  # Changed from weight to torque
-                        # self.update_plot_data(avg_angle, avg_torque)  # Changed from weight to torque
+                        self.plot_data_queue.put((relative_angle, avg_torque))
                         self.plot_update_counter = 0
                 
                 # Update terminal less frequently (every 20th sample)
-                if self.sample_count % 20 == 0:
+                if self.sample_count % 125 == 0:
                     self.update_terminal(f"Raw Weight: {raw_weight_grams:.2f} g, Avg Weight: {avg_weight:.2f} g\n")
-                    self.update_terminal(f"Raw Angle: {relative_angle:.4f}°, Avg Angle: {avg_angle:.4f}°\n")
+                    self.update_terminal(f"Raw Angle: {relative_angle:.4f} deg, Avg Angle: {avg_angle:.4f} deg\n")
                     self.update_terminal(f"Raw Torque: {raw_torque_nm:.4f} Nm, Avg Torque: {avg_torque:.4f} Nm\n")
                 
                 self.sample_count += 1
@@ -975,147 +960,140 @@ class MyInterface:
     
     def strain_test_control(self):
         """Control the motor and log strain data during the test"""
+        final_status = "aborted"
+        final_error = None
         try:
-            # Activate closed-loop control
-            self.odrive_controller.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
-            time.sleep(0.1)  # Give some time for the state transition
-            
-            # Get the current position when the motor is disabled - this is our "zero" reference point
-            self.starting_position = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
+            if self.test_stop_event.is_set():
+                raise TestStopped()
+            axis = self.enter_closed_loop()
             self.update_terminal(f"Starting position (zero point): {self.starting_position} turns\n")
-            
-            # Both min and max angles should be treated as absolute values
-            # Min angle is negative from current position, max angle is positive
-            min_angle_degrees = float(self.min_angle_input.get())
-            max_angle_degrees = float(self.max_angle_input.get())
-            
-            # Convert degrees to turns (corrected factor based on actual measurements)
-            min_angle_turns = min_angle_degrees / 2.055  # Fine-tuned factor: 15°input → 14.905°actual
-            max_angle_turns = max_angle_degrees / 2.055  # Fine-tuned factor: 15°input → 14.905°actual
-            
-            # Calculate absolute positions by adding to starting position
-            # Min is negative from starting position, max angle is positive
-            absolute_min_angle = self.starting_position - min_angle_turns  # Subtract for min angle
-            absolute_max_angle = self.starting_position + max_angle_turns  # Add for max angle
-            
-            self.update_terminal(f"Min angle: -{min_angle_degrees} degrees from start ({absolute_min_angle} turns)\n")
-            self.update_terminal(f"Max angle: +{max_angle_degrees} degrees from start ({absolute_max_angle} turns)\n")
-            
-            cycles = self.odrive_cycles
-            self.update_terminal(f"Starting strain test at {self.odrive_speed} deg/sec\n")
-            
-            # Convert degrees/second to turns/second using velocity-specific conversion factor
-            velocity = self.odrive_speed / 2.455  # Velocity factor: 20°/s input → 23.9°/s actual
-            
-            # Set velocity limit
-            self.odrive_controller.axis0.controller.config.vel_limit = velocity
-            
-            # Start a thread to continuously read strain data
-            strain_read_thread = threading.Thread(target=self.continuous_strain_read)
-            strain_read_thread.daemon = True  # Make thread daemon so it exits when main thread exits
-            strain_read_thread.start()
-            
-            # Initialize cycle tracking variables
-            self.current_cycle = 0
-            last_position = self.starting_position
-            crossed_zero = False
-            
-            # Start at zero position
-            self.odrive_controller.axis0.controller.input_pos = self.starting_position
-            self.update_terminal("Starting at zero position\n")
-            while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - self.starting_position) > 0.01:
-                time.sleep(0.01)
-            
-            for i in range(cycles):
-                # Move to maximum angle limit (positive direction from starting position)
-                self.odrive_controller.axis0.controller.input_pos = absolute_max_angle
-                self.update_terminal(f"Moving to Max Angle (+{max_angle_degrees} degrees)\n")
-                while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - absolute_max_angle) > 0.01:
-                    current_position = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-                    # Check for zero crossing while moving towards max
-                    if not crossed_zero and last_position < self.starting_position and current_position >= self.starting_position:
-                        crossed_zero = True
-                        self.current_cycle += 1
-                        self.update_terminal(f"Completed cycle {self.current_cycle}/{cycles}\n")
-                    last_position = current_position
-                    time.sleep(0.01)
-                
-                # Move to minimum angle limit (negative direction from starting position)
-                self.odrive_controller.axis0.controller.input_pos = absolute_min_angle
-                self.update_terminal(f"Moving to Min Angle (-{min_angle_degrees} degrees)\n")
-                while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - absolute_min_angle) > 0.01:
-                    current_position = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-                    # Check for zero crossing while moving towards min
-                    if not crossed_zero and last_position > self.starting_position and current_position <= self.starting_position:
-                        crossed_zero = True
-                        self.current_cycle += 1
-                        self.update_terminal(f"Completed cycle {self.current_cycle}/{cycles}\n")
-                    last_position = current_position
-                    time.sleep(0.01)
-                
-                # Reset the zero crossing flag for the next cycle
-                crossed_zero = False
-                
-                if not self.strain_test_active:
-                    break
-            
-            # Return to starting position (zero point) only after all cycles are complete
-            self.odrive_controller.axis0.controller.input_pos = self.starting_position
-            self.update_terminal("Returning to zero position (starting point)\n")
-            
-            # Wait for the motor to reach the zero position
-            while abs(self.odrive_controller.axis0.pos_vel_mapper.pos_rel - self.starting_position) > 0.01:
-                time.sleep(0.01)
-            
-            self.update_terminal("Successfully returned to zero position\n")
-            time.sleep(1)
-            
-            # Stop the strain reading thread
-            self.strain_test_active = False
-            strain_read_thread.join(timeout=1.0)
-            
-            # Set ODrive State to Idle
-            self.odrive_controller.axis0.requested_state = AXIS_STATE_IDLE
-            self.update_terminal("Odrive Idle State\n")
-            
-            # Write all buffered data to the CSV file
-            with open(self.strain_file_name, mode="a", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerows(self.strain_data_buffer)
-            
+            parameters = self.run_parameters
+            min_turns = afo_degrees_to_odrive_turns(parameters.min_angle_deg, self.system_config)
+            max_turns = afo_degrees_to_odrive_turns(parameters.max_angle_deg, self.system_config)
+            absolute_min = self.starting_position - min_turns
+            absolute_max = self.starting_position + max_turns
+
+            self.update_terminal(
+                f"Command range: -{parameters.min_angle_deg:g} to +{parameters.max_angle_deg:g} deg\n"
+                f"Commanded AFO speed: {parameters.commanded_afo_speed_deg_s:g} deg/s\n"
+            )
+            for cycle in range(1, parameters.cycles + 1):
+                self.current_cycle = cycle
+                self.command_position_and_wait(
+                    absolute_max, "moving_to_max", parameters.max_angle_deg + parameters.min_angle_deg
+                )
+                self.command_position_and_wait(
+                    absolute_min, "moving_to_min", parameters.max_angle_deg + parameters.min_angle_deg
+                )
+                self.completed_cycles = cycle
+                self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
+
+            self.current_cycle = parameters.cycles
+            self.command_position_and_wait(
+                self.starting_position, "returning_to_zero", parameters.min_angle_deg
+            )
+            final_status = "completed"
             self.update_terminal(f"Strain test completed. Data saved to {self.strain_file_name}\n")
-            
-        except Exception as e:
-            self.update_terminal(f"Error during strain test: {e}\n")
+        except TestStopped:
+            final_status = "aborted"
+            final_error = self.acquisition_error or "operator stop"
+            self.update_terminal("Strain test aborted.\n")
+        except Exception as exc:
+            final_status = "error"
+            final_error = str(exc)
+            self.update_terminal(f"Error during strain test: {exc}\n")
         finally:
             self.strain_test_active = False
+            self.test_stop_event.set()
+            if hasattr(self, "data_collection_thread"):
+                self.data_collection_thread.join(timeout=2.0)
+            self.safe_idle_motor(final_status)
             try:
-                self.voltage_ratio_input.close()
-            except:
+                if self.voltage_ratio_input is not None:
+                    self.voltage_ratio_input.close()
+            except Exception:
                 pass
+            self.voltage_ratio_input = None
+            self.finalize_run(final_status, final_error)
+
+    def command_position_and_wait(self, target_turns, phase, nominal_distance_deg):
+        if self.test_stop_event.is_set():
+            raise TestStopped()
+        axis = self.get_axis()
+        self.motion_phase = phase
+        axis.controller.input_pos = target_turns
+        timeout_s = motion_timeout_seconds(
+            nominal_distance_deg,
+            self.run_parameters.commanded_afo_speed_deg_s,
+            self.system_config,
+        )
+        tolerance_turns = afo_degrees_to_odrive_turns(
+            self.system_config["motion"]["position_tolerance_deg"], self.system_config
+        )
+        deadline = time.monotonic() + timeout_s
+        while abs(axis.pos_vel_mapper.pos_rel - target_turns) > tolerance_turns:
+            if self.test_stop_event.is_set():
+                raise TestStopped()
+            active_errors = int(axis.active_errors)
+            if active_errors:
+                raise RuntimeError(f"ODrive active errors during {phase}: {active_errors}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Motion timed out during {phase} after {timeout_s:.1f} s")
+            time.sleep(0.01)
     
     def continuous_strain_read(self):
         """Continuously read strain data while the test is running"""
+        interval_s = self.system_config["acquisition"]["sample_interval_ms"] / 1000.0
+        next_sample = time.monotonic()
         try:
-            while self.strain_test_active:
+            while not self.test_stop_event.is_set():
                 voltage_ratio = self.voltage_ratio_input.getVoltageRatio()
-                # Pass the current cycle number from the strain test control
                 self.log_strain_data(voltage_ratio, self.current_cycle)
-                time.sleep(0.008)  # 8ms delay for 125Hz data rate
-                
-        except Exception as e:
-            self.update_terminal(f"Error reading strain data: {e}\n")
+                next_sample += interval_s
+                time.sleep(max(0.0, next_sample - time.monotonic()))
+        except Exception as exc:
+            self.acquisition_error = f"data acquisition error: {exc}"
+            self.update_terminal(f"Error reading strain data: {exc}\n")
+            self.test_stop_event.set()
         finally:
-            # Write any remaining data in buffer
             if self.strain_data_buffer:
-                with open(self.strain_file_name, mode="a", newline="") as file:
+                with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
                     writer = csv.writer(file)
                     writer.writerows(self.strain_data_buffer)
                 self.strain_data_buffer = []
 
+    def finalize_run(self, status, error=None):
+        with self.finalize_lock:
+            if self.run_finalized or self.run_metadata is None:
+                return
+            self.run_finalized = True
+            self.run_metadata["run_status"] = status
+            self.run_metadata["completed_at"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            self.run_metadata["sample_count"] = self.sample_count
+            self.run_metadata["completed_cycles"] = self.completed_cycles
+            self.run_metadata["error"] = error
+            duration_s = max(0.0, time.monotonic() - self.test_started_monotonic)
+            self.run_metadata["duration_s"] = duration_s
+            self.run_metadata["achieved_average_sample_rate_hz"] = (
+                self.sample_count / duration_s if duration_s > 0 else 0.0
+            )
+            try:
+                self.run_metadata["odrive_final_configuration"] = self.odrive_configuration_snapshot()
+            except Exception as exc:
+                self.run_metadata["odrive_final_configuration_error"] = str(exc)
+            try:
+                write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
+            except Exception as exc:
+                self.update_terminal(f"Failed to finalize metadata: {exc}\n")
+            colour = "#4dd4ac" if status == "completed" else "#ffd166" if status == "aborted" else "#ff6b6b"
+            self.set_status(f"{status.upper()} / IDLE", colour)
+            self.ui_message_queue.put(("inputs", "normal"))
+            self.ui_message_queue.put(("run_buttons", "normal"))
+
     def stop_strain_test(self):
         """Stop the strain test"""
         if self.strain_test_active:
+            self.test_stop_event.set()
             self.strain_test_active = False
             self.update_terminal("Stopping strain test...\n")
         else:
@@ -1123,7 +1101,7 @@ class MyInterface:
 
     def create_plot_window(self):
         """Create a plot window that stays on top of the main window"""
-        global plot_window_open, plot_window, plot_curve, angle_data, weight_data
+        global plot_window_open, plot_window, plot_curve, angle_data, torque_data
         
         try:
             # Reset data arrays
@@ -1358,9 +1336,9 @@ class MyInterface:
             value = self.step_angle_input.get()
             if value:  # Only validate if there's a value
                 angle = float(value)
-                if angle < 0:
+                if angle < 0.01:
                     self.step_angle_input.delete(0, 'end')
-                    self.step_angle_input.insert(0, "0")
+                    self.step_angle_input.insert(0, "0.01")
                     self.update_terminal("Step angle must be at least 0.01 degrees\n")
                 elif angle > 10:
                     self.step_angle_input.delete(0, 'end')
@@ -1377,23 +1355,20 @@ class MyInterface:
             return
             
         try:
-            current_pos = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
+            axis = self.prepare_manual_motion()
+            current_pos = axis.pos_vel_mapper.pos_rel
             
             if self.continuous_mode.get():
-                # Start continuous movement
-                self.continuous_movement_active = True
-                self.movement_direction = "left"
-                self.start_continuous_movement()
+                return
             else:
                 # In step mode, move by the specified angle
                 try:
                     step_angle = float(self.step_angle_input.get())
                     # Constrain step angle between 0.01 and 5 degrees
                     step_angle = max(0.01, min(10.0, step_angle))
-                    # Convert degrees to turns (corrected factor)
-                    step_turns = step_angle / 2.055  # Fine-tuned factor
-                    target_pos = current_pos - step_turns
-                    self.odrive_controller.axis0.controller.input_pos = target_pos
+                    step_turns = afo_degrees_to_odrive_turns(step_angle, self.system_config)
+                    target_pos = self.clamp_manual_target(current_pos - step_turns)
+                    axis.controller.input_pos = target_pos
                     self.update_terminal(f"Moved left by {step_angle:.2f} degrees\n")
                 except ValueError:
                     self.update_terminal("Please enter a valid step angle between 0 and 10 degrees\n")
@@ -1408,23 +1383,20 @@ class MyInterface:
             return
             
         try:
-            current_pos = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
+            axis = self.prepare_manual_motion()
+            current_pos = axis.pos_vel_mapper.pos_rel
             
             if self.continuous_mode.get():
-                # Start continuous movement
-                self.continuous_movement_active = True
-                self.movement_direction = "right"
-                self.start_continuous_movement()
+                return
             else:
                 # In step mode, move by the specified angle
                 try:
                     step_angle = float(self.step_angle_input.get())
                     # Constrain step angle between 0.01 and 5 degrees
                     step_angle = max(0.01, min(10.0, step_angle))
-                    # Convert degrees to turns (corrected factor)
-                    step_turns = step_angle / 2.055  # Fine-tuned factor
-                    target_pos = current_pos + step_turns
-                    self.odrive_controller.axis0.controller.input_pos = target_pos
+                    step_turns = afo_degrees_to_odrive_turns(step_angle, self.system_config)
+                    target_pos = self.clamp_manual_target(current_pos + step_turns)
+                    axis.controller.input_pos = target_pos
                     self.update_terminal(f"Moved right by {step_angle:.2f} degrees\n")
                 except ValueError:
                     self.update_terminal("Please enter a valid step angle between 0 and 10 degrees\n")
@@ -1438,22 +1410,37 @@ class MyInterface:
             return
 
         try:
-            current_pos = self.odrive_controller.axis0.pos_vel_mapper.pos_rel
-            increment = 0.1  # Small increment for smooth movement
+            axis = self.prepare_manual_motion()
+            current_pos = axis.pos_vel_mapper.pos_rel
+            increment = afo_degrees_to_odrive_turns(
+                self.system_config["motion"]["manual_continuous_increment_deg"],
+                self.system_config,
+            )
             
             if self.movement_direction == "left":
                 target_pos = current_pos - increment
             else:  # right
                 target_pos = current_pos + increment
                 
-            self.odrive_controller.axis0.controller.input_pos = target_pos
+            target_pos = self.clamp_manual_target(target_pos)
+            axis.controller.input_pos = target_pos
             
             # Schedule the next movement
-            self.movement_timer = self.master.after(50, self.start_continuous_movement)  # 50ms = 20Hz update rate
+            self.movement_timer = self.master.after(
+                self.system_config["motion"]["manual_update_interval_ms"],
+                self.start_continuous_movement,
+            )
             
         except Exception as e:
             self.update_terminal(f"Error in continuous movement: {e}\n")
             self.stop_continuous_movement()
+
+    def begin_continuous_movement(self, direction):
+        if not self.continuous_mode.get() or self.continuous_movement_active:
+            return
+        self.continuous_movement_active = True
+        self.movement_direction = direction
+        self.start_continuous_movement()
 
     def stop_continuous_movement(self):
         """Stop continuous movement"""
@@ -1462,8 +1449,38 @@ class MyInterface:
             self.master.after_cancel(self.movement_timer)
             self.movement_timer = None
 
+    def prepare_manual_motion(self):
+        if not self.manual_mode.get():
+            raise RuntimeError("Enable manual mode before commanding manual movement")
+        if self.strain_test_active:
+            raise RuntimeError("Manual movement is disabled while a strain test is active")
+        motion = self.system_config["motion"]
+        self.configure_trajectory(
+            motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+        )
+        axis = self.enter_closed_loop()
+        if int(axis.active_errors):
+            self.safe_idle_motor("manual movement error")
+            raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
+        self.set_status("MANUAL / ACTIVE", "#ffd166")
+        return axis
+
+    def clamp_manual_target(self, target_turns):
+        maximum_angle = self.system_config["motion"]["maximum_afo_angle_deg"]
+        travel_turns = afo_degrees_to_odrive_turns(maximum_angle, self.system_config)
+        lower = self.starting_position - travel_turns
+        upper = self.starting_position + travel_turns
+        clamped = max(lower, min(upper, target_turns))
+        if clamped != target_turns:
+            self.update_terminal(f"Manual travel limited to +/-{maximum_angle:g} degrees from zero.\n")
+        return clamped
+
     def toggle_manual_mode(self):
         """Handle manual mode toggle"""
+        if self.strain_test_active:
+            self.manual_mode.set(False)
+            self.update_terminal("Manual mode cannot be changed during a strain test.\n")
+            return
         if self.manual_mode.get():
             # Enable manual controls
             self.left_arrow.configure(state="normal")
@@ -1480,7 +1497,14 @@ class MyInterface:
             self.min_angle_input.configure(state="disabled")
             self.max_angle_input.configure(state="disabled")
             self.cycles_input.configure(state="disabled")
+            if self.odrive_controller:
+                try:
+                    self.prepare_manual_motion()
+                except Exception as exc:
+                    self.update_terminal(f"Unable to enable manual motion: {exc}\n")
         else:
+            self.stop_continuous_movement()
+            self.safe_idle_motor("manual mode disabled")
             # Disable manual controls
             self.left_arrow.configure(state="disabled")
             self.right_arrow.configure(state="disabled")
@@ -1499,7 +1523,7 @@ class MyInterface:
             self.cycles_input.configure(state="normal")
 
     def validate_angle_input(self, event=None):
-        """Validate and constrain angle inputs to 12 degrees"""
+        """Validate angle magnitudes against the configured AFO travel limit."""
         try:
             # Get the widget that triggered the event
             widget = event.widget
@@ -1508,23 +1532,21 @@ class MyInterface:
             value = widget.get()
             if value:  # Only validate if there's a value
                 angle = float(value)
-                if angle > 12:
+                maximum_angle = self.system_config["motion"]["maximum_afo_angle_deg"]
+                if angle > maximum_angle:
                     widget.delete(0, 'end')
-                    widget.insert(0, "12")
-                    self.update_terminal("Angle cannot exceed 12 degrees\n")
-                elif angle < -12:
+                    widget.insert(0, f"{maximum_angle:g}")
+                    self.update_terminal(f"Angle magnitude cannot exceed {maximum_angle:g} degrees\n")
+                elif angle < 0:
                     widget.delete(0, 'end')
-                    widget.insert(0, "-12")
-                    self.update_terminal("Angle cannot be less than -12 degrees\n")
+                    widget.insert(0, "0")
+                    self.update_terminal("Enter angle limits as positive magnitudes\n")
         except ValueError:
             # If the input is not a valid number, clear it
             widget.delete(0, 'end')
 
 def create_about_dialog(root):
-    cur_dir = os.getcwd()
-    cur_dir = cur_dir.replace("\\", "/")
-    # icon_path = cur_dir+"/favicon.ico"
-    icon_path = "images/icon.ico"
+    icon_path = str(resource_path("images/icon.ico"))
 
     # Set the icon for the about dialog
     about_dialog = ctk.CTk()
@@ -1546,7 +1568,7 @@ def create_about_dialog(root):
 
     # Version label (customize text and font)
     version_label = ctk.CTkLabel(master=content_frame,
-                                text="Version: 1.0",  # Update version number
+                                text="Version: 1.1.0",
                                 font=("Arial", 12, "bold"))
     version_label.pack()
 
@@ -1602,10 +1624,10 @@ def main():
 
     # Set the window icon
     try:
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "icon.ico")
-        if os.path.exists(icon_path):
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(icon_path)
-            root.iconbitmap(icon_path)
+        icon_path = resource_path("images/icon.ico")
+        if icon_path.exists():
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(str(icon_path))
+            root.iconbitmap(str(icon_path))
     except Exception as e:
         print(f"Failed to set icon: {e}")
 

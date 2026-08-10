@@ -1,110 +1,89 @@
-# Ortho-Sim 🦶
+# OrthoSim - EAST AFO Stiffness Tester
 
-Ortho-Sim is a graphical user interface (GUI) written in python designed for displaying and logging the live Angle Vs Torque of an ankle foot orthosis (AFO). Uses an Odrive motor controller [Odrive S1](https://shop.odriverobotics.com/products/odrive-s1) with a [PhidgetBridge 4-Input](https://www.phidgets.com/?prodid=1027) device.   
+OrthoSim controls the EAST motorised benchtop tester and records sagittal-plane AFO angle, load, and calculated torque. The application interfaces with an ODrive S1 and a PhidgetBridge voltage-ratio input.
 
-The interface outputs the readings at a 125Hz interval. The data is logged to a CSV file within a folder called '_OrthoSim Logs_' located in the `Ortho-Sim.exe` root directory. This folder will be created on the first time the program logs any data.
+This repository is research software. Version 1.1.0 improves safety and traceability, but the configured mechanical conversion, load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those checks are complete.
 
-An AFO is a support device intended to control the position and motion of the ankle, compensate for weakness, or correct deformities. The program was designed for a study into 3D printed AFO's testing different material properties and printing ortietnations whilst being able to test the stiffness and strain for each prototype. 
+## Hardware assumptions
 
-# Physical Mechanical Tester
-![Alt Text](images/AFO-Tester.jpg)
+- ODrive S1 serial number `3943355F3231`, axis 0
+- PhidgetBridge channel 1; no Phidget serial is currently specified
+- ODrive custom D6374 150 Kv motor
+- EG Series 50:1 planetary gearbox
+- DACell UU-K50 load cell
+- Physical E-stop/door reed switch pulls ODrive nRST low
 
-# Graphical User Interface (GUI)
-![Alt Text](images/Ortho-Sim.png)
+All software constants and limits are in `tester_config.json`. Review that file before operating the system.
 
-There is an `auto_exe_builder.py` file that allows you to compile and build the executable to run on machines that don't have python installed. This uses the pyinstaller python library.
+## Speed definition
 
+The GUI speed field is a commanded mounted-AFO angular speed in degrees per second. With `INPUT_MODE_TRAP_TRAJ`, the application converts this value to turns per second and writes it to:
 
-## Load Cell Interface
-For developement the PhidgetBridge drivers below need to be installed for your system, select the appropriate one for your system. 
-- [⬇ 32-bit Phidget22 Driver Download](https://www.phidgets.com/downloads/phidget22/libraries/windows/Phidget22-x86.exe)
-- [⬇ 64-bit Phidget22 Driver Download](https://www.phidgets.com/downloads/phidget22/libraries/windows/Phidget22-x64.exe)
+```text
+axis0.trap_traj.config.vel_limit
+```
 
-# Design Changelog
-## Parts
- - Motor - [Dual Shaft Motor - D6374 150 Kv](https://wwshop.odriverobotics.com/collections/motors/products/odrive-custom-motor-d6374-150kv)
- - Motor Controller - [ODrive S1](https://wwshop.odriverobotics.com/collections/motor-controllers/products/odrive-s10)
- - Gearbox - [EG Series Planetary Gearbox Gear Ratio 50:1 Backlash 20arc-min for Nema 34 Stepper Motor](https://www.omc-stepperonline.com/au-on-sale-eg-series-planetary-gearbox-gear-ratio-50-1-backlash-20arc-min-for-nema-34-stepper-motor-au-eg34-g50)
- - Load Cell - [DACell UU-K50 (D2311047)](https://appliedmeasurement.com.au/product/ama-xtran-load-cells/)
+The conversion uses the configured `afo_degrees_per_odrive_turn` value. `axis0.controller.config.vel_limit` is set higher as a safety cap; it is not used as the trajectory-speed command.
 
-## Mechanical Changes
- - Drilled new hole in Motor Swing arm inline with AFO upright. 
- - New pin for motor swing arm reduce backlash
- - Shorted connecting rod bewteen Motor Swing arm and AFO upright.
- - Made gearbox mounting plate to adapt new [EG Series Planetary Gearbox Gear Ratio 50:1 Backlash 20arc-min for Nema 34 Stepper Motor](https://www.omc-stepperonline.com/au-on-sale-eg-series-planetary-gearbox-gear-ratio-50-1-backlash-20arc-min-for-nema-34-stepper-motor-au-eg34-g50)
- 
-## Electrical Changes
- - New Motor with BLDC motor controller
- - E-Stop with magnetic reed swtich that pulls nRST low to reset the motor controller.
-    
-    <span style="color: red">__NOTE: Door needs to be shut in order to connect to the motor controller__</span>
+The current conversion is 2.055 AFO degrees per ODrive turn and is explicitly provisional. The implementation is dimensionally consistent, but experimental comparison with an independent angular reference is still required.
 
-# requirements.txt
+The CSV angle and converted velocity use this same value. Comparing them with the command checks controller execution conditional on the assumed conversion; it does not independently prove physical AFO angular speed.
 
-- aiohappyeyeballs==2.4.0
-- aiohttp==3.10.5
-- aiosignal==1.3.1
-- altgraph==0.17.4
-- appdirs==1.4.4
-- asttokens==2.4.1
-- async-timeout==4.0.3
-- attrs==24.2.0
-- colorama==0.4.6
-- contourpy==1.3.0
-- CTkMessagebox==2.7
-- customtkinter==5.2.2
-- cycler==0.12.1
-- darkdetect==0.8.0
-- decorator==5.1.1
-- et-xmlfile==1.1.0
-- exceptiongroup==1.2.2
-- executing==2.1.0
-- fonttools==4.53.1
-- frozenlist==1.4.1
-- future==1.0.0
-- idna==3.10
-- iniconfig==2.1.0
-- ipython==8.27.0
-- iso8601==2.1.0
-- jedi==0.19.1
-- kiwisolver==1.4.7
-- matplotlib==3.9.2
-- matplotlib-inline==0.1.7
-- multidict==6.1.0
-- numpy==1.23.0
-- odrive==0.6.8
-- openpyxl==3.1.5
-- packaging==24.1
-- parso==0.8.4
-- pefile==2024.8.26
-- Phidget22==1.20.20240911
-- pillow==10.4.0
-- pluggy==1.5.0
-- prompt_toolkit==3.0.47
-- pure_eval==0.2.3
-- pyelftools==0.31
-- Pygments==2.18.0
-- pyinstaller==5.13.2
-- pyinstaller-hooks-contrib==2024.10
-- PyOpenGL==3.1.9
-- pyparsing==3.1.4
-- PyQt5==5.15.11
-- PyQt5-Qt5==5.15.2
-- PyQt5_sip==12.17.0
-- pyqtgraph==0.13.7
-- pyserial==3.5
-- pytest==8.3.5
-- python-dateutil==2.9.0.post0
-- pyusb==1.2.1
-- pywin32==306
-- pywin32-ctypes==0.2.3
-- pywinstyles==1.8
-- PyYAML==6.0.2
-- serial==0.0.97
-- six==1.16.0
-- stack-data==0.6.3
-- tomli==2.2.1
-- traitlets==5.14.3
-- typing_extensions==4.12.2
-- wcwidth==0.2.13
-- yarl==1.11.1
+## Running the GUI
+
+1. Install the Windows ODrive and Phidget drivers.
+2. Create a Python environment and install `requirements.txt`.
+3. Review `tester_config.json`, especially serial/channel values and provisional limits.
+4. Run `python Ortho-Sim.py`.
+5. Enter the full test configuration, including operator, AFO ID, fixture ID, and calibration ID.
+6. Connect the ODrive. Connection leaves the axis idle in test mode.
+7. Complete physical clearance and E-stop checks, then press Start and confirm the run summary.
+
+The Stop button and Escape key request an immediate software stop and set the axis idle. They are not substitutes for the physical E-stop.
+
+## Outputs
+
+Each run creates a uniquely named pair in `OrthoSim Logs`:
+
+- `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, command values, sensor values, converted units, and ODrive errors.
+- `*_metadata.json`: operator/specimen/fixture/calibration identifiers, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
+
+Raw columns are preserved for reprocessing. Moving-average columns are derived outputs and should not replace raw data in verification analyses.
+
+## Verification
+
+Run offline tests from the repository root:
+
+```text
+python -m unittest discover -s tests -v
+```
+
+Analyse a completed speed-verification CSV with:
+
+```text
+python analysis/verify_speed.py "OrthoSim Logs/<run>_strain_data.csv" --output speed_results.csv
+```
+
+See `docs/VERIFICATION_PROTOCOL.md` for the pre-run checks, experimental design, stop conditions, and output requirements.
+
+## Diagnostic scripts
+
+Scripts under `Testing Scripts` are guarded bench diagnostics. They do nothing when imported and refuse to open or move hardware without `--confirm-hardware`. Use `--help` to see required parameters. The GUI remains the authoritative application for recorded strain tests.
+
+## Project structure
+
+- `Ortho-Sim.py`: GUI and coordinated hardware workflow
+- `east_core.py`: hardware-independent validation, conversions, load/torque calculations, and metadata helpers
+- `tester_config.json`: hardware assumptions, calibration values, limits, and sampling settings
+- `analysis/verify_speed.py`: angle-time speed verification
+- `tests/`: dependency-free offline tests
+- `docs/VERIFICATION_PROTOCOL.md`: laboratory verification procedure
+- `Odrive Backup Config/`: stored ODrive hardware configuration backup
+
+## Building the executable
+
+`auto_exe_builder.py` builds the Windows executable with PyInstaller and includes the images and tester configuration. Build from the repository root so the expected paths resolve correctly.
+
+## Change history
+
+See `CHANGELOG.md`.

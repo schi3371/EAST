@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "software_version": "1.1.0",
+  "hardware": {
+    "odrive_serial_number": "3943355F3231",
+    "odrive_axis": 0,
+    "odrive_connection_timeout_s": 5.0,
+    "phidget_serial_number": null,
+    "phidget_channel": 1,
+    "phidget_attachment_timeout_ms": 5000
+  },
+  "motion": {
+    "afo_degrees_per_odrive_turn": 2.055,
+    "conversion_status": "provisional; verify against an independent AFO angle reference",
+    "minimum_speed_deg_s": 0.1,
+    "maximum_speed_deg_s": 30.0,
+    "minimum_acceleration_deg_s2": 0.1,
+    "maximum_acceleration_deg_s2": 100.0,
+    "maximum_afo_angle_deg": 12.0,
+    "maximum_cycles": 100,
+    "position_tolerance_deg": 0.05,
+    "motion_timeout_margin_s": 5.0,
+    "maximum_motion_timeout_s": 30.0,
+    "controller_velocity_safety_multiplier": 1.25,
+    "manual_speed_deg_s": 5.0,
+    "manual_acceleration_deg_s2": 10.0,
+    "manual_continuous_increment_deg": 0.2,
+    "manual_update_interval_ms": 50
+  },
+  "controller": {
+    "apply_controller_gains": false,
+    "position_gain": 26.600000381469727,
+    "velocity_gain": 0.8105000257492065,
+    "velocity_integrator_gain": 2.385293960571289
+  },
+  "load_cell": {
+    "mass_kg_per_voltage_ratio": 25014.7939492599,
+    "calibration_status": "provisional; calibration certificate and direction must be verified",
+    "standard_gravity_m_s2": 9.80665,
+    "tare_samples": 16
+  },
+  "torque": {
+    "lever_arm_m": 0.4792,
+    "force_angle_polynomial_deg": [-0.0328, -1.0013, 90.272],
+    "geometry_status": "provisional; verify dimensions and polynomial experimentally"
+  },
+  "acquisition": {
+    "sample_interval_ms": 8,
+    "moving_average_window_samples": 30,
+    "csv_flush_rows": 100
+  },
+  "logging": {
+    "output_directory": "OrthoSim Logs"
+  }
+}

@@ -1,87 +1,117 @@
+"""Guarded Phidget/load-cell diagnostic logger for the EAST tester."""
+
+from __future__ import annotations
+
+import argparse
 import csv
+import sys
 import time
-from Phidget22.Phidget import *
-from Phidget22.Devices.VoltageRatioInput import *
+from datetime import datetime
+from pathlib import Path
 
-# Insert your gain value from the Phidget Control Panel
-gain = -8133.8  # Example value
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_DIR))
 
-# The offset is calculated in tareScale
-offset = 0
+from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
 
-# Convert from Newtons to grams (1 Newton = 100 grams)
-newton_to_grams = 1000
+from east_core import calculate_load, load_tester_config, sanitise_identifier, write_json_atomic
 
-# Calibration flag
-calibrated = False
 
-# CSV file path
-csv_file = "weight_readings.csv"
-
-# Function to log weight to a CSV file
-def log_weight_to_csv(weight_grams):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")  # Current timestamp
-    with open(csv_file, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow([timestamp, weight_grams])
-    print(f"Logged to CSV: {timestamp}, {weight_grams} grams")
-
-# This function is called whenever the voltage ratio changes
-def onVoltageRatioChange(self, voltageRatio):
-    if calibrated:
-        # Apply the calibration parameters (gain, offset) to the raw voltage ratio
-        weight_newtons = (voltageRatio - offset) * gain        
-        weight_grams = weight_newtons * newton_to_grams  # Convert from Newtons to grams
-        print("Weight (grams): " + str(weight_grams))
-        log_weight_to_csv(weight_grams)  # Log the value to the CSV
-
-# This function tars (zeroes) the scale by averaging readings
-def tareScale(ch):    
-    global offset, calibrated
-    num_samples = 16
-
-    for i in range(num_samples):
-        offset += ch.getVoltageRatio()
-        time.sleep(ch.getDataInterval()/1000.0)
-        
-    offset /= num_samples
-    print(offset)
-    calibrated = True    
-
-# Main function to setup and run the program
 def main():
-    # Create or overwrite the CSV file with a header row
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Timestamp", "Weight (grams)"])
+    parser = argparse.ArgumentParser(description="Log raw and calibrated EAST load-cell readings")
+    parser.add_argument("--duration-s", type=float, default=30.0)
+    parser.add_argument("--calibration-id", required=True)
+    parser.add_argument("--prefix", default="load_cell_check")
+    parser.add_argument("--confirm-hardware", action="store_true")
+    args = parser.parse_args()
+    if not args.confirm_hardware:
+        raise SystemExit("Refusing to open hardware without --confirm-hardware")
+    if args.duration_s <= 0:
+        raise SystemExit("Duration must be positive")
 
-    voltageRatioInput1 = VoltageRatioInput()
+    config = load_tester_config(PROJECT_DIR / "tester_config.json")
+    hardware = config["hardware"]
+    output_dir = PROJECT_DIR / config["logging"]["output_directory"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S_%f%z")
+    output_path = output_dir / f"{sanitise_identifier(args.prefix)}_{stamp}.csv"
+    metadata_path = output_path.with_suffix(".json")
 
-    # Set the channel you want to read from (channel 1 in this case)
-    voltageRatioInput1.setChannel(1)  # Set to channel 1
-    
-    # If you know the serial number of the device, you can set it directly
-    # voltageRatioInput1.setDeviceSerialNumber(your_device_serial_number)  # Uncomment and set the serial number
-    
-    voltageRatioInput1.setOnVoltageRatioChangeHandler(onVoltageRatioChange)
-    voltageRatioInput1.openWaitForAttachment(5000)
-    
-    # Set the data interval for the application (in milliseconds)
-    voltageRatioInput1.setDataInterval(50)
-    
-    print("Taring")
-    
-    # Start the tare process
-    tareScale(voltageRatioInput1)
-    
-    print("Taring Complete")
-        
+    channel = VoltageRatioInput()
+    metadata = None
+    started = time.monotonic()
+    sample_count = 0
+    status = "error"
+    error = None
     try:
-        input("Press Enter to Stop\n")
-    except (Exception, KeyboardInterrupt):
-        pass
+        if hardware["phidget_serial_number"] is not None:
+            channel.setDeviceSerialNumber(hardware["phidget_serial_number"])
+        channel.setChannel(hardware["phidget_channel"])
+        channel.openWaitForAttachment(hardware["phidget_attachment_timeout_ms"])
+        channel.setDataInterval(config["acquisition"]["sample_interval_ms"])
 
-    voltageRatioInput1.close()
+        tare_samples = []
+        for _ in range(config["load_cell"]["tare_samples"]):
+            tare_samples.append(channel.getVoltageRatio())
+            time.sleep(channel.getDataInterval() / 1000.0)
+        tare_offset = sum(tare_samples) / len(tare_samples)
 
-# Run the main function
-main()
+        metadata = {
+            "schema_version": 1,
+            "source": "Testing Scripts/phidget-force.py",
+            "run_status": "started",
+            "started_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+            "calibration_id": args.calibration_id,
+            "tare_offset_v_per_v": tare_offset,
+            "load_cell_configuration": config["load_cell"],
+            "phidget_channel": hardware["phidget_channel"],
+            "configured_phidget_serial_number": hardware["phidget_serial_number"],
+            "connected_phidget_serial_number": channel.getDeviceSerialNumber(),
+            "sample_interval_ms": config["acquisition"]["sample_interval_ms"],
+            "csv_file": output_path.name,
+        }
+        write_json_atomic(metadata_path, metadata)
+
+        start = time.monotonic()
+        with output_path.open("x", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow([
+                "Timestamp ISO 8601", "Elapsed Time (s)", "Calibration ID",
+                "Raw Voltage Ratio (V/V)", "Tare Offset (V/V)",
+                "Mass (kg)", "Weight (g)", "Force (N)",
+            ])
+            while time.monotonic() - start < args.duration_s:
+                ratio = channel.getVoltageRatio()
+                mass_kg, weight_g, force_n = calculate_load(ratio, tare_offset, config)
+                writer.writerow([
+                    datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                    f"{time.monotonic() - start:.6f}", args.calibration_id,
+                    ratio, tare_offset, mass_kg, weight_g, force_n,
+                ])
+                sample_count += 1
+                time.sleep(config["acquisition"]["sample_interval_ms"] / 1000.0)
+        status = "completed"
+        print(f"Saved {output_path}")
+    except Exception as exc:
+        error = str(exc)
+        raise
+    finally:
+        try:
+            channel.close()
+        except Exception:
+            pass
+        finally:
+            if metadata is not None:
+                duration = time.monotonic() - started
+                metadata["run_status"] = status
+                metadata["completed_at"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
+                metadata["duration_s"] = duration
+                metadata["sample_count"] = sample_count
+                metadata["achieved_average_sample_rate_hz"] = sample_count / duration if duration else 0.0
+                metadata["error"] = error
+                write_json_atomic(metadata_path, metadata)
+
+
+if __name__ == "__main__":
+    main()

@@ -129,6 +129,7 @@ try:
         
         # Add all files from images directory
         f"--add-data", f"{cur_dir}/images/*;images/",
+        f"--add-data", f"{cur_dir}/tester_config.json;.",
         
         # Required hidden imports for PyQtGraph
         "--hidden-import", "pyqtgraph.graphicsItems.ViewBox.axisCtrlTemplate_pyqt5",
