@@ -6,8 +6,6 @@ from pathlib import Path
 
 import concurrent.futures
 
-import pywinstyles
-
 import tkinter as tk
 import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
@@ -246,8 +244,7 @@ class MyInterface:
 
 
         # Create frame for input ranges
-        inputs_frame = ctk.CTkFrame(self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
-        pywinstyles.set_opacity(inputs_frame, color="#000001") # just add this line
+        inputs_frame = ctk.CTkFrame(self.master, fg_color="#1f2937", corner_radius=8)
         inputs_frame.place(x=45, y=95)
 
         # Create input fields in a grid form for input values 
@@ -300,16 +297,14 @@ class MyInterface:
         button_positions_y = [start_button_position_y+0, start_button_position_y+37, start_button_position_y+74, start_button_position_y+111]
         self.buttons = []
         for name, command, colour, position_y in zip(button_names, commands, button_colour, button_positions_y):
-            button = ctk.CTkButton(self.master, text=name, command=command, hover_color="grey", width=340, fg_color=colour, corner_radius=20, bg_color="#000001")
+            button = ctk.CTkButton(self.master, text=name, command=command, hover_color="grey", width=340, fg_color=colour, corner_radius=8)
             button.pack(pady=5, padx = 20)  # Use pack with pady for vertical spacing
             self.buttons.append(button)
             self.buttons[-1].place(x=start_button_position_x, y= position_y)
-            pywinstyles.set_opacity(button, color="#000001") # just add this line
 
         # Add manual control frame below the buttons
-        manual_control_frame = ctk.CTkFrame(self.master, fg_color="#000001", bg_color="#000001")
+        manual_control_frame = ctk.CTkFrame(self.master, fg_color="#1f2937", corner_radius=8)
         manual_control_frame.place(x=45, y=465)
-        pywinstyles.set_opacity(manual_control_frame, color="#000001") # just add this line
 
         # Add step angle input with validation
         self.step_angle_input = ctk.CTkEntry(manual_control_frame, width=150, placeholder_text="Step Angle (0-10 deg)")
@@ -324,7 +319,7 @@ class MyInterface:
         self.manual_mode_toggle.grid(row=0, column=1, padx=5, pady=5)
 
         # Add arrow buttons frame
-        arrow_frame = ctk.CTkFrame(manual_control_frame, fg_color="#000001", bg_color="#000001")
+        arrow_frame = ctk.CTkFrame(manual_control_frame, fg_color="#1f2937", corner_radius=8)
         arrow_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
 
         # Add left arrow button
@@ -358,8 +353,7 @@ class MyInterface:
         self.buttons[1].configure(state="disabled")  # Index 1 is the "Start" button
 
         # Create frame for the bottom section (terminal)
-        terminal_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
-        pywinstyles.set_opacity(terminal_frame, color="#000001") # just add this line
+        terminal_frame = ctk.CTkFrame(master=self.master, fg_color="#1f2937", corner_radius=8)
         terminal_frame.place(x=35, y=510)
 
         # Terminal (text output)
@@ -368,9 +362,7 @@ class MyInterface:
 
 
         # Create frame for the footer section with a larger width
-        footer_frame = ctk.CTkFrame(master=self.master, width=200, bg_color="#000001", corner_radius=20)  # Set a larger width
-        # pywinstyles.set_opacity(footer_frame, value=0.85, color="#000001") # just add this line
-        pywinstyles.set_opacity(footer_frame, value=0.85, color="#000001") # just add this line
+        footer_frame = ctk.CTkFrame(master=self.master, width=200, fg_color="#1f2937", corner_radius=8)
 
         # footer_frame.pack(pady=10, padx=10)  # Use fill='x' to make the frame fill the entire width
         footer_frame.place(x=35, y=610)
@@ -394,6 +386,7 @@ class MyInterface:
 
         # Handle window closing event
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.update_terminal(f"{APP_NAME} {APP_VERSION}\nRunning from: {Path(__file__).resolve()}\n")
  
     def open_website(self, url):
             webbrowser.open_new(url)
@@ -1626,6 +1619,8 @@ The weight and angle values update on the plot window.",
     about_dialog.mainloop()
 
 def main():
+    print(f"Starting {APP_NAME} {APP_VERSION} from {Path(__file__).resolve()}")
+
     # Ensure there's only one QApplication instance
     if not QApplication.instance():
         app = QApplication(sys.argv)
