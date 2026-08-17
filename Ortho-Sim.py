@@ -67,6 +67,9 @@ plot_window = None
 plot_curve = None
 plot_timer = None
 
+APP_NAME = "EAST"
+APP_VERSION = "1.1.1-gui"
+
 
 def resource_path(relative_path):
     """Resolve bundled assets and source-tree assets without relying on the CWD."""
@@ -95,7 +98,7 @@ class TestStopped(Exception):
 class MyInterface:
     def __init__(self, master):
         self.master = master
-        self.master.title("EAST")
+        self.master.title(f"{APP_NAME} {APP_VERSION}")
 
         self.system_config = load_tester_config(resource_path("tester_config.json"))
         self.odrive_controller = None
@@ -193,12 +196,11 @@ class MyInterface:
         return label
 
     def setup_ui(self):
-        self.master.configure(fg_color="#101318")
+        self.master.configure(fg_color="#111827")
 
         # Header Frame
-        header_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
-        pywinstyles.set_opacity(header_frame, color="#000001") # just add this line
-        header_frame.pack(pady=10, padx=10)
+        header_frame = ctk.CTkFrame(master=self.master, fg_color="#111827", corner_radius=0)
+        header_frame.pack(pady=(8, 4), padx=10)
         header_frame.grid_columnconfigure(0, weight=1)
         header_frame.grid_columnconfigure(1, weight=2)
         header_frame.grid_columnconfigure(2, weight=1)
@@ -210,13 +212,24 @@ class MyInterface:
             0,
         )
 
+        title_frame = ctk.CTkFrame(header_frame, fg_color="#111827", corner_radius=0)
+        title_frame.grid(row=0, column=1, padx=28, pady=8, sticky="nsew")
+
         app_name_label = ctk.CTkLabel(
-            header_frame,
-            text="EAST",
-            font=("Arial", 42, "bold"),
+            title_frame,
+            text=APP_NAME,
+            font=("Arial", 40, "bold"),
             text_color="#ffffff",
         )
-        app_name_label.grid(row=0, column=1, padx=28, pady=10, sticky="nsew")
+        app_name_label.pack()
+
+        version_marker_label = ctk.CTkLabel(
+            title_frame,
+            text=f"{APP_VERSION} | lab laptop layout",
+            font=("Arial", 12, "bold"),
+            text_color="#9ca3af",
+        )
+        version_marker_label.pack()
 
         self.create_header_logo(
             header_frame,
@@ -347,10 +360,10 @@ class MyInterface:
         # Create frame for the bottom section (terminal)
         terminal_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
         pywinstyles.set_opacity(terminal_frame, color="#000001") # just add this line
-        terminal_frame.place(x=35, y=555)
+        terminal_frame.place(x=35, y=510)
 
         # Terminal (text output)
-        self.terminal = ctk.CTkTextbox(terminal_frame, height=95, width=350, corner_radius=20)
+        self.terminal = ctk.CTkTextbox(terminal_frame, height=70, width=350, corner_radius=20)
         self.terminal.pack(pady=10, padx=10)
 
 
@@ -360,7 +373,7 @@ class MyInterface:
         pywinstyles.set_opacity(footer_frame, value=0.85, color="#000001") # just add this line
 
         # footer_frame.pack(pady=10, padx=10)  # Use fill='x' to make the frame fill the entire width
-        footer_frame.place(x=35, y=680)
+        footer_frame.place(x=35, y=610)
 
         # Developer label
         developer_label = ctk.CTkLabel(footer_frame, text="Developed By: ", anchor="w", font=("Arial", 12, "bold"), text_color="white")
@@ -376,7 +389,7 @@ class MyInterface:
         space_label.grid(row=0, column=2, sticky="e", padx=280, pady=5)  # Adjust padx as needed
 
         # Version label
-        version_label = ctk.CTkLabel(footer_frame, text="Version 1.1.0", anchor="e", font=("Arial", 12, "bold"), text_color="white")
+        version_label = ctk.CTkLabel(footer_frame, text=f"Version {APP_VERSION}", anchor="e", font=("Arial", 12, "bold"), text_color="white")
         version_label.grid(row=0, column=2, sticky="e", padx=10, pady=5)  # Adjust padx as needed
 
         # Handle window closing event
@@ -1556,9 +1569,8 @@ def create_about_dialog(root):
     # Set the icon for the about dialog
     about_dialog = ctk.CTk()
     
-    about_dialog.geometry("560x775")  # Adjust dimensions as needed
+    about_dialog.geometry("560x720")  # Adjust dimensions as needed
     about_dialog.title("About")
-    about_dialog.attributes("-topmost", True)  # Set the window to be topmost
     about_dialog.iconbitmap(icon_path)  # Set the icon for the about dialog
 
     # Frame for content
@@ -1567,13 +1579,13 @@ def create_about_dialog(root):
 
     # Application name label (customize text and font)
     app_name_label = ctk.CTkLabel(master=content_frame,
-                                text="EAST",
+                                text=APP_NAME,
                                 font=("Arial", 18, "bold"))
     app_name_label.pack(pady=10)
 
     # Version label (customize text and font)
     version_label = ctk.CTkLabel(master=content_frame,
-                                text="Version: 1.1.0",
+                                text=f"Version: {APP_VERSION}",
                                 font=("Arial", 12, "bold"))
     version_label.pack()
 
@@ -1621,8 +1633,8 @@ def main():
         app = QApplication.instance()
     
     root = ctk.CTk()
-    root.geometry("1024x720")
-    root.minsize(760, 650)
+    root.geometry("900x650")
+    root.minsize(720, 560)
     root.resizable(True, True)
 
     app_instance = MyInterface(root)
