@@ -81,7 +81,7 @@ class EastCoreTests(unittest.TestCase):
             second_csv, second_metadata = create_run_paths(parameters, self.config, root)
             self.assertNotEqual(first_csv, second_csv)
             self.assertNotEqual(first_metadata, second_metadata)
-            self.assertEqual(first_csv.parent.name, "OrthoSim Logs")
+            self.assertEqual(first_csv.parent.name, "EAST Logs")
 
     def test_csv_schema_has_unique_columns(self):
         self.assertEqual(len(CSV_COLUMNS), len(set(CSV_COLUMNS)))

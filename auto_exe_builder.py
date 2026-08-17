@@ -26,7 +26,7 @@ def remove_directory_with_retry(path, max_retries=5, delay=1):
 def clean_build_artifacts():
     """Clean up build artifacts with proper error handling"""
     directories_to_clean = ['build', 'dist']
-    files_to_clean = ['runtime_hook.py', 'Ortho-Sim.spec']
+    files_to_clean = ['runtime_hook.py', 'Ortho-Sim.spec', 'EAST.spec']
     
     # Clean directories
     for dir_path in directories_to_clean:
@@ -120,7 +120,7 @@ try:
         "pyinstaller",
         "--clean",  # Clean PyInstaller cache
         "Ortho-Sim.py",  # Main script path
-        "--name", "Ortho-Sim",
+        "--name", "EAST",
         "--onefile",
         "--windowed",  # Hide console window
         f"--icon={cur_dir}/images/icon.ico",

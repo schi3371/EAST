@@ -33,7 +33,7 @@ The CSV `Raw AFO Angle (deg)` and `Measured AFO Velocity (deg/s)` columns both u
 Run the supplied analysis with:
 
 ```text
-python analysis/verify_speed.py "OrthoSim Logs/<run>_strain_data.csv" --output speed_results.csv
+python analysis/verify_speed.py "EAST Logs/<run>_strain_data.csv" --output speed_results.csv
 ```
 
 ## Acceptance criteria

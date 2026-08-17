@@ -20,7 +20,6 @@ import time
 import ctypes
 import webbrowser
 
-import PIL
 from PIL import Image
 
 from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
@@ -96,7 +95,7 @@ class TestStopped(Exception):
 class MyInterface:
     def __init__(self, master):
         self.master = master
-        self.master.title("OrthoSim")
+        self.master.title("EAST")
 
         self.system_config = load_tester_config(resource_path("tester_config.json"))
         self.odrive_controller = None
@@ -113,6 +112,7 @@ class MyInterface:
         self.commanded_odrive_velocity = 0.0
         self.ui_message_queue = queue.Queue()
         self.plot_data_queue = queue.Queue()
+        self.header_images = []
 
         self.strain_test_active = False
         self.strain_data_buffer = []
@@ -145,15 +145,11 @@ class MyInterface:
         self.master.bind('<Configure>', self.on_window_move)
         self.master.bind('<Unmap>', self.on_window_minimize)
         self.master.bind('<Map>', self.on_window_restore)
-        self.master.bind('<FocusIn>', self.on_window_restore)  # Add binding for focus events
         self.master.bind('<Escape>', lambda _event: self.stop_logging())
 
     def on_window_move(self, event):
-        """Update plot window position when main window moves"""
-        # Only respond to window movement events
-        if event.widget == self.master and hasattr(self, 'plot_container'):
-            # Update plot window position relative to main window
-            self.plot_container.move(self.master.winfo_x() + 450, self.master.winfo_y() + 190)
+        """Window move handler kept for compatibility with existing bindings."""
+        return
 
     def on_window_minimize(self, event):
         """Hide plot window when main window is minimized"""
@@ -164,38 +160,76 @@ class MyInterface:
         """Show plot window when main window is restored"""
         if hasattr(self, 'plot_container'):
             self.plot_container.show()
-            self.plot_container.raise_()
         elif plot_window_open:
             # If plot window was open but container was lost, recreate it
             self.create_plot_window()
 
-    def setup_ui(self):
-        
-        image = PIL.Image.open(resource_path("images/background_image.png"))
-        background_image = ctk.CTkImage(image, size=(1242, 786))
+    def create_header_logo(self, parent, candidate_names, fallback_text, column):
+        """Create a header logo if an image file exists, otherwise use text."""
+        logo_path = None
+        for candidate in candidate_names:
+            path = resource_path(f"images/{candidate}")
+            if path.exists():
+                logo_path = path
+                break
 
-        # Create a bg label
-        bg_lbl = ctk.CTkLabel(self.master, text="", image=background_image)
-        bg_lbl.place(x=0, y=0)
+        if logo_path is not None:
+            logo_image = ctk.CTkImage(
+                light_image=Image.open(logo_path),
+                dark_image=Image.open(logo_path),
+                size=(160, 72),
+            )
+            self.header_images.append(logo_image)
+            label = ctk.CTkLabel(parent, image=logo_image, text="")
+        else:
+            label = ctk.CTkLabel(
+                parent,
+                text=fallback_text,
+                font=("Arial", 16, "bold"),
+                text_color="#ffffff",
+            )
+
+        label.grid(row=0, column=column, padx=18, pady=10, sticky="nsew")
+        return label
+
+    def setup_ui(self):
+        self.master.configure(fg_color="#101318")
 
         # Header Frame
         header_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
         pywinstyles.set_opacity(header_frame, color="#000001") # just add this line
         header_frame.pack(pady=10, padx=10)
+        header_frame.grid_columnconfigure(0, weight=1)
+        header_frame.grid_columnconfigure(1, weight=2)
+        header_frame.grid_columnconfigure(2, weight=1)
 
-        IMAGE_WIDTH = 255*1.5
-        IMAGE_HEIGHT = 68.2*1.5
-
-        image = ctk.CTkImage(
-            light_image=Image.open(resource_path("images/SpinSync_logo.png")),
-            dark_image=Image.open(resource_path("images/SpinSync_logo.png")),
-            size=(IMAGE_WIDTH, IMAGE_HEIGHT),
+        self.create_header_logo(
+            header_frame,
+            ("epic_lab_logo.png", "epic_lab_logo.jpg", "EPIC_Lab_logo.png", "EPIC Lab Logo.png"),
+            "EPIC Lab",
+            0,
         )
-        
 
-        # Create a label to display the image
-        image_label = ctk.CTkLabel(header_frame, image=image, text='', corner_radius=60)
-        image_label.grid(row=0, column=0, columnspan=3, pady=10, padx=10)  # Span across all columns
+        app_name_label = ctk.CTkLabel(
+            header_frame,
+            text="EAST",
+            font=("Arial", 42, "bold"),
+            text_color="#ffffff",
+        )
+        app_name_label.grid(row=0, column=1, padx=28, pady=10, sticky="nsew")
+
+        self.create_header_logo(
+            header_frame,
+            (
+                "university_of_sydney_logo.png",
+                "university_of_sydney_logo.jpg",
+                "usyd_logo.png",
+                "USYD_logo.png",
+                "University of Sydney Logo.png",
+            ),
+            "University of Sydney",
+            2,
+        )
 
 
         # Create frame for input ranges
@@ -313,10 +347,10 @@ class MyInterface:
         # Create frame for the bottom section (terminal)
         terminal_frame = ctk.CTkFrame(master=self.master, bg_color="#000001", fg_color="#000001")  # Use CTkFrame
         pywinstyles.set_opacity(terminal_frame, color="#000001") # just add this line
-        terminal_frame.place(x=35, y=575)
+        terminal_frame.place(x=35, y=555)
 
         # Terminal (text output)
-        self.terminal = ctk.CTkTextbox(terminal_frame, height=125, width=350, corner_radius=20)
+        self.terminal = ctk.CTkTextbox(terminal_frame, height=95, width=350, corner_radius=20)
         self.terminal.pack(pady=10, padx=10)
 
 
@@ -326,7 +360,7 @@ class MyInterface:
         pywinstyles.set_opacity(footer_frame, value=0.85, color="#000001") # just add this line
 
         # footer_frame.pack(pady=10, padx=10)  # Use fill='x' to make the frame fill the entire width
-        footer_frame.place(x=35, y=720)
+        footer_frame.place(x=35, y=680)
 
         # Developer label
         developer_label = ctk.CTkLabel(footer_frame, text="Developed By: ", anchor="w", font=("Arial", 12, "bold"), text_color="white")
@@ -339,7 +373,7 @@ class MyInterface:
 
         # space
         space_label = ctk.CTkLabel(footer_frame, text="", anchor="e")
-        space_label.grid(row=0, column=2, sticky="e", padx=454, pady=5)  # Adjust padx as needed
+        space_label.grid(row=0, column=2, sticky="e", padx=280, pady=5)  # Adjust padx as needed
 
         # Version label
         version_label = ctk.CTkLabel(footer_frame, text="Version 1.1.0", anchor="e", font=("Arial", 12, "bold"), text_color="white")
@@ -1100,7 +1134,7 @@ class MyInterface:
             self.update_terminal("No strain test active\n")
 
     def create_plot_window(self):
-        """Create a plot window that stays on top of the main window"""
+        """Create an optional plot window without forcing it above the GUI."""
         global plot_window_open, plot_window, plot_curve, angle_data, torque_data
         
         try:
@@ -1118,11 +1152,13 @@ class MyInterface:
                 pg.setConfigOption('foreground', 'w')  # White text and lines
                 pg.setConfigOptions(antialias=True)  # Enable antialiasing globally
                 
-                # Create a QWidget container first
+                # Create a normal QWidget container first
                 self.plot_container = QWidget()
+                self.plot_container.setWindowTitle("Torque vs AFO Angle")
                 
-                # Set fixed size
-                self.plot_container.setFixedSize(750, 550)
+                # Use a smaller default size that fits lab laptop screens.
+                self.plot_container.resize(640, 420)
+                self.plot_container.setMinimumSize(520, 340)
                 
                 # Set rounded corners using stylesheet
                 self.plot_container.setStyleSheet("""
@@ -1187,43 +1223,12 @@ class MyInterface:
                 layout.setContentsMargins(15, 15, 15, 15)  # Add more padding around the plot
                 layout.addWidget(plot_window)
                 
-                # Position the window relative to the main window
-                self.plot_container.move(self.master.winfo_x() + 450, self.master.winfo_y() + 190)
-                
-                # Set window flags for a child window that stays on top of main window
-                self.plot_container.setWindowFlags(
-                    Qt.Tool |  # Makes it a tool window that stays on top of its parent
-                    Qt.CustomizeWindowHint |  # Keeps custom window appearance
-                    Qt.FramelessWindowHint  # Removes the window frame
-                )
+                # Make the plot a normal window so it can be moved, minimized,
+                # or placed behind the main GUI by the operator.
+                self.plot_container.setWindowFlags(Qt.Window)
                 
                 # Show the container
                 self.plot_container.show()
-                self.plot_container.raise_()  # Ensure it's on top
-                
-                # Apply rounded corners to the actual window using win32 API
-                try:
-                    import win32gui
-                    import win32con
-                    from ctypes import windll, c_int, byref
-                    
-                    # Get the window handle
-                    hwnd = self.plot_container.winId().__int__()
-                    
-                    # Define the region
-                    region = win32gui.CreateRoundRectRgn(0, 0, 750, 550, 40, 40)
-                    
-                    # Set the window region
-                    win32gui.SetWindowRgn(hwnd, region, True)
-                    
-                    # Make sure the window is layered for transparency
-                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-                    win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_LAYERED)
-                    
-                    # Set the window transparency
-                    windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, win32con.LWA_ALPHA)
-                except Exception as e:
-                    print(f"Error applying rounded corners: {e}")
                 
                 # Set up a timer for plot updates
                 self.setup_plot_timer()
@@ -1234,7 +1239,7 @@ class MyInterface:
             # Update title if plot already exists
             else:
                 plot_window.setTitle(plot_title)
-                self.plot_container.raise_()  # Ensure window is on top when updating
+                self.plot_container.show()
                 self.update_terminal("Plot updated\n")
                 
         except Exception as e:
@@ -1562,7 +1567,7 @@ def create_about_dialog(root):
 
     # Application name label (customize text and font)
     app_name_label = ctk.CTkLabel(master=content_frame,
-                                text="OrthoSim",
+                                text="EAST",
                                 font=("Arial", 18, "bold"))
     app_name_label.pack(pady=10)
 
@@ -1616,8 +1621,9 @@ def main():
         app = QApplication.instance()
     
     root = ctk.CTk()
-    root.geometry("1242x786")
-    root.resizable(False, False)
+    root.geometry("1024x720")
+    root.minsize(760, 650)
+    root.resizable(True, True)
 
     app_instance = MyInterface(root)
     root.protocol("WM_DELETE_WINDOW", app_instance.on_close)
@@ -1636,10 +1642,12 @@ def main():
     file_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="File", menu=file_menu)
     file_menu.add_command(label="Help", command=lambda: create_about_dialog(root))
+    view_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="View", menu=view_menu)
+    view_menu.add_command(label="Show/Update Plot", command=app_instance.create_plot_window)
+    view_menu.add_command(label="Close Plot", command=app_instance.close_plot_window)
     root.configure(menu=menubar)
-    
-    # Create plot window with delay
-    root.after(500, app_instance.create_plot_window)
+
     root.update_idletasks()
     
     root.mainloop()

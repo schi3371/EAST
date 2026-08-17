@@ -1,6 +1,6 @@
-# OrthoSim - EAST AFO Stiffness Tester
+# EAST AFO Stiffness Tester
 
-OrthoSim controls the EAST motorised benchtop tester and records sagittal-plane AFO angle, load, and calculated torque. The application interfaces with an ODrive S1 and a PhidgetBridge voltage-ratio input.
+EAST controls the motorised benchtop tester and records sagittal-plane AFO angle, load, and calculated torque. The application interfaces with an ODrive S1 and a PhidgetBridge voltage-ratio input.
 
 This repository is research software. Version 1.1.0 improves safety and traceability, but the configured mechanical conversion, load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those checks are complete.
 
@@ -43,7 +43,7 @@ The Stop button and Escape key request an immediate software stop and set the ax
 
 ## Outputs
 
-Each run creates a uniquely named pair in `OrthoSim Logs`:
+Each run creates a uniquely named pair in `EAST Logs`:
 
 - `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, command values, sensor values, converted units, and ODrive errors.
 - `*_metadata.json`: operator/specimen/fixture/calibration identifiers, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
@@ -61,7 +61,7 @@ python -m unittest discover -s tests -v
 Analyse a completed speed-verification CSV with:
 
 ```text
-python analysis/verify_speed.py "OrthoSim Logs/<run>_strain_data.csv" --output speed_results.csv
+python analysis/verify_speed.py "EAST Logs/<run>_strain_data.csv" --output speed_results.csv
 ```
 
 See `docs/VERIFICATION_PROTOCOL.md` for the pre-run checks, experimental design, stop conditions, and output requirements.
@@ -82,7 +82,12 @@ Scripts under `Testing Scripts` are guarded bench diagnostics. They do nothing w
 
 ## Building the executable
 
-`auto_exe_builder.py` builds the Windows executable with PyInstaller and includes the images and tester configuration. Build from the repository root so the expected paths resolve correctly.
+`auto_exe_builder.py` builds the Windows executable with PyInstaller and includes the images and tester configuration. Build from the repository root so the expected paths resolve correctly. The generated executable is named `EAST.exe`.
+
+The GUI header will display lab branding if these files are present:
+
+- `images/epic_lab_logo.png`
+- `images/university_of_sydney_logo.png`
 
 ## Change history
 

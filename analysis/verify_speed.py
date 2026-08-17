@@ -1,4 +1,4 @@
-"""Estimate measured AFO angular speed from an OrthoSim strain CSV."""
+"""Estimate measured AFO angular speed from an EAST strain CSV."""
 
 from __future__ import annotations
 
