@@ -71,6 +71,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError(f"Tester configuration is missing: {', '.join(missing)}")
     if config["motion"]["afo_degrees_per_odrive_turn"] <= 0:
         raise ValueError("afo_degrees_per_odrive_turn must be positive")
+    float(config["motion"]["neutral_position_turns"])
     if config["motion"]["controller_velocity_safety_multiplier"] <= 1:
         raise ValueError("controller_velocity_safety_multiplier must be greater than 1")
     if config["motion"]["maximum_afo_angle_deg"] <= 0:
@@ -183,9 +184,28 @@ def calculate_torque_nm(force_n: float, afo_angle_deg: float, config: Dict[str, 
     return float(force_n) * float(torque["lever_arm_m"]) * math.sin(math.radians(force_angle_deg))
 
 
-def motion_timeout_seconds(distance_deg: float, speed_deg_s: float, config: Dict[str, Any]) -> float:
+def motion_timeout_seconds(
+    distance_deg: float,
+    speed_deg_s: float,
+    acceleration_deg_s2: float,
+    config: Dict[str, Any],
+) -> float:
+    """Estimate a trapezoidal-trajectory duration and add the safety margin."""
     motion = config["motion"]
-    estimate = abs(float(distance_deg)) / max(float(speed_deg_s), float(motion["minimum_speed_deg_s"]))
+    distance = abs(float(distance_deg))
+    speed = max(abs(float(speed_deg_s)), float(motion["minimum_speed_deg_s"]))
+    acceleration = max(
+        abs(float(acceleration_deg_s2)),
+        float(motion["minimum_acceleration_deg_s2"]),
+    )
+
+    # If the move is too short to reach the velocity limit, acceleration and
+    # deceleration form a triangular profile. Otherwise it is trapezoidal.
+    acceleration_distance = speed * speed / acceleration
+    if distance <= acceleration_distance:
+        estimate = 2.0 * math.sqrt(distance / acceleration) if distance else 0.0
+    else:
+        estimate = distance / speed + speed / acceleration
     estimate += float(motion["motion_timeout_margin_s"])
     return min(estimate, float(motion["maximum_motion_timeout_s"]))
 

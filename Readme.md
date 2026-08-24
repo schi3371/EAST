@@ -36,8 +36,10 @@ The CSV angle and converted velocity use this same value. Comparing them with th
 3. Review `tester_config.json`, especially serial/channel values and provisional limits.
 4. Run `python Ortho-Sim.py`.
 5. Enter the full test configuration, including operator, AFO ID, fixture ID, and calibration ID.
-6. Connect the ODrive. Connection leaves the axis idle in test mode.
-7. Complete physical clearance and E-stop checks, then press Start and confirm the run summary.
+6. Connect the ODrive. The application uses the configured fixed neutral target of `0.0` ODrive relative turns as 90 degrees.
+7. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless the fixture is at the fixed neutral reference.
+
+After a successful test, the motor automatically returns to `0.0` turns. `Return to 90 deg (0 turns)` provides the same movement in manual mode after operator confirmation. `Reset Form` stops motion and clears the form; it does not move the mechanism. Because the ODrive exposes a relative rather than absolute position, the physical 90 degree alignment must still be verified whenever the encoder reference or mechanical setup can change.
 
 The Stop button and Escape key request an immediate software stop and set the axis idle. They are not substitutes for the physical E-stop.
 

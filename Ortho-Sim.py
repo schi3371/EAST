@@ -198,7 +198,7 @@ class MyInterface:
         )
         if logo_path is not None:
             image = Image.open(logo_path).convert("RGBA")
-            image.thumbnail((width - 30, 68), Image.Resampling.LANCZOS)
+            image.thumbnail((width - 30, 50), Image.Resampling.LANCZOS)
             logo_image = ctk.CTkImage(
                 light_image=image, dark_image=image, size=image.size
             )
@@ -220,12 +220,12 @@ class MyInterface:
         self.master.configure(fg_color=BG)
 
         shell = ctk.CTkFrame(self.master, fg_color=BG)
-        shell.pack(fill="both", expand=True, padx=28, pady=20)
+        shell.pack(fill="both", expand=True, padx=18, pady=8)
         shell.grid_columnconfigure(0, weight=1)
         shell.grid_rowconfigure(1, weight=1)
 
         header = ctk.CTkFrame(shell, fg_color=BG)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         header.grid_columnconfigure(0, weight=1)
         header.grid_columnconfigure(1, weight=2)
         header.grid_columnconfigure(2, weight=1)
@@ -241,7 +241,7 @@ class MyInterface:
         title_panel = ctk.CTkFrame(header, fg_color=BG)
         title_panel.grid(row=0, column=1, sticky="nsew")
         ctk.CTkLabel(
-            title_panel, text=APP_NAME, font=("Arial", 52, "bold"), text_color=TEXT
+            title_panel, text=APP_NAME, font=("Arial", 40, "bold"), text_color=TEXT
         ).pack()
         ctk.CTkLabel(
             title_panel,
@@ -266,12 +266,13 @@ class MyInterface:
 
         body = ctk.CTkFrame(shell, fg_color=BG)
         body.grid(row=1, column=0, sticky="nsew")
-        body.grid_columnconfigure(0, weight=0)
-        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure((0, 1), weight=1, uniform="main_body")
         body.grid_rowconfigure(0, weight=1)
 
-        controls = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
-        controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
+        controls = ctk.CTkScrollableFrame(
+            body, fg_color=PANEL, corner_radius=10, scrollbar_button_color="#cbd5e1"
+        )
+        controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
 
         self.status_label = ctk.CTkLabel(
@@ -281,10 +282,10 @@ class MyInterface:
             font=("Arial", 13, "bold"),
             anchor="w",
         )
-        self.status_label.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        self.status_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
 
         inputs_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        inputs_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        inputs_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         inputs_frame.grid_columnconfigure((0, 1), weight=1)
 
         fields = (
@@ -303,23 +304,23 @@ class MyInterface:
             entry = ctk.CTkEntry(
                 inputs_frame,
                 width=180,
-                height=34,
+                height=30,
                 placeholder_text=placeholder,
                 corner_radius=6,
             )
-            entry.grid(row=row, column=column, padx=8, pady=7, sticky="ew")
+            entry.grid(row=row, column=column, padx=6, pady=4, sticky="ew")
             setattr(self, attribute, entry)
         self.min_angle_input.bind("<KeyRelease>", self.validate_angle_input)
         self.max_angle_input.bind("<KeyRelease>", self.validate_angle_input)
 
         button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
-        button_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         button_frame.grid_columnconfigure((0, 1), weight=1)
         button_defs = (
             ("Connect", GREEN, "#15803d", self.connect_system),
             ("Start", BLUE, "#1d4ed8", self.start_strain_test),
             ("Stop", RED, "#b91c1c", self.stop_logging),
-            ("Reset", AMBER, "#b45309", self.reset_display),
+            ("Reset Form", AMBER, "#b45309", self.reset_display),
         )
         self.buttons = []
         for index, (label, colour, hover, command) in enumerate(button_defs):
@@ -330,24 +331,24 @@ class MyInterface:
                 fg_color=colour,
                 hover_color=hover,
                 corner_radius=8,
-                height=38,
+                height=34,
                 font=("Arial", 13, "bold"),
             )
-            button.grid(row=index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+            button.grid(row=index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
             self.buttons.append(button)
 
         manual_control_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        manual_control_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 16))
+        manual_control_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual_control_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.step_angle_input = ctk.CTkEntry(
             manual_control_frame,
             placeholder_text="Step Angle (0-10 deg)",
-            height=34,
+            height=30,
             corner_radius=6,
         )
         self.step_angle_input.grid(
-            row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8)
+            row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 4)
         )
         self.step_angle_input.bind("<KeyRelease>", self.validate_step_angle)
 
@@ -359,20 +360,20 @@ class MyInterface:
             offvalue=False,
             command=self.toggle_manual_mode,
         )
-        self.manual_mode_toggle.grid(row=0, column=2, padx=8, pady=(10, 8))
+        self.manual_mode_toggle.grid(row=0, column=2, padx=6, pady=(6, 4))
 
         self.left_arrow = ctk.CTkButton(
             manual_control_frame,
             text="<",
             width=60,
-            height=42,
+            height=34,
             command=self.move_motor_left,
             fg_color=MUTED,
             hover_color="#475569",
             corner_radius=8,
             font=("Arial", 20, "bold"),
         )
-        self.left_arrow.grid(row=1, column=0, padx=8, pady=(0, 10), sticky="ew")
+        self.left_arrow.grid(row=1, column=0, padx=6, pady=(0, 4), sticky="ew")
         self.left_arrow.bind(
             "<ButtonPress-1>", lambda _event: self.begin_continuous_movement("left")
         )
@@ -382,14 +383,14 @@ class MyInterface:
             manual_control_frame,
             text=">",
             width=60,
-            height=42,
+            height=34,
             command=self.move_motor_right,
             fg_color=MUTED,
             hover_color="#475569",
             corner_radius=8,
             font=("Arial", 20, "bold"),
         )
-        self.right_arrow.grid(row=1, column=1, padx=8, pady=(0, 10), sticky="ew")
+        self.right_arrow.grid(row=1, column=1, padx=6, pady=(0, 4), sticky="ew")
         self.right_arrow.bind(
             "<ButtonPress-1>", lambda _event: self.begin_continuous_movement("right")
         )
@@ -403,20 +404,20 @@ class MyInterface:
             onvalue=True,
             offvalue=False,
         )
-        self.mode_toggle.grid(row=1, column=2, padx=8, pady=(0, 10))
+        self.mode_toggle.grid(row=1, column=2, padx=6, pady=(0, 4))
 
         self.neutral_button = ctk.CTkButton(
             manual_control_frame,
-            text="Return to Neutral (90 deg)",
+            text="Return to 90 deg (0 turns)",
             command=self.return_to_neutral,
             fg_color="#0f766e",
             hover_color="#115e59",
             corner_radius=8,
-            height=40,
+            height=34,
             font=("Arial", 13, "bold"),
         )
         self.neutral_button.grid(
-            row=2, column=0, columnspan=3, padx=8, pady=(0, 10), sticky="ew"
+            row=2, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew"
         )
 
         for widget in (
@@ -439,7 +440,7 @@ class MyInterface:
             font=("Arial", 18, "bold"),
             text_color=TEXT,
             anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 5))
         self.terminal = ctk.CTkTextbox(
             terminal_frame,
             height=220,
@@ -450,17 +451,7 @@ class MyInterface:
             corner_radius=8,
             wrap="word",
         )
-        self.terminal.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
-
-        footer = ctk.CTkFrame(shell, fg_color=BG)
-        footer.grid(row=2, column=0, sticky="ew", pady=(14, 0))
-        footer.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            footer,
-            text=f"Version {APP_VERSION}",
-            font=("Arial", 12, "bold"),
-            text_color=MUTED,
-        ).grid(row=0, column=1, sticky="e")
+        self.terminal.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
 
         # Handle window closing event
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -611,16 +602,17 @@ class MyInterface:
                 axis.controller.config.vel_integrator_gain = controller["velocity_integrator_gain"]
 
             motion = self.system_config["motion"]
+            self.connected_neutral_position = float(motion["neutral_position_turns"])
             self.configure_trajectory(
                 motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
             )
             self.starting_position = axis.pos_vel_mapper.pos_rel
-            self.connected_neutral_position = self.starting_position
             self.safe_idle_motor()
 
             self.update_terminal(
                 f"Connected to ODrive S1\nSerial number: {serial_number}\n"
                 f"Axis errors after clear: {int(axis.active_errors)}\n"
+                f"Fixed 90 degree neutral: {self.connected_neutral_position:.8f} turns.\n"
             )
             self.set_status("CONNECTED / IDLE", GREEN)
             if self.manual_mode.get():
@@ -722,7 +714,14 @@ class MyInterface:
                     self.set_test_inputs_state(item[1])
                 elif item[0] == "run_buttons":
                     self.buttons[0].configure(state=item[1])
-                    self.buttons[1].configure(state=item[1] if self.odrive_controller else "disabled")
+                    self.buttons[1].configure(
+                        state=(
+                            item[1]
+                            if self.odrive_controller is not None
+                            and self.connected_neutral_position is not None
+                            else "disabled"
+                        )
+                    )
                     self.manual_mode_toggle.configure(state=item[1])
                 elif item[0] == "neutral_finished":
                     self.neutral_motion_active = False
@@ -846,6 +845,23 @@ class MyInterface:
             self.update_terminal("No serial connection established. Please connect ODrive first.\n")
             return
 
+        if self.connected_neutral_position is None:
+            self.update_terminal(
+                "The fixed 90 degree neutral reference is unavailable. Check tester_config.json.\n"
+            )
+            return
+
+        axis = self.get_axis()
+        tolerance_turns = afo_degrees_to_odrive_turns(
+            self.system_config["motion"]["position_tolerance_deg"], self.system_config
+        )
+        if abs(axis.pos_vel_mapper.pos_rel - self.connected_neutral_position) > tolerance_turns:
+            self.update_terminal(
+                "Fixture is not at the fixed 90 degree neutral (0 turns). Enable manual mode "
+                "and press 'Return to 90 deg (0 turns)' before starting.\n"
+            )
+            return
+
         if self.manual_mode.get():
             self.update_terminal("Disable manual mode before starting a strain test.\n")
             return
@@ -903,7 +919,7 @@ class MyInterface:
                 parameters.commanded_afo_speed_deg_s,
                 parameters.commanded_afo_acceleration_deg_s2,
             )
-            self.starting_position = axis.pos_vel_mapper.pos_rel
+            self.starting_position = self.connected_neutral_position
             app_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
             csv_path, metadata_path = create_run_paths(parameters, self.system_config, app_base)
             self.strain_file_name = str(csv_path)
@@ -916,6 +932,11 @@ class MyInterface:
                 parameters, self.system_config, offset, csv_path,
                 self.odrive_configuration_snapshot(),
             )
+            self.run_metadata["neutral_reference"] = {
+                "definition": "fixed configured 90 degree position",
+                "odrive_pos_rel_turns": self.connected_neutral_position,
+                "reference_status": self.system_config["motion"]["neutral_reference_status"],
+            }
             try:
                 self.run_metadata["hardware"]["connected_phidget_serial_number"] = (
                     self.voltage_ratio_input.getDeviceSerialNumber()
@@ -972,7 +993,9 @@ class MyInterface:
             self.buttons[0].configure(state="normal")
             self.manual_mode_toggle.configure(state="normal")
             if self.odrive_controller:
-                self.buttons[1].configure(state="normal")
+                self.buttons[1].configure(
+                    state="normal" if self.connected_neutral_position is not None else "disabled"
+                )
             if self.run_metadata is not None and not self.run_finalized:
                 self.completed_cycles = 0
                 self.finalize_run("error", str(exc))
@@ -1113,7 +1136,7 @@ class MyInterface:
             for cycle in range(1, parameters.cycles + 1):
                 self.current_cycle = cycle
                 self.command_position_and_wait(
-                    absolute_max, "moving_to_max", parameters.max_angle_deg + parameters.min_angle_deg
+                    absolute_max, "moving_to_max", parameters.max_angle_deg
                 )
                 self.command_position_and_wait(
                     absolute_min, "moving_to_min", parameters.max_angle_deg + parameters.min_angle_deg
@@ -1158,6 +1181,7 @@ class MyInterface:
         timeout_s = motion_timeout_seconds(
             nominal_distance_deg,
             self.run_parameters.commanded_afo_speed_deg_s,
+            self.run_parameters.commanded_afo_acceleration_deg_s2,
             self.system_config,
         )
         tolerance_turns = afo_degrees_to_odrive_turns(
@@ -1255,9 +1279,9 @@ class MyInterface:
                 self.plot_container = QWidget()
                 self.plot_container.setWindowTitle("Torque vs AFO Angle")
                 
-                # Use a smaller default size that fits lab laptop screens.
-                self.plot_container.resize(640, 420)
-                self.plot_container.setMinimumSize(520, 340)
+                # Use a large default graph window for easier live-data viewing.
+                self.plot_container.resize(1280, 840)
+                self.plot_container.setMinimumSize(1040, 680)
                 
                 self.plot_container.setStyleSheet("""
                     QWidget {
@@ -1574,12 +1598,12 @@ class MyInterface:
         return axis
 
     def return_to_neutral(self):
-        """Return to the encoder position captured when the ODrive was connected."""
+        """Return to the fixed 90 degree encoder position from configuration."""
         if self.odrive_controller is None:
             self.update_terminal("Connect the ODrive before returning to neutral.\n")
             return
         if self.connected_neutral_position is None:
-            self.update_terminal("No neutral reference was captured at connection.\n")
+            self.update_terminal("The fixed 90 degree neutral reference is unavailable.\n")
             return
         if not self.manual_mode.get():
             self.update_terminal("Enable manual mode before returning to neutral.\n")
@@ -1591,10 +1615,8 @@ class MyInterface:
         confirmation = CTkMessagebox(
             title="Return to Neutral",
             message=(
-                "Return to the encoder position captured when Connect was pressed?\n\n"
-                "Only continue if the mechanism was physically at the neutral 90 degree "
-                "position when it was connected. Confirm the fixture is clear and the "
-                "physical E-stop is accessible."
+                "Return to the fixed 90 degree target at 0 ODrive turns?\n\n"
+                "Confirm the fixture is clear and the physical E-stop is accessible."
             ),
             icon="question",
             option_1="Cancel",
@@ -1632,7 +1654,10 @@ class MyInterface:
                 )
             )
             timeout_s = motion_timeout_seconds(
-                distance_deg, motion["manual_speed_deg_s"], self.system_config
+                distance_deg,
+                motion["manual_speed_deg_s"],
+                motion["manual_acceleration_deg_s2"],
+                self.system_config,
             )
             tolerance_turns = afo_degrees_to_odrive_turns(
                 motion["position_tolerance_deg"], self.system_config
@@ -1640,7 +1665,7 @@ class MyInterface:
             self.motion_phase = "returning_to_connected_zero"
             axis.controller.input_pos = neutral_target
             self.update_terminal(
-                "Returning to the neutral reference captured at connection.\n"
+                f"Returning to fixed 90 degree neutral at {neutral_target:.8f} turns.\n"
             )
             deadline = time.monotonic() + timeout_s
             while abs(axis.pos_vel_mapper.pos_rel - neutral_target) > tolerance_turns:
@@ -1727,7 +1752,9 @@ class MyInterface:
             
             # Enable Start button when not in manual mode (only if connected)
             if hasattr(self, 'odrive_controller') and self.odrive_controller:
-                self.buttons[1].configure(state="normal")
+                self.buttons[1].configure(
+                    state="normal" if self.connected_neutral_position is not None else "disabled"
+                )
             
             # Enable input fields
             self.speed_input.configure(state="normal")
@@ -1814,9 +1841,10 @@ def main():
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     window_width = min(1040, max(860, screen_width - 80))
-    window_height = min(700, max(620, screen_height - 100))
+    # Keep the main controls compact while retaining the existing responsive cap.
+    window_height = int(min(700, max(620, screen_height - 100)) * 0.8)
     root.geometry(f"{window_width}x{window_height}")
-    root.minsize(860, 620)
+    root.minsize(860, 496)
     root.resizable(True, True)
 
     app_instance = MyInterface(root)

@@ -12,6 +12,7 @@ from east_core import (
     calculate_torque_nm,
     create_run_paths,
     load_tester_config,
+    motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
     sanitise_identifier,
     validate_test_parameters,
@@ -42,6 +43,23 @@ class EastCoreTests(unittest.TestCase):
         self.assertAlmostEqual(odrive_turns_to_afo_degrees(turns, self.config), 10.0)
         self.assertAlmostEqual(afo_speed_to_odrive_turns_s(10.0, self.config), turns)
         self.assertAlmostEqual(afo_acceleration_to_odrive_turns_s2(10.0, self.config), turns)
+
+    def test_motion_timeout_accounts_for_low_acceleration(self):
+        timeout = motion_timeout_seconds(10.0, 5.0, 0.25, self.config)
+        expected_motion_time = 2.0 * (10.0 / 0.25) ** 0.5
+        self.assertAlmostEqual(
+            timeout,
+            expected_motion_time + self.config["motion"]["motion_timeout_margin_s"],
+        )
+        self.assertGreater(timeout, 9.0)
+
+    def test_motion_timeout_accounts_for_trapezoidal_profile(self):
+        timeout = motion_timeout_seconds(20.0, 5.0, 10.0, self.config)
+        expected_motion_time = 20.0 / 5.0 + 5.0 / 10.0
+        self.assertAlmostEqual(
+            timeout,
+            expected_motion_time + self.config["motion"]["motion_timeout_margin_s"],
+        )
 
     def test_validate_test_parameters(self):
         parameters = validate_test_parameters(valid_values(), self.config)
