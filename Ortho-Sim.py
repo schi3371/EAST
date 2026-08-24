@@ -16,7 +16,6 @@ import csv
 import threading
 import time
 import ctypes
-import webbrowser
 
 from PIL import Image
 
@@ -68,6 +67,16 @@ plot_timer = None
 APP_NAME = "EAST"
 APP_VERSION = "1.1.1-gui"
 
+BG = "#f8fafc"
+PANEL = "#ffffff"
+PANEL_SOFT = "#eef2f7"
+TEXT = "#0f172a"
+MUTED = "#64748b"
+GREEN = "#16a34a"
+BLUE = "#2563eb"
+RED = "#dc2626"
+AMBER = "#d97706"
+
 
 def resource_path(relative_path):
     """Resolve bundled assets and source-tree assets without relying on the CWD."""
@@ -107,6 +116,7 @@ class MyInterface:
         self.strain_file_name = None
         self.test_started_monotonic = None
         self.test_stop_event = threading.Event()
+        self.neutral_stop_event = threading.Event()
         self.finalize_lock = threading.Lock()
         self.run_finalized = True
         self.motion_phase = "idle"
@@ -118,10 +128,12 @@ class MyInterface:
         self.strain_test_active = False
         self.strain_data_buffer = []
         self.starting_position = 0
+        self.connected_neutral_position = None
         self.current_cycle = 0
         
         # Add continuous movement flags
         self.continuous_movement_active = False
+        self.neutral_motion_active = False
         self.movement_direction = None
         self.movement_timer = None
         
@@ -136,11 +148,13 @@ class MyInterface:
         self.weight_filter = MovingAverageFilter(window_size=filter_window)
         self.torque_filter = MovingAverageFilter(window_size=filter_window)
 
-        set_default_color_theme("dark-blue")
-        ctk.set_appearance_mode("dark")
+        set_default_color_theme("blue")
+        ctk.set_appearance_mode("light")
 
         self.setup_ui()
         self.master.after(50, self._drain_ui_queues)
+        self.master.after(20, self._process_qt_events)
+        self.master.after(350, self.create_plot_window)
 
         # Bind window events
         self.master.bind('<Configure>', self.on_window_move)
@@ -165,72 +179,79 @@ class MyInterface:
             # If plot window was open but container was lost, recreate it
             self.create_plot_window()
 
-    def create_header_logo(self, parent, candidate_names, fallback_text, column):
-        """Create a header logo if an image file exists, otherwise use text."""
-        logo_path = None
-        for candidate in candidate_names:
-            path = resource_path(f"images/{candidate}")
-            if path.exists():
-                logo_path = path
-                break
+    def _process_qt_events(self):
+        """Keep the independent PyQtGraph window responsive beside Tk."""
+        qt_app = QApplication.instance()
+        if qt_app is not None:
+            qt_app.processEvents()
+        try:
+            self.master.after(20, self._process_qt_events)
+        except tk.TclError:
+            pass
 
+    def create_header_logo(self, parent, candidate_names, fallback_text, column, width):
+        """Place a transparent logo directly on the application background."""
+        logo_path = next(
+            (resource_path(f"images/{name}") for name in candidate_names
+             if resource_path(f"images/{name}").exists()),
+            None,
+        )
         if logo_path is not None:
+            image = Image.open(logo_path).convert("RGBA")
+            image.thumbnail((width - 30, 68), Image.Resampling.LANCZOS)
             logo_image = ctk.CTkImage(
-                light_image=Image.open(logo_path),
-                dark_image=Image.open(logo_path),
-                size=(160, 72),
+                light_image=image, dark_image=image, size=image.size
             )
             self.header_images.append(logo_image)
-            label = ctk.CTkLabel(parent, image=logo_image, text="")
+            label = ctk.CTkLabel(
+                parent, image=logo_image, text="", fg_color="transparent"
+            )
         else:
             label = ctk.CTkLabel(
                 parent,
                 text=fallback_text,
-                font=("Arial", 16, "bold"),
-                text_color="#ffffff",
+                font=("Arial", 15, "bold"),
+                text_color=TEXT,
+                fg_color="transparent",
             )
-
-        label.grid(row=0, column=column, padx=18, pady=10, sticky="nsew")
-        return label
+        label.grid(row=0, column=column, padx=10, pady=4, sticky="nsew")
 
     def setup_ui(self):
-        self.master.configure(fg_color="#111827")
+        self.master.configure(fg_color=BG)
 
-        # Header Frame
-        header_frame = ctk.CTkFrame(master=self.master, fg_color="#111827", corner_radius=0)
-        header_frame.pack(pady=(8, 4), padx=10)
-        header_frame.grid_columnconfigure(0, weight=1)
-        header_frame.grid_columnconfigure(1, weight=2)
-        header_frame.grid_columnconfigure(2, weight=1)
+        shell = ctk.CTkFrame(self.master, fg_color=BG)
+        shell.pack(fill="both", expand=True, padx=28, pady=20)
+        shell.grid_columnconfigure(0, weight=1)
+        shell.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(shell, fg_color=BG)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header.grid_columnconfigure(0, weight=1)
+        header.grid_columnconfigure(1, weight=2)
+        header.grid_columnconfigure(2, weight=1)
 
         self.create_header_logo(
-            header_frame,
+            header,
             ("epic_lab_logo.png", "epic_lab_logo.jpg", "EPIC_Lab_logo.png", "EPIC Lab Logo.png"),
             "EPIC Lab",
             0,
+            220,
         )
 
-        title_frame = ctk.CTkFrame(header_frame, fg_color="#111827", corner_radius=0)
-        title_frame.grid(row=0, column=1, padx=28, pady=8, sticky="nsew")
-
-        app_name_label = ctk.CTkLabel(
-            title_frame,
-            text=APP_NAME,
-            font=("Arial", 40, "bold"),
-            text_color="#ffffff",
-        )
-        app_name_label.pack()
-
-        version_marker_label = ctk.CTkLabel(
-            title_frame,
+        title_panel = ctk.CTkFrame(header, fg_color=BG)
+        title_panel.grid(row=0, column=1, sticky="nsew")
+        ctk.CTkLabel(
+            title_panel, text=APP_NAME, font=("Arial", 52, "bold"), text_color=TEXT
+        ).pack()
+        ctk.CTkLabel(
+            title_panel,
             text=f"{APP_VERSION} | lab laptop layout",
-            font=("Arial", 12, "bold"),
-            text_color="#9ca3af",
-        )
-        version_marker_label.pack()
+            font=("Arial", 13, "bold"),
+            text_color=MUTED,
+        ).pack()
 
         self.create_header_logo(
-            header_frame,
+            header,
             (
                 "university_of_sydney_logo.png",
                 "university_of_sydney_logo.jpg",
@@ -240,160 +261,211 @@ class MyInterface:
             ),
             "University of Sydney",
             2,
+            260,
         )
 
+        body = ctk.CTkFrame(shell, fg_color=BG)
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_columnconfigure(0, weight=0)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
-        # Create frame for input ranges
-        inputs_frame = ctk.CTkFrame(self.master, fg_color="#1f2937", corner_radius=8)
-        inputs_frame.place(x=45, y=95)
-
-        # Create input fields in a grid form for input values 
-
-        self.file_name_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="File Name (Prefix)")
-        self.file_name_input.grid(row=1, column=0, padx=5, pady=5)
-
-        self.cycles_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Cycles")
-        self.cycles_input.grid(row=1, column=1, padx=5, pady=5)
-
-        self.speed_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Speed (Degrees/Second)")
-        self.speed_input.grid(row=2, column=0, padx=5, pady=5)
-
-        self.acceleration_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Acceleration (Degrees/s^2)")
-        self.acceleration_input.grid(row=2, column=1, padx=5, pady=5)
-
-        self.min_angle_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Min Angle (Degrees)")
-        self.min_angle_input.grid(row=3, column=0, padx=5, pady=5)
-        self.min_angle_input.bind('<KeyRelease>', self.validate_angle_input)
-
-        self.max_angle_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Max Angle (Degrees)")
-        self.max_angle_input.grid(row=3, column=1, padx=5, pady=5)
-        self.max_angle_input.bind('<KeyRelease>', self.validate_angle_input)
-
-        self.operator_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Operator")
-        self.operator_input.grid(row=4, column=0, padx=5, pady=5)
-
-        self.afo_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="AFO ID")
-        self.afo_id_input.grid(row=4, column=1, padx=5, pady=5)
-
-        self.fixture_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Fixture ID")
-        self.fixture_id_input.grid(row=5, column=0, padx=5, pady=5)
-
-        self.calibration_id_input = ctk.CTkEntry(inputs_frame, width=345/2-5, placeholder_text="Calibration ID")
-        self.calibration_id_input.grid(row=5, column=1, padx=5, pady=5)
+        controls = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
+        controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
+        controls.grid_columnconfigure(0, weight=1)
 
         self.status_label = ctk.CTkLabel(
-            inputs_frame, text="DISCONNECTED", text_color="#ff6b6b",
-            font=("Arial", 12, "bold"), anchor="w"
+            controls,
+            text="DISCONNECTED",
+            text_color=RED,
+            font=("Arial", 13, "bold"),
+            anchor="w",
         )
-        self.status_label.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(0, 2))
+        self.status_label.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
 
-        # Create four buttons stacked vertically
-        button_names = ["Connect", "Start", "Stop", "Reset"]
-        commands = [self.connect_system, self.start_strain_test, self.stop_logging, self.reset_display]
-        button_colour = ["#28a745", "#007bff", "#dc3545", "#cc8400"]
-        start_button_position_x = 50
-        start_button_position_y = 320
+        inputs_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
+        inputs_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        inputs_frame.grid_columnconfigure((0, 1), weight=1)
 
-        button_positions_y = [start_button_position_y+0, start_button_position_y+37, start_button_position_y+74, start_button_position_y+111]
+        fields = (
+            ("file_name_input", "File Name (Prefix)", 0, 0),
+            ("cycles_input", "Cycles", 0, 1),
+            ("speed_input", "Speed (Degrees/Second)", 1, 0),
+            ("acceleration_input", "Acceleration (Degrees/s^2)", 1, 1),
+            ("min_angle_input", "Min Angle (Degrees)", 2, 0),
+            ("max_angle_input", "Max Angle (Degrees)", 2, 1),
+            ("operator_input", "Operator", 3, 0),
+            ("afo_id_input", "AFO ID", 3, 1),
+            ("fixture_id_input", "Fixture ID", 4, 0),
+            ("calibration_id_input", "Calibration ID", 4, 1),
+        )
+        for attribute, placeholder, row, column in fields:
+            entry = ctk.CTkEntry(
+                inputs_frame,
+                width=180,
+                height=34,
+                placeholder_text=placeholder,
+                corner_radius=6,
+            )
+            entry.grid(row=row, column=column, padx=8, pady=7, sticky="ew")
+            setattr(self, attribute, entry)
+        self.min_angle_input.bind("<KeyRelease>", self.validate_angle_input)
+        self.max_angle_input.bind("<KeyRelease>", self.validate_angle_input)
+
+        button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
+        button_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        button_frame.grid_columnconfigure((0, 1), weight=1)
+        button_defs = (
+            ("Connect", GREEN, "#15803d", self.connect_system),
+            ("Start", BLUE, "#1d4ed8", self.start_strain_test),
+            ("Stop", RED, "#b91c1c", self.stop_logging),
+            ("Reset", AMBER, "#b45309", self.reset_display),
+        )
         self.buttons = []
-        for name, command, colour, position_y in zip(button_names, commands, button_colour, button_positions_y):
-            button = ctk.CTkButton(self.master, text=name, command=command, hover_color="grey", width=340, fg_color=colour, corner_radius=8)
-            button.pack(pady=5, padx = 20)  # Use pack with pady for vertical spacing
+        for index, (label, colour, hover, command) in enumerate(button_defs):
+            button = ctk.CTkButton(
+                button_frame,
+                text=label,
+                command=command,
+                fg_color=colour,
+                hover_color=hover,
+                corner_radius=8,
+                height=38,
+                font=("Arial", 13, "bold"),
+            )
+            button.grid(row=index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
             self.buttons.append(button)
-            self.buttons[-1].place(x=start_button_position_x, y= position_y)
 
-        # Add manual control frame below the buttons
-        manual_control_frame = ctk.CTkFrame(self.master, fg_color="#1f2937", corner_radius=8)
-        manual_control_frame.place(x=45, y=465)
+        manual_control_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
+        manual_control_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 16))
+        manual_control_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-        # Add step angle input with validation
-        self.step_angle_input = ctk.CTkEntry(manual_control_frame, width=150, placeholder_text="Step Angle (0-10 deg)")
-        self.step_angle_input.grid(row=0, column=0, padx=5, pady=5)
-        self.step_angle_input.bind('<KeyRelease>', self.validate_step_angle)
+        self.step_angle_input = ctk.CTkEntry(
+            manual_control_frame,
+            placeholder_text="Step Angle (0-10 deg)",
+            height=34,
+            corner_radius=6,
+        )
+        self.step_angle_input.grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8)
+        )
+        self.step_angle_input.bind("<KeyRelease>", self.validate_step_angle)
 
-        # Add manual mode toggle
-        self.manual_mode_toggle = ctk.CTkSwitch(manual_control_frame, text="Manual Mode", 
-                                              variable=self.manual_mode,
-                                              onvalue=True, offvalue=False,
-                                              command=self.toggle_manual_mode)
-        self.manual_mode_toggle.grid(row=0, column=1, padx=5, pady=5)
+        self.manual_mode_toggle = ctk.CTkSwitch(
+            manual_control_frame,
+            text="Manual Mode",
+            variable=self.manual_mode,
+            onvalue=True,
+            offvalue=False,
+            command=self.toggle_manual_mode,
+        )
+        self.manual_mode_toggle.grid(row=0, column=2, padx=8, pady=(10, 8))
 
-        # Add arrow buttons frame
-        arrow_frame = ctk.CTkFrame(manual_control_frame, fg_color="#1f2937", corner_radius=8)
-        arrow_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        self.left_arrow = ctk.CTkButton(
+            manual_control_frame,
+            text="<",
+            width=60,
+            height=42,
+            command=self.move_motor_left,
+            fg_color=MUTED,
+            hover_color="#475569",
+            corner_radius=8,
+            font=("Arial", 20, "bold"),
+        )
+        self.left_arrow.grid(row=1, column=0, padx=8, pady=(0, 10), sticky="ew")
+        self.left_arrow.bind(
+            "<ButtonPress-1>", lambda _event: self.begin_continuous_movement("left")
+        )
+        self.left_arrow.bind("<ButtonRelease-1>", lambda _event: self.stop_continuous_movement())
 
-        # Add left arrow button
-        self.left_arrow = ctk.CTkButton(arrow_frame, text="←", width=50, height=50,
-                                      command=self.move_motor_left)
-        self.left_arrow.grid(row=0, column=0, padx=5, pady=5)
-        self.left_arrow.bind('<ButtonPress-1>', lambda _event: self.begin_continuous_movement("left"))
-        self.left_arrow.bind('<ButtonRelease-1>', lambda e: self.stop_continuous_movement())
+        self.right_arrow = ctk.CTkButton(
+            manual_control_frame,
+            text=">",
+            width=60,
+            height=42,
+            command=self.move_motor_right,
+            fg_color=MUTED,
+            hover_color="#475569",
+            corner_radius=8,
+            font=("Arial", 20, "bold"),
+        )
+        self.right_arrow.grid(row=1, column=1, padx=8, pady=(0, 10), sticky="ew")
+        self.right_arrow.bind(
+            "<ButtonPress-1>", lambda _event: self.begin_continuous_movement("right")
+        )
+        self.right_arrow.bind("<ButtonRelease-1>", lambda _event: self.stop_continuous_movement())
 
-        # Add right arrow button
-        self.right_arrow = ctk.CTkButton(arrow_frame, text="→", width=50, height=50,
-                                       command=self.move_motor_right)
-        self.right_arrow.grid(row=0, column=1, padx=5, pady=5)
-        self.right_arrow.bind('<ButtonPress-1>', lambda _event: self.begin_continuous_movement("right"))
-        self.right_arrow.bind('<ButtonRelease-1>', lambda e: self.stop_continuous_movement())
-
-        # Add continuous/step mode toggle next to arrows
         self.continuous_mode = ctk.BooleanVar(value=False)
-        self.mode_toggle = ctk.CTkSwitch(arrow_frame, text="Continuous Mode", 
-                                       variable=self.continuous_mode,
-                                       onvalue=True, offvalue=False)
-        self.mode_toggle.grid(row=0, column=2, padx=5, pady=5)
+        self.mode_toggle = ctk.CTkSwitch(
+            manual_control_frame,
+            text="Continuous Mode",
+            variable=self.continuous_mode,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.mode_toggle.grid(row=1, column=2, padx=8, pady=(0, 10))
 
-        # Disable manual control buttons initially
-        self.left_arrow.configure(state="disabled")
-        self.right_arrow.configure(state="disabled")
-        self.step_angle_input.configure(state="disabled")
-        self.mode_toggle.configure(state="disabled")
-        
-        # Disable Start button initially (until system is connected)
-        self.buttons[1].configure(state="disabled")  # Index 1 is the "Start" button
+        self.neutral_button = ctk.CTkButton(
+            manual_control_frame,
+            text="Return to Neutral (90 deg)",
+            command=self.return_to_neutral,
+            fg_color="#0f766e",
+            hover_color="#115e59",
+            corner_radius=8,
+            height=40,
+            font=("Arial", 13, "bold"),
+        )
+        self.neutral_button.grid(
+            row=2, column=0, columnspan=3, padx=8, pady=(0, 10), sticky="ew"
+        )
 
-        # Create frame for the bottom section (terminal)
-        terminal_frame = ctk.CTkFrame(master=self.master, fg_color="#1f2937", corner_radius=8)
-        terminal_frame.place(x=35, y=510)
+        for widget in (
+            self.left_arrow,
+            self.right_arrow,
+            self.step_angle_input,
+            self.mode_toggle,
+            self.neutral_button,
+        ):
+            widget.configure(state="disabled")
+        self.buttons[1].configure(state="disabled")
 
-        # Terminal (text output)
-        self.terminal = ctk.CTkTextbox(terminal_frame, height=70, width=350, corner_radius=20)
-        self.terminal.pack(pady=10, padx=10)
+        terminal_frame = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
+        terminal_frame.grid(row=0, column=1, sticky="nsew")
+        terminal_frame.grid_columnconfigure(0, weight=1)
+        terminal_frame.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            terminal_frame,
+            text="Session Terminal",
+            font=("Arial", 18, "bold"),
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        self.terminal = ctk.CTkTextbox(
+            terminal_frame,
+            height=220,
+            fg_color=BG,
+            text_color=TEXT,
+            border_width=1,
+            border_color="#cbd5e1",
+            corner_radius=8,
+            wrap="word",
+        )
+        self.terminal.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
 
-
-        # Create frame for the footer section with a larger width
-        footer_frame = ctk.CTkFrame(master=self.master, width=200, fg_color="#1f2937", corner_radius=8)
-
-        # footer_frame.pack(pady=10, padx=10)  # Use fill='x' to make the frame fill the entire width
-        footer_frame.place(x=35, y=610)
-
-        # Developer label
-        developer_label = ctk.CTkLabel(footer_frame, text="Developed By: ", anchor="w", font=("Arial", 12, "bold"), text_color="white")
-        developer_label.grid(row=0, column=0, sticky="w", padx=10, pady=5)  # Adjust padx as needed
-
-        # Developer's name with hyperlink
-        developer_name_label = ctk.CTkLabel(footer_frame, text="Brock Cooper", anchor="w", cursor="hand2", text_color="#007bff", font=("Arial", 12, "bold"))
-        developer_name_label.grid(row=0, column=0, sticky="w", padx=95, pady=5)  # Adjust padx as needed
-        developer_name_label.bind("<Button-1>", lambda event: self.open_website("https://brockcooper.au"))
-
-        # space
-        space_label = ctk.CTkLabel(footer_frame, text="", anchor="e")
-        space_label.grid(row=0, column=2, sticky="e", padx=280, pady=5)  # Adjust padx as needed
-
-        # Version label
-        version_label = ctk.CTkLabel(footer_frame, text=f"Version {APP_VERSION}", anchor="e", font=("Arial", 12, "bold"), text_color="white")
-        version_label.grid(row=0, column=2, sticky="e", padx=10, pady=5)  # Adjust padx as needed
+        footer = ctk.CTkFrame(shell, fg_color=BG)
+        footer.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            footer,
+            text=f"Version {APP_VERSION}",
+            font=("Arial", 12, "bold"),
+            text_color=MUTED,
+        ).grid(row=0, column=1, sticky="e")
 
         # Handle window closing event
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_terminal(f"{APP_NAME} {APP_VERSION}\nRunning from: {Path(__file__).resolve()}\n")
  
-    def open_website(self, url):
-            webbrowser.open_new(url)
-            
-    def change_theme(self, choice):
-        ctk.set_appearance_mode(choice)
-
     def find_odrive_with_timeout(serial_number, timeout=5):
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -413,7 +485,7 @@ class MyInterface:
         axis_number = int(self.system_config["hardware"]["odrive_axis"])
         return getattr(self.odrive_controller, f"axis{axis_number}")
 
-    def set_status(self, text, colour="#ffffff"):
+    def set_status(self, text, colour=TEXT):
         if threading.current_thread() is not threading.main_thread():
             self.ui_message_queue.put(("status", text, colour))
             return
@@ -511,7 +583,9 @@ class MyInterface:
         if self.odrive_controller is not None:
             self.safe_idle_motor("reconnect")
         self.buttons[1].configure(state="disabled")
-        self.set_status("CONNECTING", "#ffd166")
+        self.neutral_button.configure(state="disabled")
+        self.connected_neutral_position = None
+        self.set_status("CONNECTING", AMBER)
         serial_number = self.system_config["hardware"]["odrive_serial_number"]
         timeout_duration = self.system_config["hardware"]["odrive_connection_timeout_s"]
 
@@ -541,13 +615,14 @@ class MyInterface:
                 motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
             )
             self.starting_position = axis.pos_vel_mapper.pos_rel
+            self.connected_neutral_position = self.starting_position
             self.safe_idle_motor()
 
             self.update_terminal(
                 f"Connected to ODrive S1\nSerial number: {serial_number}\n"
                 f"Axis errors after clear: {int(axis.active_errors)}\n"
             )
-            self.set_status("CONNECTED / IDLE", "#4dd4ac")
+            self.set_status("CONNECTED / IDLE", GREEN)
             if self.manual_mode.get():
                 self.toggle_manual_mode()
             else:
@@ -555,21 +630,24 @@ class MyInterface:
         except (concurrent.futures.TimeoutError, TimeoutError) as exc:
             self.odrive_controller = None
             self.update_terminal(f"Connection timed out: {exc}\n")
-            self.set_status("DISCONNECTED", "#ff6b6b")
+            self.set_status("DISCONNECTED", RED)
         except Exception as exc:
             self.safe_idle_motor("connection/configuration error")
             self.odrive_controller = None
             self.update_terminal(f"Error connecting to ODrive: {exc}\n")
-            self.set_status("ERROR", "#ff6b6b")
+            self.set_status("ERROR", RED)
 
     def disconnect_odrive(self):
         """Disconnect from ODrive safely"""
         try:
             if self.odrive_controller:
+                self.neutral_stop_event.set()
                 self.safe_idle_motor("disconnect")
                 self.odrive_controller = None
+                self.connected_neutral_position = None
                 self.buttons[1].configure(state="disabled")
-                self.set_status("DISCONNECTED", "#ff6b6b")
+                self.neutral_button.configure(state="disabled")
+                self.set_status("DISCONNECTED", RED)
                 self.update_terminal("ODrive disconnected and set to idle state\n")
         except Exception as e:
             self.update_terminal(f"Error disconnecting ODrive: {e}\n")
@@ -577,9 +655,10 @@ class MyInterface:
     def stop_logging(self):
         was_active = self.strain_test_active
         self.test_stop_event.set()
+        self.neutral_stop_event.set()
         self.strain_test_active = False
         self.safe_idle_motor("operator stop")
-        self.set_status("STOPPED / IDLE", "#ffd166")
+        self.set_status("STOPPED / IDLE", AMBER)
         if was_active:
             self.update_terminal("Test stop requested; the data file will be finalized as aborted.\n")
         else:
@@ -616,7 +695,7 @@ class MyInterface:
         self.safe_idle_motor("reset")
         if self.odrive_controller and not self.manual_mode.get():
             self.buttons[1].configure(state="normal")
-            self.set_status("CONNECTED / IDLE", "#4dd4ac")
+            self.set_status("CONNECTED / IDLE", GREEN)
 
 
     def clear_terminal(self):
@@ -645,6 +724,18 @@ class MyInterface:
                     self.buttons[0].configure(state=item[1])
                     self.buttons[1].configure(state=item[1] if self.odrive_controller else "disabled")
                     self.manual_mode_toggle.configure(state=item[1])
+                elif item[0] == "neutral_finished":
+                    self.neutral_motion_active = False
+                    enabled = (
+                        self.manual_mode.get()
+                        and self.odrive_controller is not None
+                        and self.connected_neutral_position is not None
+                        and not self.strain_test_active
+                    )
+                    state = "normal" if enabled else "disabled"
+                    self.left_arrow.configure(state=state)
+                    self.right_arrow.configure(state=state)
+                    self.neutral_button.configure(state=state)
         except queue.Empty:
             pass
 
@@ -703,7 +794,8 @@ class MyInterface:
                 if self.strain_test_active:
                     self.stop_logging()
 
-                for thread_name in ("strain_thread", "data_collection_thread"):
+                self.neutral_stop_event.set()
+                for thread_name in ("strain_thread", "data_collection_thread", "neutral_thread"):
                     thread = getattr(self, thread_name, None)
                     if thread and thread.is_alive() and thread is not threading.current_thread():
                         thread.join(timeout=2.0)
@@ -748,6 +840,7 @@ class MyInterface:
                 plot_window.setXRange(0, 1)  # Reset x-axis
                 plot_window.setYRange(0, 1)  # Reset y-axis
                 plot_window.enableAutoRange()  # Enable auto-ranging for both axes
+        self.create_plot_window()
 
         if self.odrive_controller is None:
             self.update_terminal("No serial connection established. Please connect ODrive first.\n")
@@ -855,7 +948,7 @@ class MyInterface:
                 target=self.strain_test_control, name="strain-motion"
             )
             self.strain_thread.start()
-            self.set_status("TEST RUNNING", "#4dd4ac")
+            self.set_status("TEST RUNNING", GREEN)
             self.update_terminal(
                 f"Strain test started. Data: {self.strain_file_name}\n"
                 f"Trajectory speed: {self.commanded_odrive_velocity:.6f} turns/s\n"
@@ -873,7 +966,7 @@ class MyInterface:
                 except Exception:
                     pass
                 self.voltage_ratio_input = None
-            self.set_status("ERROR / IDLE", "#ff6b6b")
+            self.set_status("ERROR / IDLE", RED)
             self.update_terminal(f"Error initializing strain test: {exc}\n")
             self.set_test_inputs_state("normal")
             self.buttons[0].configure(state="normal")
@@ -1125,7 +1218,7 @@ class MyInterface:
                 write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
             except Exception as exc:
                 self.update_terminal(f"Failed to finalize metadata: {exc}\n")
-            colour = "#4dd4ac" if status == "completed" else "#ffd166" if status == "aborted" else "#ff6b6b"
+            colour = GREEN if status == "completed" else AMBER if status == "aborted" else RED
             self.set_status(f"{status.upper()} / IDLE", colour)
             self.ui_message_queue.put(("inputs", "normal"))
             self.ui_message_queue.put(("run_buttons", "normal"))
@@ -1140,7 +1233,7 @@ class MyInterface:
             self.update_terminal("No strain test active\n")
 
     def create_plot_window(self):
-        """Create an optional plot window without forcing it above the GUI."""
+        """Create the independent torque-angle plot window."""
         global plot_window_open, plot_window, plot_curve, angle_data, torque_data
         
         try:
@@ -1153,9 +1246,9 @@ class MyInterface:
             
             # Create plot window if not already open
             if not plot_window_open:
-                # Configure PyQtGraph appearance
-                pg.setConfigOption('background', '#2b2b2b')  # Dark gray background
-                pg.setConfigOption('foreground', 'w')  # White text and lines
+                # Match the light EAST interface while retaining a separate OS window.
+                pg.setConfigOption('background', '#ffffff')
+                pg.setConfigOption('foreground', TEXT)
                 pg.setConfigOptions(antialias=True)  # Enable antialiasing globally
                 
                 # Create a normal QWidget container first
@@ -1166,27 +1259,26 @@ class MyInterface:
                 self.plot_container.resize(640, 420)
                 self.plot_container.setMinimumSize(520, 340)
                 
-                # Set rounded corners using stylesheet
                 self.plot_container.setStyleSheet("""
                     QWidget {
-                        background-color: #2b2b2b;
-                        border: 0px solid #444444;
+                        background-color: #f8fafc;
+                        border: 0px;
                     }
                 """)
                 
                 # Create the plot widget with no navigation bar
                 plot_window = pg.PlotWidget()
-                plot_window.setBackground('#2b2b2b')
+                plot_window.setBackground('#ffffff')
                 
                 # Enable antialiasing for the plot
                 plot_window.setAntialiasing(True)
                 
                 # Set title with larger font
-                title_style = {'color': '#ffffff', 'size': '18pt'}
+                title_style = {'color': TEXT, 'size': '18pt'}
                 plot_window.setTitle(plot_title, **title_style)
                 
                 # Set axis labels with larger font and white color
-                label_style = {'color': '#ffffff', 'font-size': '12pt'}
+                label_style = {'color': TEXT, 'font-size': '12pt'}
                 plot_window.setLabel('left', 'Torque (Nm)', **label_style)
                 plot_window.setLabel('bottom', 'AFO Angle (degrees)', **label_style)
                 
@@ -1198,14 +1290,15 @@ class MyInterface:
                 
                 # Customize axes with larger text
                 for axis in [plot_window.getAxis('left'), plot_window.getAxis('bottom')]:
-                    axis.setPen(color='white', width=2)
-                    axis.setTextPen(color='white')
+                    axis.setPen(color=TEXT, width=2)
+                    axis.setTextPen(color=TEXT)
                     axis.setStyle(tickFont=QFont('Arial', 12))
-                    # Make the axis numbers white
-                    axis.setTextPen('w')
+                    axis.setTextPen(TEXT)
                 
                 # Add a legend with custom styling and larger text
-                legend = plot_window.addLegend(pen='w', brush=(50, 50, 50, 200), labelTextColor='w')
+                legend = plot_window.addLegend(
+                    pen='#cbd5e1', brush=(248, 250, 252, 235), labelTextColor=TEXT
+                )
                 legend.setLabelTextSize('12pt')  # Increased legend text size
                 
                 # Create the data curve with line only (no symbols)
@@ -1213,7 +1306,7 @@ class MyInterface:
                     angle_data, 
                     torque_data, 
                     pen=pg.mkPen(
-                        color=(255, 215, 0),  # Gold color
+                        color=(37, 99, 235),
                         width=2,  # Maintain line width for clarity
                         cosmetic=True,  # Ensures consistent width during scaling
                         style=Qt.SolidLine  # Ensure solid line style
@@ -1235,6 +1328,7 @@ class MyInterface:
                 
                 # Show the container
                 self.plot_container.show()
+                self.plot_container.raise_()
                 
                 # Set up a timer for plot updates
                 self.setup_plot_timer()
@@ -1246,6 +1340,7 @@ class MyInterface:
             else:
                 plot_window.setTitle(plot_title)
                 self.plot_container.show()
+                self.plot_container.raise_()
                 self.update_terminal("Plot updated\n")
                 
         except Exception as e:
@@ -1465,6 +1560,8 @@ class MyInterface:
             raise RuntimeError("Enable manual mode before commanding manual movement")
         if self.strain_test_active:
             raise RuntimeError("Manual movement is disabled while a strain test is active")
+        if self.neutral_motion_active:
+            raise RuntimeError("Wait for the neutral return to finish")
         motion = self.system_config["motion"]
         self.configure_trajectory(
             motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
@@ -1473,8 +1570,104 @@ class MyInterface:
         if int(axis.active_errors):
             self.safe_idle_motor("manual movement error")
             raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
-        self.set_status("MANUAL / ACTIVE", "#ffd166")
+        self.set_status("MANUAL / ACTIVE", AMBER)
         return axis
+
+    def return_to_neutral(self):
+        """Return to the encoder position captured when the ODrive was connected."""
+        if self.odrive_controller is None:
+            self.update_terminal("Connect the ODrive before returning to neutral.\n")
+            return
+        if self.connected_neutral_position is None:
+            self.update_terminal("No neutral reference was captured at connection.\n")
+            return
+        if not self.manual_mode.get():
+            self.update_terminal("Enable manual mode before returning to neutral.\n")
+            return
+        if self.strain_test_active or self.neutral_motion_active:
+            self.update_terminal("Neutral return is unavailable while another motion is active.\n")
+            return
+
+        confirmation = CTkMessagebox(
+            title="Return to Neutral",
+            message=(
+                "Return to the encoder position captured when Connect was pressed?\n\n"
+                "Only continue if the mechanism was physically at the neutral 90 degree "
+                "position when it was connected. Confirm the fixture is clear and the "
+                "physical E-stop is accessible."
+            ),
+            icon="question",
+            option_1="Cancel",
+            option_2="Return",
+        )
+        if confirmation.get() != "Return":
+            return
+
+        self.stop_continuous_movement()
+        self.neutral_stop_event.clear()
+        self.neutral_motion_active = True
+        self.left_arrow.configure(state="disabled")
+        self.right_arrow.configure(state="disabled")
+        self.neutral_button.configure(state="disabled")
+        self.neutral_thread = threading.Thread(
+            target=self._return_to_neutral_worker,
+            name="neutral-return",
+        )
+        self.neutral_thread.start()
+
+    def _return_to_neutral_worker(self):
+        try:
+            motion = self.system_config["motion"]
+            self.configure_trajectory(
+                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+            )
+            axis = self.enter_closed_loop()
+            neutral_target = self.connected_neutral_position
+            if neutral_target is None:
+                raise RuntimeError("Neutral reference is unavailable")
+            current_turns = axis.pos_vel_mapper.pos_rel
+            distance_deg = abs(
+                odrive_turns_to_afo_degrees(
+                    current_turns - neutral_target, self.system_config
+                )
+            )
+            timeout_s = motion_timeout_seconds(
+                distance_deg, motion["manual_speed_deg_s"], self.system_config
+            )
+            tolerance_turns = afo_degrees_to_odrive_turns(
+                motion["position_tolerance_deg"], self.system_config
+            )
+            self.motion_phase = "returning_to_connected_zero"
+            axis.controller.input_pos = neutral_target
+            self.update_terminal(
+                "Returning to the neutral reference captured at connection.\n"
+            )
+            deadline = time.monotonic() + timeout_s
+            while abs(axis.pos_vel_mapper.pos_rel - neutral_target) > tolerance_turns:
+                if self.neutral_stop_event.is_set():
+                    raise TestStopped()
+                active_errors = int(axis.active_errors)
+                if active_errors:
+                    raise RuntimeError(
+                        f"ODrive active errors during neutral return: {active_errors}"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Neutral return timed out after {timeout_s:.1f} seconds"
+                    )
+                time.sleep(0.01)
+            self.update_terminal("Neutral reference reached.\n")
+            self.set_status("MANUAL / NEUTRAL", "#0f766e")
+        except TestStopped:
+            self.safe_idle_motor("neutral return stopped")
+            self.update_terminal("Neutral return stopped.\n")
+        except Exception as exc:
+            self.safe_idle_motor("neutral return error")
+            self.set_status("ERROR / IDLE", RED)
+            self.update_terminal(f"Neutral return failed: {exc}\n")
+        finally:
+            self.motion_phase = "idle"
+            self.ui_message_queue.put(("neutral_finished",))
 
     def clamp_manual_target(self, target_turns):
         maximum_angle = self.system_config["motion"]["maximum_afo_angle_deg"]
@@ -1498,6 +1691,14 @@ class MyInterface:
             self.right_arrow.configure(state="normal")
             self.step_angle_input.configure(state="normal")
             self.mode_toggle.configure(state="normal")
+            self.neutral_button.configure(
+                state=(
+                    "normal"
+                    if self.odrive_controller is not None
+                    and self.connected_neutral_position is not None
+                    else "disabled"
+                )
+            )
             
             # Disable Start button in manual mode
             self.buttons[1].configure(state="disabled")
@@ -1514,6 +1715,7 @@ class MyInterface:
                 except Exception as exc:
                     self.update_terminal(f"Unable to enable manual motion: {exc}\n")
         else:
+            self.neutral_stop_event.set()
             self.stop_continuous_movement()
             self.safe_idle_motor("manual mode disabled")
             # Disable manual controls
@@ -1521,6 +1723,7 @@ class MyInterface:
             self.right_arrow.configure(state="disabled")
             self.step_angle_input.configure(state="disabled")
             self.mode_toggle.configure(state="disabled")
+            self.neutral_button.configure(state="disabled")
             
             # Enable Start button when not in manual mode (only if connected)
             if hasattr(self, 'odrive_controller') and self.odrive_controller:
@@ -1557,66 +1760,46 @@ class MyInterface:
             widget.delete(0, 'end')
 
 def create_about_dialog(root):
-    icon_path = str(resource_path("images/icon.ico"))
-
-    # Set the icon for the about dialog
-    about_dialog = ctk.CTk()
-    
-    about_dialog.geometry("560x720")  # Adjust dimensions as needed
+    about_dialog = ctk.CTkToplevel(root)
+    about_dialog.geometry("520x430")
+    about_dialog.configure(fg_color=BG)
     about_dialog.title("About")
-    about_dialog.iconbitmap(icon_path)  # Set the icon for the about dialog
+    about_dialog.transient(root)
+    try:
+        icon_path = resource_path("images/icon.ico")
+        if icon_path.exists():
+            about_dialog.iconbitmap(str(icon_path))
+    except Exception:
+        pass
 
-    # Frame for content
-    content_frame = ctk.CTkFrame(master=about_dialog, width=2000, height=200)
-    content_frame.pack(padx=25, pady=25)
-
-    # Application name label (customize text and font)
-    app_name_label = ctk.CTkLabel(master=content_frame,
-                                text=APP_NAME,
-                                font=("Arial", 18, "bold"))
-    app_name_label.pack(pady=10)
-
-    # Version label (customize text and font)
-    version_label = ctk.CTkLabel(master=content_frame,
-                                text=f"Version: {APP_VERSION}",
-                                font=("Arial", 12, "bold"))
-    version_label.pack()
-
-    # Author label (customize text and font)
-    author_label = ctk.CTkLabel(master=content_frame,
-                                text="Developed by: Brock Cooper",
-                                font=("Arial", 12, "bold"))
-    author_label.pack()
-
-    # Usage
-    description_label = ctk.CTkLabel(master=content_frame,
-                                text="\n\
-This program was designed specifically to be used with the custom AFO tester.\n\n\
-The program will display the current angle and weight of the AFO on the plot window.\n\n\
-The program will also display the current cycle number and the total cycles in the strain test.\n\n\
-In order to start logging data fill in all the fields and click the connect button.\n\n\
-The program will connect to the AFO tester and display if the connection is successful.\n\n\
-To start a test click the start button and the program will begin logging data.\n\n\
-You should see the terminal window start to display the data as the program is logging.\n\n\
-The weight and angle values update on the plot window.",
-                                font=("Arial", 12), padx=20)
-    description_label.pack()
-
-
-    # Copyright label (customize text and font)
-    copyright_label = ctk.CTkLabel(master=content_frame,
-                                text="Copyright © 2024 Brock Cooper",
-                                font=("Arial", 10))
-    copyright_label.pack()
-
-    # Close button
-    close_button = ctk.CTkButton(master=content_frame,
-                                text="Close",
-                                command=about_dialog.destroy)
-    close_button.pack(pady=20)
-
-
-    about_dialog.mainloop()
+    content = ctk.CTkFrame(about_dialog, fg_color=PANEL, corner_radius=10)
+    content.pack(fill="both", expand=True, padx=24, pady=24)
+    ctk.CTkLabel(
+        content, text=APP_NAME, font=("Arial", 34, "bold"), text_color=TEXT
+    ).pack(pady=(28, 4))
+    ctk.CTkLabel(
+        content,
+        text=f"EPIC AFO Stiffness Tester\nVersion {APP_VERSION}",
+        font=("Arial", 14, "bold"),
+        text_color=MUTED,
+        justify="center",
+    ).pack(pady=(0, 24))
+    ctk.CTkLabel(
+        content,
+        text=(
+            "EAST controls the motorised benchtop AFO stiffness tester, "
+            "records load and motion data, and displays the live torque-angle plot.\n\n"
+            "Confirm the fixture is clear and the physical E-stop is accessible "
+            "before enabling motion."
+        ),
+        font=("Arial", 13),
+        text_color=TEXT,
+        wraplength=400,
+        justify="left",
+    ).pack(padx=24)
+    ctk.CTkButton(
+        content, text="Close", command=about_dialog.destroy, width=140
+    ).pack(pady=28)
 
 def main():
     print(f"Starting {APP_NAME} {APP_VERSION} from {Path(__file__).resolve()}")
@@ -1628,8 +1811,12 @@ def main():
         app = QApplication.instance()
     
     root = ctk.CTk()
-    root.geometry("900x650")
-    root.minsize(720, 560)
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    window_width = min(1040, max(860, screen_width - 80))
+    window_height = min(700, max(620, screen_height - 100))
+    root.geometry(f"{window_width}x{window_height}")
+    root.minsize(860, 620)
     root.resizable(True, True)
 
     app_instance = MyInterface(root)
@@ -1649,10 +1836,6 @@ def main():
     file_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="File", menu=file_menu)
     file_menu.add_command(label="Help", command=lambda: create_about_dialog(root))
-    view_menu = tk.Menu(menubar, tearoff=0)
-    menubar.add_cascade(label="View", menu=view_menu)
-    view_menu.add_command(label="Show/Update Plot", command=app_instance.create_plot_window)
-    view_menu.add_command(label="Close Plot", command=app_instance.close_plot_window)
     root.configure(menu=menubar)
 
     root.update_idletasks()

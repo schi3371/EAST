@@ -70,12 +70,25 @@ See `docs/VERIFICATION_PROTOCOL.md` for the pre-run checks, experimental design,
 
 Scripts under `Testing Scripts` are guarded bench diagnostics. They do nothing when imported and refuse to open or move hardware without `--confirm-hardware`. Use `--help` to see required parameters. The GUI remains the authoritative application for recorded strain tests.
 
+For Mac-only GUI layout checks, use the preview script. It does not import ODrive, Phidget, PyQtGraph, pywinstyles, or the main hardware-control GUI:
+
+```text
+python "Testing Scripts/gui-layout-preview.py"
+```
+
+Install its lightweight dependency with:
+
+```text
+python -m pip install -r requirements-gui-preview.txt
+```
+
 ## Project structure
 
 - `Ortho-Sim.py`: GUI and coordinated hardware workflow
 - `east_core.py`: hardware-independent validation, conversions, load/torque calculations, and metadata helpers
 - `tester_config.json`: hardware assumptions, calibration values, limits, and sampling settings
 - `analysis/verify_speed.py`: angle-time speed verification
+- `Testing Scripts/gui-layout-preview.py`: Mac-safe GUI layout preview with no hardware imports
 - `tests/`: dependency-free offline tests
 - `docs/VERIFICATION_PROTOCOL.md`: laboratory verification procedure
 - `Odrive Backup Config/`: stored ODrive hardware configuration backup
