@@ -29,13 +29,21 @@ The current conversion is 2.055 AFO degrees per ODrive turn and is explicitly pr
 
 The CSV angle and converted velocity use this same value. Comparing them with the command checks controller execution conditional on the assumed conversion; it does not independently prove physical AFO angular speed.
 
+The current commanded-speed range is 0.1-20 deg/s. Acceleration remains an editable commanded parameter in the range 0.1-100 deg/s^2; no acceleration value is yet validated as a final protocol setting. A test is blocked unless the full commanded ROM provides at least 5 deg of calculated constant-speed travel:
+
+```text
+calculated constant-speed span = total ROM - speed^2 / acceleration
+```
+
+This is a command-profile feasibility calculation, not an independent measurement of physical motion.
+
 ## Running the GUI
 
 1. Install the Windows ODrive and Phidget drivers.
 2. Create a Python environment and install `requirements.txt`.
 3. Review `tester_config.json`, especially serial/channel values and provisional limits.
 4. Run `python Ortho-Sim.py`.
-5. Enter the full test configuration, including operator, AFO ID, fixture ID, and calibration ID.
+5. Enter the full commanded test configuration, including speed, acceleration, angle limits, cycles, operator, AFO ID, fixture ID, and calibration ID.
 6. Connect the ODrive. The application uses the configured fixed neutral target of `0.0` ODrive relative turns as 90 degrees.
 7. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless the fixture is at the fixed neutral reference.
 
@@ -47,10 +55,10 @@ The Stop button and Escape key request an immediate software stop and set the ax
 
 Each run creates a uniquely named pair in `EAST Logs`:
 
-- `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, command values, sensor values, converted units, and ODrive errors.
+- `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, commanded speed/acceleration/range/cycles, sensor values, converted units, and ODrive errors.
 - `*_metadata.json`: operator/specimen/fixture/calibration identifiers, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
 
-Raw columns are preserved for reprocessing. Moving-average columns are derived outputs and should not replace raw data in verification analyses.
+Raw sensor and ODrive columns are preserved for reprocessing. Columns labelled `ODrive-Derived` use the provisional motion conversion and are not independent physical measurements. Moving-average columns are derived outputs and should not replace unfiltered data in verification analyses.
 
 ## Verification
 

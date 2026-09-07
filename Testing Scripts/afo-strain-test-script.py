@@ -31,6 +31,7 @@ from east_core import (
     afo_speed_to_odrive_turns_s,
     calculate_load,
     calculate_torque_nm,
+    constant_speed_span_deg,
     create_run_paths,
     load_tester_config,
     make_run_metadata,
@@ -59,9 +60,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def wait_for_position(axis, target, distance_deg, speed_deg_s, config):
+def wait_for_position(axis, target, distance_deg, speed_deg_s, acceleration_deg_s2, config):
     tolerance = afo_degrees_to_odrive_turns(config["motion"]["position_tolerance_deg"], config)
-    timeout = motion_timeout_seconds(distance_deg, speed_deg_s, config)
+    timeout = motion_timeout_seconds(distance_deg, speed_deg_s, acceleration_deg_s2, config)
     deadline = time.monotonic() + timeout
     while abs(axis.pos_vel_mapper.pos_rel - target) > tolerance:
         if int(axis.active_errors):
@@ -88,6 +89,18 @@ def main():
         raise SystemExit("Minimum angle magnitude is outside configured limits")
     if not 0 <= args.max_angle_deg <= motion["maximum_afo_angle_deg"]:
         raise SystemExit("Maximum angle magnitude is outside configured limits")
+    if args.min_angle_deg == 0 and args.max_angle_deg == 0:
+        raise SystemExit("At least one angle limit must be greater than zero")
+    expected_full_span = constant_speed_span_deg(
+        args.min_angle_deg + args.max_angle_deg,
+        args.speed_deg_s,
+        args.acceleration_deg_s2,
+    )
+    if expected_full_span < motion["minimum_constant_speed_span_deg"]:
+        raise SystemExit(
+            "The selected commanded speed, acceleration and angle range do not provide "
+            f"the required {motion['minimum_constant_speed_span_deg']:g} deg constant-speed span"
+        )
 
     parameters = TestParameters(
         file_prefix=args.prefix,
@@ -123,7 +136,9 @@ def main():
             raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
 
         velocity_turns_s = afo_speed_to_odrive_turns_s(args.speed_deg_s, config)
-        acceleration_turns_s2 = afo_acceleration_to_odrive_turns_s2(args.acceleration_deg_s2, config)
+        acceleration_turns_s2 = afo_acceleration_to_odrive_turns_s2(
+            args.acceleration_deg_s2, config
+        )
         axis.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
         axis.controller.config.input_mode = INPUT_MODE_TRAP_TRAJ
         axis.trap_traj.config.vel_limit = velocity_turns_s
@@ -170,12 +185,21 @@ def main():
             writer.writerow(CSV_COLUMNS)
             axis.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
             for cycle in range(1, args.cycles + 1):
-                for target, phase, distance in (
-                    (maximum_turns, "moving_to_max", args.min_angle_deg + args.max_angle_deg),
-                    (minimum_turns, "moving_to_min", args.min_angle_deg + args.max_angle_deg),
+                for target, phase in (
+                    (maximum_turns, "moving_to_max"),
+                    (minimum_turns, "moving_to_min"),
                 ):
+                    distance = abs(odrive_turns_to_afo_degrees(
+                        target - axis.pos_vel_mapper.pos_rel, config
+                    ))
+                    expected_constant_span = constant_speed_span_deg(
+                        distance, args.speed_deg_s, args.acceleration_deg_s2
+                    )
                     axis.controller.input_pos = target
-                    for _ in wait_for_position(axis, target, distance, args.speed_deg_s, config):
+                    for _ in wait_for_position(
+                        axis, target, distance, args.speed_deg_s,
+                        args.acceleration_deg_s2, config,
+                    ):
                         ratio = phidget.getVoltageRatio()
                         position_turns = axis.pos_vel_mapper.pos_rel
                         angle_deg = odrive_turns_to_afo_degrees(position_turns - zero_turns, config)
@@ -188,7 +212,12 @@ def main():
                         writer.writerow([
                             datetime.now().astimezone().isoformat(timespec="milliseconds"),
                             f"{time.monotonic() - start_time:.6f}", sample_index, cycle, phase,
-                            args.speed_deg_s, velocity_turns_s, position_turns, angle_deg,
+                            args.speed_deg_s, args.acceleration_deg_s2,
+                            -args.min_angle_deg, args.max_angle_deg, args.cycles,
+                            args.prefix, args.operator, args.afo_id,
+                            args.fixture_id, args.calibration_id,
+                            velocity_turns_s,
+                            distance, expected_constant_span, position_turns, angle_deg,
                             sum(angle_window) / len(angle_window), ratio, tare_offset, mass_kg,
                             weight_g, sum(weight_window) / len(weight_window), force_n, torque_nm,
                             sum(torque_window) / len(torque_window), raw_velocity,
@@ -199,7 +228,13 @@ def main():
                 completed_cycles = cycle
 
             axis.controller.input_pos = zero_turns
-            for _ in wait_for_position(axis, zero_turns, args.min_angle_deg, args.speed_deg_s, config):
+            return_distance = abs(odrive_turns_to_afo_degrees(
+                zero_turns - axis.pos_vel_mapper.pos_rel, config
+            ))
+            for _ in wait_for_position(
+                axis, zero_turns, return_distance, args.speed_deg_s,
+                args.acceleration_deg_s2, config,
+            ):
                 time.sleep(0.01)
         status = "completed"
     except KeyboardInterrupt:

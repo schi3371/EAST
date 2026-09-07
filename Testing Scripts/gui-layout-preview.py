@@ -116,7 +116,12 @@ class EastGuiPreview:
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        controls = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
+        controls = ctk.CTkScrollableFrame(
+            body,
+            fg_color=PANEL,
+            corner_radius=10,
+            scrollbar_button_color="#cbd5e1",
+        )
         controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
         controls.grid_columnconfigure(0, weight=1)
 
@@ -163,32 +168,72 @@ class EastGuiPreview:
         fields_panel.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
         fields_panel.grid_columnconfigure((0, 1), weight=1)
 
+        ctk.CTkLabel(
+            fields_panel,
+            text="Test Parameters",
+            font=("Arial", 15, "bold"),
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 3), sticky="ew")
+
         fields = [
-            ("File Name (Prefix)", 0, 0),
-            ("Cycles", 0, 1),
-            ("Speed (Degrees/Second)", 1, 0),
-            ("Acceleration (Degrees/s^2)", 1, 1),
-            ("Min Angle (Degrees)", 2, 0),
-            ("Max Angle (Degrees)", 2, 1),
-            ("Operator", 3, 0),
-            ("AFO ID", 3, 1),
-            ("Fixture ID", 4, 0),
-            ("Calibration ID", 4, 1),
+            ("file_name_input", "File Name Prefix", 0, 0),
+            ("cycles_input", "Number of Cycles", 0, 1),
+            ("speed_input", "Speed (\N{DEGREE SIGN}/s)", 1, 0),
+            ("acceleration_input", "Acceleration (\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO})", 1, 1),
+            ("min_angle_input", "Minimum Angle (\N{DEGREE SIGN})", 2, 0),
+            ("max_angle_input", "Maximum Angle (\N{DEGREE SIGN})", 2, 1),
+            ("operator_input", "Operator ID", 3, 0),
+            ("afo_id_input", "AFO ID", 3, 1),
+            ("fixture_id_input", "Fixture ID", 4, 0),
+            ("calibration_id_input", "Calibration ID", 4, 1),
         ]
-        for placeholder, row, column in fields:
+        for attribute, label_text, row, column in fields:
+            field = ctk.CTkFrame(fields_panel, fg_color="transparent")
+            field.grid(row=row + 1, column=column, padx=8, pady=4, sticky="ew")
+            field.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                field,
+                text=label_text,
+                font=("Arial", 11, "bold"),
+                text_color=TEXT,
+                anchor="w",
+            ).grid(row=0, column=0, pady=(0, 2), sticky="ew")
             entry = ctk.CTkEntry(
-                fields_panel,
+                field,
                 width=180,
                 height=34,
-                placeholder_text=placeholder,
+                placeholder_text="",
                 corner_radius=6,
             )
-            entry.grid(row=row, column=column, padx=8, pady=7, sticky="ew")
+            entry.grid(row=1, column=0, sticky="ew")
+            setattr(self, attribute, entry)
+        for entry in (
+            self.cycles_input,
+            self.speed_input,
+            self.acceleration_input,
+            self.min_angle_input,
+            self.max_angle_input,
+        ):
+            entry.bind("<KeyRelease>", self._update_parameter_summary, add="+")
 
     def _build_buttons(self, parent: ctk.CTkFrame) -> None:
         buttons = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=0)
         buttons.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
         buttons.grid_columnconfigure((0, 1), weight=1)
+
+        self.parameter_summary = ctk.CTkLabel(
+            buttons,
+            text="",
+            text_color=MUTED,
+            font=("Arial", 11, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.parameter_summary.grid(
+            row=0, column=0, columnspan=2, padx=6, pady=(0, 4), sticky="ew"
+        )
 
         button_defs = [
             ("Connect", GREEN, "#15803d", self._mock_connect),
@@ -206,7 +251,8 @@ class EastGuiPreview:
                 corner_radius=8,
                 height=38,
                 font=("Arial", 13, "bold"),
-            ).grid(row=index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+            ).grid(row=1 + index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+        self._update_parameter_summary()
 
     def _build_manual_controls(self, parent: ctk.CTkFrame) -> None:
         manual = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
@@ -304,6 +350,20 @@ class EastGuiPreview:
         self.terminal.insert("end", message + "\n")
         self.terminal.see("end")
 
+    def _update_parameter_summary(self, _event=None) -> None:
+        def entered(entry: ctk.CTkEntry) -> str:
+            return entry.get().strip() or "?"
+
+        self.parameter_summary.configure(
+            text=(
+                f"Commanded: {entered(self.cycles_input)} cycles | "
+                f"{entered(self.speed_input)}\N{DEGREE SIGN}/s | "
+                f"{entered(self.acceleration_input)}\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO} | "
+                f"-{entered(self.min_angle_input)}\N{DEGREE SIGN} to "
+                f"+{entered(self.max_angle_input)}\N{DEGREE SIGN}"
+            )
+        )
+
     def _mock_connect(self) -> None:
         self.status.configure(text="CONNECTED PREVIEW / NO HARDWARE", text_color="#15803d")
         self._log("Mock connect pressed. No ODrive lookup was attempted.")
@@ -317,6 +377,20 @@ class EastGuiPreview:
         self._log("Mock stop pressed.")
 
     def _mock_reset(self) -> None:
+        for entry in (
+            self.file_name_input,
+            self.cycles_input,
+            self.speed_input,
+            self.acceleration_input,
+            self.min_angle_input,
+            self.max_angle_input,
+            self.operator_input,
+            self.afo_id_input,
+            self.fixture_id_input,
+            self.calibration_id_input,
+        ):
+            entry.delete(0, "end")
+        self._update_parameter_summary()
         self.terminal.delete("1.0", "end")
         self.status.configure(text="PREVIEW / NO HARDWARE", text_color="#0369a1")
         self._log(f"{APP_NAME} {APP_VERSION}")
@@ -394,7 +468,12 @@ class EastGuiPreview:
             canvas.create_line(left, y, right, y, fill="#e2e8f0")
         canvas.create_line(left, bottom, right, bottom, fill=TEXT, width=2)
         canvas.create_line(left, bottom, left, top, fill=TEXT, width=2)
-        canvas.create_text(width / 2, height - 18, text="AFO Angle (degrees)", fill=TEXT)
+        canvas.create_text(
+            width / 2,
+            height - 18,
+            text="ODrive-Derived AFO Angle (degrees)",
+            fill=TEXT,
+        )
         canvas.create_text(18, height / 2, text="Torque (Nm)", fill=TEXT, angle=90)
 
         points = []

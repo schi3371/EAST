@@ -42,6 +42,7 @@ from east_core import (
     afo_speed_to_odrive_turns_s,
     calculate_load,
     calculate_torque_nm,
+    constant_speed_span_deg,
     create_run_paths,
     load_tester_config,
     make_run_metadata,
@@ -121,6 +122,9 @@ class MyInterface:
         self.run_finalized = True
         self.motion_phase = "idle"
         self.commanded_odrive_velocity = 0.0
+        self.commanded_afo_acceleration = 0.0
+        self.current_nominal_distance_deg = 0.0
+        self.current_expected_constant_speed_span_deg = 0.0
         self.ui_message_queue = queue.Queue()
         self.plot_data_queue = queue.Queue()
         self.header_images = []
@@ -288,34 +292,72 @@ class MyInterface:
         inputs_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         inputs_frame.grid_columnconfigure((0, 1), weight=1)
 
+        ctk.CTkLabel(
+            inputs_frame,
+            text="Test Parameters",
+            font=("Arial", 15, "bold"),
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 3), sticky="ew")
+
         fields = (
-            ("file_name_input", "File Name (Prefix)", 0, 0),
-            ("cycles_input", "Cycles", 0, 1),
-            ("speed_input", "Speed (Degrees/Second)", 1, 0),
-            ("acceleration_input", "Acceleration (Degrees/s^2)", 1, 1),
-            ("min_angle_input", "Min Angle (Degrees)", 2, 0),
-            ("max_angle_input", "Max Angle (Degrees)", 2, 1),
-            ("operator_input", "Operator", 3, 0),
+            ("file_name_input", "File Name Prefix", 0, 0),
+            ("cycles_input", "Number of Cycles", 0, 1),
+            ("speed_input", "Speed (\N{DEGREE SIGN}/s)", 1, 0),
+            ("acceleration_input", "Acceleration (\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO})", 1, 1),
+            ("min_angle_input", "Minimum Angle (\N{DEGREE SIGN})", 2, 0),
+            ("max_angle_input", "Maximum Angle (\N{DEGREE SIGN})", 2, 1),
+            ("operator_input", "Operator ID", 3, 0),
             ("afo_id_input", "AFO ID", 3, 1),
             ("fixture_id_input", "Fixture ID", 4, 0),
             ("calibration_id_input", "Calibration ID", 4, 1),
         )
-        for attribute, placeholder, row, column in fields:
+        for attribute, label_text, row, column in fields:
+            field = ctk.CTkFrame(inputs_frame, fg_color="transparent")
+            field.grid(row=row + 1, column=column, padx=6, pady=3, sticky="ew")
+            field.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                field,
+                text=label_text,
+                font=("Arial", 11, "bold"),
+                text_color=TEXT,
+                anchor="w",
+            ).grid(row=0, column=0, pady=(0, 2), sticky="ew")
             entry = ctk.CTkEntry(
-                inputs_frame,
+                field,
                 width=180,
                 height=30,
-                placeholder_text=placeholder,
+                placeholder_text="",
                 corner_radius=6,
             )
-            entry.grid(row=row, column=column, padx=6, pady=4, sticky="ew")
+            entry.grid(row=1, column=0, sticky="ew")
             setattr(self, attribute, entry)
         self.min_angle_input.bind("<KeyRelease>", self.validate_angle_input)
         self.max_angle_input.bind("<KeyRelease>", self.validate_angle_input)
+        for entry in (
+            self.cycles_input,
+            self.speed_input,
+            self.acceleration_input,
+            self.min_angle_input,
+            self.max_angle_input,
+        ):
+            entry.bind("<KeyRelease>", self.update_parameter_summary, add="+")
 
         button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
         button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         button_frame.grid_columnconfigure((0, 1), weight=1)
+        self.parameter_summary_label = ctk.CTkLabel(
+            button_frame,
+            text="",
+            text_color=MUTED,
+            font=("Arial", 11, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.parameter_summary_label.grid(
+            row=0, column=0, columnspan=2, padx=5, pady=(0, 3), sticky="ew"
+        )
         button_defs = (
             ("Connect", GREEN, "#15803d", self.connect_system),
             ("Start", BLUE, "#1d4ed8", self.start_strain_test),
@@ -334,8 +376,9 @@ class MyInterface:
                 height=34,
                 font=("Arial", 13, "bold"),
             )
-            button.grid(row=index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
+            button.grid(row=1 + index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
             self.buttons.append(button)
+        self.update_parameter_summary()
 
         manual_control_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
         manual_control_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
@@ -482,6 +525,23 @@ class MyInterface:
             return
         self.status_label.configure(text=text, text_color=colour)
 
+    def update_parameter_summary(self, _event=None):
+        def entered(entry):
+            return entry.get().strip() or "?"
+
+        cycles = entered(self.cycles_input)
+        speed = entered(self.speed_input)
+        acceleration = entered(self.acceleration_input)
+        minimum = entered(self.min_angle_input)
+        maximum = entered(self.max_angle_input)
+        self.parameter_summary_label.configure(
+            text=(
+                f"Commanded: {cycles} cycles | {speed}\N{DEGREE SIGN}/s | "
+                f"{acceleration}\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO} | "
+                f"-{minimum}\N{DEGREE SIGN} to +{maximum}\N{DEGREE SIGN}"
+            )
+        )
+
     def collect_test_parameters(self):
         return validate_test_parameters({
             "file_prefix": self.file_name_input.get(),
@@ -520,6 +580,7 @@ class MyInterface:
         axis.trap_traj.config.decel_limit = trajectory_acceleration
         axis.controller.config.vel_limit = controller_limit
         self.commanded_odrive_velocity = trajectory_velocity
+        self.commanded_afo_acceleration = float(acceleration_deg_s2)
 
     def odrive_configuration_snapshot(self):
         axis = self.get_axis()
@@ -676,13 +737,7 @@ class MyInterface:
             self.calibration_id_input,
         ):
             entry.delete(0, ctk.END)
-
-        self.file_name_input.configure(placeholder_text="File Name (Prefix)")
-        self.cycles_input.configure(placeholder_text="Cycles")
-        self.speed_input.configure(placeholder_text="Speed (Degrees/S)")
-        self.acceleration_input.configure(placeholder_text="Acceleration (Degrees/s^2)")
-        self.min_angle_input.configure(placeholder_text="Min Angle (Degrees)")
-        self.max_angle_input.configure(placeholder_text="Max Angle (Degrees)")
+        self.update_parameter_summary()
 
         self.safe_idle_motor("reset")
         if self.odrive_controller and not self.manual_mode.get():
@@ -880,9 +935,14 @@ class MyInterface:
             title="Confirm Test",
             message=(
                 f"AFO: {parameters.afo_id}\n"
-                f"Range: -{parameters.min_angle_deg:g} to +{parameters.max_angle_deg:g} deg\n"
-                f"Speed: {parameters.commanded_afo_speed_deg_s:g} deg/s\n"
-                f"Cycles: {parameters.cycles}\n\n"
+                f"Commanded range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
+                f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}\n"
+                f"Commanded speed: {parameters.commanded_afo_speed_deg_s:g}\N{DEGREE SIGN}/s\n"
+                f"Commanded acceleration: {parameters.commanded_afo_acceleration_deg_s2:g}"
+                f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
+                f"Expected constant-speed span: "
+                f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n"
+                f"Commanded cycles: {parameters.cycles}\n\n"
                 "Confirm the fixture is clear and the physical E-stop is accessible."
             ),
             icon="question", option_1="Cancel", option_2="Start"
@@ -932,6 +992,7 @@ class MyInterface:
                 parameters, self.system_config, offset, csv_path,
                 self.odrive_configuration_snapshot(),
             )
+            self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.run_metadata["neutral_reference"] = {
                 "definition": "fixed configured 90 degree position",
                 "odrive_pos_rel_turns": self.connected_neutral_position,
@@ -972,7 +1033,9 @@ class MyInterface:
             self.set_status("TEST RUNNING", GREEN)
             self.update_terminal(
                 f"Strain test started. Data: {self.strain_file_name}\n"
-                f"Trajectory speed: {self.commanded_odrive_velocity:.6f} turns/s\n"
+                f"Commanded ODrive trajectory speed: {self.commanded_odrive_velocity:.6f} turns/s\n"
+                f"Commanded AFO acceleration: {self.commanded_afo_acceleration:g}"
+                f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
         except Exception as exc:
             self.strain_test_active = False
@@ -1070,7 +1133,18 @@ class MyInterface:
                     cycle,
                     self.motion_phase,
                     f"{self.run_parameters.commanded_afo_speed_deg_s:.6f}",
+                    f"{self.run_parameters.commanded_afo_acceleration_deg_s2:.6f}",
+                    f"{-self.run_parameters.min_angle_deg:.6f}",
+                    f"{self.run_parameters.max_angle_deg:.6f}",
+                    self.run_parameters.cycles,
+                    self.run_parameters.file_prefix,
+                    self.run_parameters.operator,
+                    self.run_parameters.afo_id,
+                    self.run_parameters.fixture_id,
+                    self.run_parameters.calibration_id,
                     f"{self.commanded_odrive_velocity:.6f}",
+                    f"{self.current_nominal_distance_deg:.6f}",
+                    f"{self.current_expected_constant_speed_span_deg:.6f}",
                     f"{current_pos_turns:.8f}",
                     f"{relative_angle:.6f}",
                     f"{avg_angle:.6f}",
@@ -1103,7 +1177,10 @@ class MyInterface:
                 # Update terminal less frequently (every 20th sample)
                 if self.sample_count % 125 == 0:
                     self.update_terminal(f"Raw Weight: {raw_weight_grams:.2f} g, Avg Weight: {avg_weight:.2f} g\n")
-                    self.update_terminal(f"Raw Angle: {relative_angle:.4f} deg, Avg Angle: {avg_angle:.4f} deg\n")
+                    self.update_terminal(
+                        f"ODrive-derived AFO angle: {relative_angle:.4f} deg, "
+                        f"moving average: {avg_angle:.4f} deg\n"
+                    )
                     self.update_terminal(f"Raw Torque: {raw_torque_nm:.4f} Nm, Avg Torque: {avg_torque:.4f} Nm\n")
                 
                 self.sample_count += 1
@@ -1130,8 +1207,12 @@ class MyInterface:
             absolute_max = self.starting_position + max_turns
 
             self.update_terminal(
-                f"Command range: -{parameters.min_angle_deg:g} to +{parameters.max_angle_deg:g} deg\n"
-                f"Commanded AFO speed: {parameters.commanded_afo_speed_deg_s:g} deg/s\n"
+                f"Commanded AFO range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
+                f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}\n"
+                f"Commanded AFO speed: {parameters.commanded_afo_speed_deg_s:g}"
+                f"\N{DEGREE SIGN}/s\n"
+                f"Commanded AFO acceleration: {parameters.commanded_afo_acceleration_deg_s2:g}"
+                f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
             for cycle in range(1, parameters.cycles + 1):
                 self.current_cycle = cycle
@@ -1177,6 +1258,12 @@ class MyInterface:
             raise TestStopped()
         axis = self.get_axis()
         self.motion_phase = phase
+        self.current_nominal_distance_deg = float(nominal_distance_deg)
+        self.current_expected_constant_speed_span_deg = constant_speed_span_deg(
+            nominal_distance_deg,
+            self.run_parameters.commanded_afo_speed_deg_s,
+            self.run_parameters.commanded_afo_acceleration_deg_s2,
+        )
         axis.controller.input_pos = target_turns
         timeout_s = motion_timeout_seconds(
             nominal_distance_deg,
@@ -1304,7 +1391,9 @@ class MyInterface:
                 # Set axis labels with larger font and white color
                 label_style = {'color': TEXT, 'font-size': '12pt'}
                 plot_window.setLabel('left', 'Torque (Nm)', **label_style)
-                plot_window.setLabel('bottom', 'AFO Angle (degrees)', **label_style)
+                plot_window.setLabel(
+                    'bottom', 'ODrive-Derived AFO Angle (degrees)', **label_style
+                )
                 
                 # Hide the navigation bar
                 plot_window.hideButtons()

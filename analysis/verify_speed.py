@@ -10,7 +10,8 @@ from statistics import mean, stdev
 
 
 TIME_COLUMN = "Elapsed Time (s)"
-ANGLE_COLUMN = "Raw AFO Angle (deg)"
+ANGLE_COLUMN = "ODrive-Derived AFO Angle (deg)"
+LEGACY_ANGLE_COLUMN = "Raw AFO Angle (deg)"
 COMMAND_COLUMN = "Commanded AFO Speed (deg/s)"
 PHASE_COLUMN = "Motion Phase"
 CYCLE_COLUMN = "Cycle"
@@ -41,7 +42,9 @@ def analyse(csv_path, exclusion_fraction=0.2):
     groups = defaultdict(list)
     with Path(csv_path).open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        required = {TIME_COLUMN, ANGLE_COLUMN, COMMAND_COLUMN, PHASE_COLUMN, CYCLE_COLUMN}
+        fieldnames = set(reader.fieldnames or [])
+        angle_column = ANGLE_COLUMN if ANGLE_COLUMN in fieldnames else LEGACY_ANGLE_COLUMN
+        required = {TIME_COLUMN, angle_column, COMMAND_COLUMN, PHASE_COLUMN, CYCLE_COLUMN}
         missing = required.difference(reader.fieldnames or [])
         if missing:
             raise ValueError(f"CSV is missing required columns: {', '.join(sorted(missing))}")
@@ -52,7 +55,7 @@ def analyse(csv_path, exclusion_fraction=0.2):
             key = (int(row[CYCLE_COLUMN]), phase)
             groups[key].append((
                 float(row[TIME_COLUMN]),
-                float(row[ANGLE_COLUMN]),
+                float(row[angle_column]),
                 float(row[COMMAND_COLUMN]),
             ))
 
@@ -63,15 +66,15 @@ def analyse(csv_path, exclusion_fraction=0.2):
             continue
         signed_speed = linear_slope(points)
         commanded_speed = mean(row[2] for row in rows)
-        measured_speed = abs(signed_speed)
-        error_percent = 100.0 * (measured_speed - commanded_speed) / commanded_speed
+        odrive_derived_speed = abs(signed_speed)
+        error_percent = 100.0 * (odrive_derived_speed - commanded_speed) / commanded_speed
         segment_results.append({
             "cycle": cycle,
             "phase": phase,
             "commanded_speed_deg_s": commanded_speed,
-            "measured_speed_deg_s": measured_speed,
+            "odrive_derived_speed_deg_s": odrive_derived_speed,
             "signed_slope_deg_s": signed_speed,
-            "error_percent": error_percent,
+            "odrive_derived_error_percent": error_percent,
             "included_samples": len(points),
         })
     if not segment_results:
@@ -104,17 +107,17 @@ def main():
         print(
             f"cycle={row['cycle']} phase={row['phase']} "
             f"commanded={row['commanded_speed_deg_s']:.3f} deg/s "
-            f"measured={row['measured_speed_deg_s']:.3f} deg/s "
-            f"error={row['error_percent']:+.2f}% n={row['included_samples']}"
+            f"odrive_derived={row['odrive_derived_speed_deg_s']:.3f} deg/s "
+            f"error={row['odrive_derived_error_percent']:+.2f}% n={row['included_samples']}"
         )
-    measured = [row["measured_speed_deg_s"] for row in results]
+    derived = [row["odrive_derived_speed_deg_s"] for row in results]
     commanded = mean(row["commanded_speed_deg_s"] for row in results)
-    overall_error = 100.0 * (mean(measured) - commanded) / commanded
-    variability = stdev(measured) if len(measured) > 1 else 0.0
+    overall_error = 100.0 * (mean(derived) - commanded) / commanded
+    variability = stdev(derived) if len(derived) > 1 else 0.0
     print(
         f"summary: commanded={commanded:.3f} deg/s "
-        f"measured_mean={mean(measured):.3f} deg/s "
-        f"measured_sd={variability:.3f} deg/s error={overall_error:+.2f}%"
+        f"odrive_derived_mean={mean(derived):.3f} deg/s "
+        f"odrive_derived_sd={variability:.3f} deg/s error={overall_error:+.2f}%"
     )
     if args.output:
         write_results(results, args.output)

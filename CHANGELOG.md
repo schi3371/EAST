@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Kept the provisional maximum commanded speed at 20 deg/s and the 2.055 deg/turn conversion unchanged.
+- Added a 5 deg minimum calculated constant-speed span check using commanded speed, editable acceleration, and total ROM.
+- Added persistent GUI labels and a live commanded-parameter summary.
+- Expanded CSV traceability to include commanded acceleration, angle limits, cycles, and per-move calculated constant-speed span.
+- Restored editable acceleration consistently in the GUI and guarded diagnostic scripts.
+
 ## 1.1.0 - 2026-08-10
 
 - Defined GUI speed as commanded AFO angular speed in degrees per second.

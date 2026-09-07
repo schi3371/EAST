@@ -25,6 +25,7 @@ from east_core import (
     afo_acceleration_to_odrive_turns_s2,
     afo_degrees_to_odrive_turns,
     afo_speed_to_odrive_turns_s,
+    constant_speed_span_deg,
     load_tester_config,
     motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
@@ -36,7 +37,10 @@ from east_core import (
 def wait_and_log(writer, axis, target, zero, cycle, phase, parameters, config, start_time):
     tolerance = afo_degrees_to_odrive_turns(config["motion"]["position_tolerance_deg"], config)
     timeout = motion_timeout_seconds(
-        parameters["distance_deg"], parameters["speed_deg_s"], config
+        parameters["distance_deg"],
+        parameters["speed_deg_s"],
+        parameters["acceleration_deg_s2"],
+        config,
     )
     deadline = time.monotonic() + timeout
     while abs(axis.pos_vel_mapper.pos_rel - target) > tolerance:
@@ -51,7 +55,8 @@ def wait_and_log(writer, axis, target, zero, cycle, phase, parameters, config, s
             f"{time.monotonic() - start_time:.6f}", cycle, phase,
             position, odrive_turns_to_afo_degrees(position - zero, config),
             velocity, odrive_turns_to_afo_degrees(velocity, config),
-            parameters["speed_deg_s"], int(axis.active_errors),
+            parameters["speed_deg_s"], parameters["acceleration_deg_s2"],
+            parameters["expected_constant_speed_span_deg"], int(axis.active_errors),
         ])
         time.sleep(config["acquisition"]["sample_interval_ms"] / 1000.0)
 
@@ -78,6 +83,14 @@ def main():
         raise SystemExit("Acceleration is outside configured limits")
     if not 0 < args.angle_deg <= motion["maximum_afo_angle_deg"]:
         raise SystemExit("Angle is outside configured limits")
+    expected_full_span = constant_speed_span_deg(
+        2 * args.angle_deg, args.speed_deg_s, args.acceleration_deg_s2
+    )
+    if expected_full_span < motion["minimum_constant_speed_span_deg"]:
+        raise SystemExit(
+            "The selected commanded speed, acceleration and angle range do not provide "
+            f"the required {motion['minimum_constant_speed_span_deg']:g} deg constant-speed span"
+        )
 
     hardware = config["hardware"]
     device = None
@@ -102,7 +115,9 @@ def main():
             raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
 
         velocity = afo_speed_to_odrive_turns_s(args.speed_deg_s, config)
-        acceleration = afo_acceleration_to_odrive_turns_s2(args.acceleration_deg_s2, config)
+        acceleration = afo_acceleration_to_odrive_turns_s2(
+            args.acceleration_deg_s2, config
+        )
         axis.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
         axis.controller.config.input_mode = INPUT_MODE_TRAP_TRAJ
         axis.trap_traj.config.vel_limit = velocity
@@ -116,6 +131,7 @@ def main():
         parameters = {
             "distance_deg": 2 * args.angle_deg,
             "speed_deg_s": args.speed_deg_s,
+            "acceleration_deg_s2": args.acceleration_deg_s2,
         }
         start_time = time.monotonic()
         metadata = {
@@ -143,17 +159,40 @@ def main():
             writer = csv.writer(handle)
             writer.writerow([
                 "Timestamp ISO 8601", "Elapsed Time (s)", "Cycle", "Motion Phase",
-                "ODrive Position (turns)", "AFO Angle (deg)",
-                "ODrive Velocity (turns/s)", "AFO Velocity (deg/s)",
-                "Commanded AFO Speed (deg/s)", "Axis Active Errors",
+                "ODrive Position (turns)", "ODrive-Derived AFO Angle (deg)",
+                "ODrive Velocity (turns/s)", "ODrive-Derived AFO Velocity (deg/s)",
+                "Commanded AFO Speed (deg/s)", "Commanded AFO Acceleration (deg/s^2)",
+                "Expected Constant-Speed Span (deg)", "Axis Active Errors",
             ])
             for cycle in range(1, args.cycles + 1):
                 for target, phase in ((zero + excursion, "moving_to_max"), (zero - excursion, "moving_to_min")):
+                    distance = abs(odrive_turns_to_afo_degrees(
+                        target - axis.pos_vel_mapper.pos_rel, config
+                    ))
+                    expected_span = constant_speed_span_deg(
+                        distance, args.speed_deg_s, args.acceleration_deg_s2
+                    )
+                    parameters = {
+                        "distance_deg": distance,
+                        "speed_deg_s": args.speed_deg_s,
+                        "acceleration_deg_s2": args.acceleration_deg_s2,
+                        "expected_constant_speed_span_deg": expected_span,
+                    }
                     axis.controller.input_pos = target
                     wait_and_log(writer, axis, target, zero, cycle, phase, parameters, config, start_time)
                 completed_cycles = cycle
             axis.controller.input_pos = zero
-            return_parameters = {"distance_deg": args.angle_deg, "speed_deg_s": args.speed_deg_s}
+            return_distance = abs(odrive_turns_to_afo_degrees(
+                zero - axis.pos_vel_mapper.pos_rel, config
+            ))
+            return_parameters = {
+                "distance_deg": return_distance,
+                "speed_deg_s": args.speed_deg_s,
+                "acceleration_deg_s2": args.acceleration_deg_s2,
+                "expected_constant_speed_span_deg": constant_speed_span_deg(
+                    return_distance, args.speed_deg_s, args.acceleration_deg_s2
+                ),
+            }
             wait_and_log(writer, axis, zero, zero, args.cycles, "returning_to_zero", return_parameters, config, start_time)
         status = "completed"
         print(f"Saved {output_path}")

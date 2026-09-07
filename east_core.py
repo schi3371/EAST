@@ -23,10 +23,21 @@ CSV_COLUMNS = [
     "Cycle",
     "Motion Phase",
     "Commanded AFO Speed (deg/s)",
+    "Commanded AFO Acceleration (deg/s^2)",
+    "Commanded Minimum Angle (deg)",
+    "Commanded Maximum Angle (deg)",
+    "Commanded Cycles",
+    "File Name Prefix",
+    "Operator ID",
+    "AFO ID",
+    "Fixture ID",
+    "Calibration ID",
     "Commanded ODrive Velocity (turns/s)",
+    "Nominal Move Distance (deg)",
+    "Expected Constant-Speed Span (deg)",
     "Raw ODrive Position (turns)",
-    "Raw AFO Angle (deg)",
-    "Moving Avg AFO Angle (deg)",
+    "ODrive-Derived AFO Angle (deg)",
+    "Moving Avg ODrive-Derived AFO Angle (deg)",
     "Raw Voltage Ratio (V/V)",
     "Tare Offset (V/V)",
     "Raw Mass (kg)",
@@ -36,7 +47,7 @@ CSV_COLUMNS = [
     "Raw Torque (Nm)",
     "Moving Avg Torque (Nm)",
     "Raw ODrive Velocity (turns/s)",
-    "Measured AFO Velocity (deg/s)",
+    "ODrive-Derived AFO Velocity (deg/s)",
     "Axis Active Errors",
 ]
 
@@ -71,6 +82,12 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError(f"Tester configuration is missing: {', '.join(missing)}")
     if config["motion"]["afo_degrees_per_odrive_turn"] <= 0:
         raise ValueError("afo_degrees_per_odrive_turn must be positive")
+    if not 0 < config["motion"]["minimum_acceleration_deg_s2"] <= config["motion"]["maximum_acceleration_deg_s2"]:
+        raise ValueError("Configured acceleration limits are invalid")
+    if config["motion"]["minimum_constant_speed_span_deg"] <= 0:
+        raise ValueError("minimum_constant_speed_span_deg must be positive")
+    if not 0 < config["motion"]["minimum_speed_deg_s"] <= config["motion"]["maximum_speed_deg_s"]:
+        raise ValueError("Configured speed limits are invalid")
     float(config["motion"]["neutral_position_turns"])
     if config["motion"]["controller_velocity_safety_multiplier"] <= 1:
         raise ValueError("controller_velocity_safety_multiplier must be greater than 1")
@@ -112,12 +129,24 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
 
     try:
         cycles = int(str(values["cycles"]).strip())
-        speed = float(values["speed_deg_s"])
-        acceleration = float(values["acceleration_deg_s2"])
-        min_angle = float(values["min_angle_deg"])
-        max_angle = float(values["max_angle_deg"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("Cycles, speed, acceleration, and angles must be numeric.") from exc
+        raise ValueError("Number of cycles must be a whole number.") from exc
+    numeric_fields = (
+        ("speed_deg_s", "Speed"),
+        ("acceleration_deg_s2", "Acceleration"),
+        ("min_angle_deg", "Minimum angle"),
+        ("max_angle_deg", "Maximum angle"),
+    )
+    numeric_values = {}
+    for key, label in numeric_fields:
+        try:
+            numeric_values[key] = float(values[key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be numeric.") from exc
+    speed = numeric_values["speed_deg_s"]
+    acceleration = numeric_values["acceleration_deg_s2"]
+    min_angle = numeric_values["min_angle_deg"]
+    max_angle = numeric_values["max_angle_deg"]
 
     if str(values["cycles"]).strip() != str(cycles):
         raise ValueError("Cycles must be a whole number.")
@@ -125,19 +154,42 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
         raise ValueError(f"Cycles must be between 1 and {motion['maximum_cycles']}.")
     if not motion["minimum_speed_deg_s"] <= speed <= motion["maximum_speed_deg_s"]:
         raise ValueError(
-            f"Speed must be between {motion['minimum_speed_deg_s']} and "
-            f"{motion['maximum_speed_deg_s']} deg/s."
+            f"Speed must be between {motion['minimum_speed_deg_s']:g} and "
+            f"{motion['maximum_speed_deg_s']:g} \N{DEGREE SIGN}/s."
         )
     if not motion["minimum_acceleration_deg_s2"] <= acceleration <= motion["maximum_acceleration_deg_s2"]:
         raise ValueError(
-            f"Acceleration must be between {motion['minimum_acceleration_deg_s2']} and "
-            f"{motion['maximum_acceleration_deg_s2']} deg/s^2."
+            f"Acceleration must be between {motion['minimum_acceleration_deg_s2']:g} and "
+            f"{motion['maximum_acceleration_deg_s2']:g} \N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}."
         )
     maximum_angle = float(motion["maximum_afo_angle_deg"])
-    if not 0 <= min_angle <= maximum_angle or not 0 <= max_angle <= maximum_angle:
-        raise ValueError(f"Angle magnitudes must be between 0 and {maximum_angle} degrees.")
+    if not 0 <= min_angle <= maximum_angle:
+        raise ValueError(
+            f"Minimum angle must be a magnitude between 0\N{DEGREE SIGN} and "
+            f"{maximum_angle:g}\N{DEGREE SIGN}."
+        )
+    if not 0 <= max_angle <= maximum_angle:
+        raise ValueError(
+            f"Maximum angle must be a magnitude between 0\N{DEGREE SIGN} and "
+            f"{maximum_angle:g}\N{DEGREE SIGN}."
+        )
     if min_angle == 0 and max_angle == 0:
         raise ValueError("At least one angle limit must be greater than zero.")
+    total_traverse = min_angle + max_angle
+    constant_speed_span = constant_speed_span_deg(total_traverse, speed, acceleration)
+    required_span = float(motion["minimum_constant_speed_span_deg"])
+    if constant_speed_span + 1e-9 < required_span:
+        minimum_traverse = speed * speed / acceleration + required_span
+        raise ValueError(
+            f"The selected speed, acceleration and angle range do not provide the required "
+            f"{required_span:g}\N{DEGREE SIGN} constant-speed span. Commanded speed: "
+            f"{speed:g}\N{DEGREE SIGN}/s; commanded acceleration: "
+            f"{acceleration:g}\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}; commanded range: "
+            f"-{min_angle:g}\N{DEGREE SIGN} to +{max_angle:g}\N{DEGREE SIGN}; total ROM: "
+            f"{total_traverse:g}\N{DEGREE SIGN}; expected constant-speed span: "
+            f"{constant_speed_span:.2f}\N{DEGREE SIGN}. Increase total ROM to at least "
+            f"{minimum_traverse:.2f}\N{DEGREE SIGN} or adjust speed/acceleration."
+        )
 
     return TestParameters(
         file_prefix=cleaned["file_prefix"],
@@ -167,6 +219,16 @@ def afo_speed_to_odrive_turns_s(speed_deg_s: float, config: Dict[str, Any]) -> f
 
 def afo_acceleration_to_odrive_turns_s2(acceleration_deg_s2: float, config: Dict[str, Any]) -> float:
     return afo_degrees_to_odrive_turns(acceleration_deg_s2, config)
+
+
+def constant_speed_span_deg(distance_deg: float, speed_deg_s: float, acceleration_deg_s2: float) -> float:
+    """Return the distance remaining after symmetric acceleration and deceleration."""
+    distance = abs(float(distance_deg))
+    speed = abs(float(speed_deg_s))
+    acceleration = abs(float(acceleration_deg_s2))
+    if acceleration <= 0:
+        raise ValueError("Acceleration must be positive")
+    return max(0.0, distance - speed * speed / acceleration)
 
 
 def calculate_load(voltage_ratio: float, tare_offset: float, config: Dict[str, Any]) -> Tuple[float, float, float]:
@@ -269,6 +331,9 @@ def make_run_metadata(
         "completed_at": None,
         "csv_file": csv_path.name,
         "test_parameters": asdict(parameters),
+        "test_parameter_status": (
+            "operator-entered commanded values; not independent physical measurements"
+        ),
         "calibration": {
             "calibration_id": parameters.calibration_id,
             "tare_offset_v_per_v": tare_offset,

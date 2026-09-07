@@ -10,8 +10,10 @@ from east_core import (
     afo_speed_to_odrive_turns_s,
     calculate_load,
     calculate_torque_nm,
+    constant_speed_span_deg,
     create_run_paths,
     load_tester_config,
+    make_run_metadata,
     motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
     sanitise_identifier,
@@ -65,7 +67,45 @@ class EastCoreTests(unittest.TestCase):
         parameters = validate_test_parameters(valid_values(), self.config)
         self.assertEqual(parameters.cycles, 3)
         self.assertEqual(parameters.commanded_afo_speed_deg_s, 5.0)
+        self.assertEqual(parameters.commanded_afo_acceleration_deg_s2, 10.0)
         self.assertEqual(asdict(parameters)["afo_id"], "AFO-001")
+
+    def test_provisional_speed_limit_is_20_deg_s(self):
+        motion = self.config["motion"]
+        self.assertEqual(motion["afo_degrees_per_odrive_turn"], 2.055)
+        self.assertEqual(motion["maximum_speed_deg_s"], 20.0)
+        self.assertEqual(motion["minimum_constant_speed_span_deg"], 5.0)
+        self.assertEqual(motion["minimum_acceleration_deg_s2"], 0.1)
+        self.assertEqual(motion["maximum_acceleration_deg_s2"], 100.0)
+
+        values = valid_values()
+        values.update({
+            "speed_deg_s": "20",
+            "acceleration_deg_s2": "100",
+            "min_angle_deg": "4.5",
+            "max_angle_deg": "4.5",
+        })
+        parameters = validate_test_parameters(values, self.config)
+        self.assertEqual(parameters.commanded_afo_speed_deg_s, 20.0)
+
+        values["speed_deg_s"] = "20.1"
+        with self.assertRaisesRegex(ValueError, "between 0.1 and 20 \N{DEGREE SIGN}/s"):
+            validate_test_parameters(values, self.config)
+
+    def test_constant_speed_span_uses_entered_acceleration(self):
+        self.assertAlmostEqual(constant_speed_span_deg(9.0, 20.0, 100.0), 5.0)
+
+        values = valid_values()
+        values.update({
+            "speed_deg_s": "20",
+            "acceleration_deg_s2": "50",
+            "min_angle_deg": "4.5",
+            "max_angle_deg": "4.5",
+        })
+        with self.assertRaisesRegex(ValueError, "required 5\N{DEGREE SIGN} constant-speed span") as raised:
+            validate_test_parameters(values, self.config)
+        self.assertIn("commanded acceleration: 50\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}", str(raised.exception))
+        self.assertIn("total ROM: 9\N{DEGREE SIGN}", str(raised.exception))
 
     def test_invalid_parameters_are_rejected(self):
         for field, value in (
@@ -104,7 +144,31 @@ class EastCoreTests(unittest.TestCase):
     def test_csv_schema_has_unique_columns(self):
         self.assertEqual(len(CSV_COLUMNS), len(set(CSV_COLUMNS)))
         self.assertIn("Elapsed Time (s)", CSV_COLUMNS)
-        self.assertIn("Measured AFO Velocity (deg/s)", CSV_COLUMNS)
+        self.assertIn("Commanded AFO Acceleration (deg/s^2)", CSV_COLUMNS)
+        self.assertIn("Commanded Minimum Angle (deg)", CSV_COLUMNS)
+        self.assertIn("Commanded Maximum Angle (deg)", CSV_COLUMNS)
+        self.assertIn("Commanded Cycles", CSV_COLUMNS)
+        self.assertIn("ODrive-Derived AFO Angle (deg)", CSV_COLUMNS)
+        self.assertIn("ODrive-Derived AFO Velocity (deg/s)", CSV_COLUMNS)
+        for identifier in ("File Name Prefix", "Operator ID", "AFO ID", "Fixture ID", "Calibration ID"):
+            self.assertIn(identifier, CSV_COLUMNS)
+
+    def test_metadata_preserves_commanded_acceleration_key(self):
+        parameters = validate_test_parameters(valid_values(), self.config)
+        metadata = make_run_metadata(
+            parameters,
+            self.config,
+            tare_offset=0.001,
+            csv_path=Path("verification.csv"),
+            odrive_snapshot={},
+        )
+        logged = metadata["test_parameters"]
+        self.assertEqual(logged["commanded_afo_acceleration_deg_s2"], 10.0)
+        self.assertEqual(logged["commanded_afo_speed_deg_s"], 5.0)
+        self.assertEqual(logged["min_angle_deg"], 4.0)
+        self.assertEqual(logged["max_angle_deg"], 4.0)
+        self.assertEqual(logged["cycles"], 3)
+        self.assertIn("commanded values", metadata["test_parameter_status"])
 
     def test_identifier_sanitisation(self):
         self.assertEqual(sanitise_identifier("AFO 01 / left"), "AFO_01_left")
