@@ -2,7 +2,7 @@
 
 EAST controls the motorised benchtop tester and records sagittal-plane AFO angle, load, and calculated torque. The application interfaces with an ODrive S1 and a PhidgetBridge voltage-ratio input.
 
-This repository is research software. Version 1.1.0 improves safety and traceability, but the configured mechanical conversion, load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those checks are complete.
+This repository is research software. The 2.055 AFO-degrees-per-ODrive-turn mechanical conversion is accepted. Load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those remaining checks are complete.
 
 ## Hardware assumptions
 
@@ -25,9 +25,9 @@ axis0.trap_traj.config.vel_limit
 
 The conversion uses the configured `afo_degrees_per_odrive_turn` value. `axis0.controller.config.vel_limit` is set higher as a safety cap; it is not used as the trajectory-speed command.
 
-The current conversion is 2.055 AFO degrees per ODrive turn and is explicitly provisional. The implementation is dimensionally consistent, but experimental comparison with an independent angular reference is still required.
+The accepted conversion is 2.055 AFO degrees per ODrive turn. This value is used consistently for commanded motion, ODrive-derived angle, and ODrive-derived velocity.
 
-The CSV angle and converted velocity use this same value. Comparing them with the command checks controller execution conditional on the assumed conversion; it does not independently prove physical AFO angular speed.
+The CSV angle and converted velocity use this same accepted value. Comparing them with the command checks controller execution; an independent angular reference remains useful for end-to-end verification of physical AFO speed and ROM.
 
 The current commanded-speed range is 0.1-20 deg/s. Acceleration remains an editable commanded parameter in the range 0.1-100 deg/s^2; no acceleration value is yet validated as a final protocol setting. A test is blocked unless the full commanded ROM provides at least 5 deg of calculated constant-speed travel:
 
@@ -58,7 +58,7 @@ Each run creates a uniquely named pair in `EAST Logs`:
 - `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, commanded speed/acceleration/range/cycles, sensor values, converted units, and ODrive errors.
 - `*_metadata.json`: operator/specimen/fixture/calibration identifiers, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
 
-Raw sensor and ODrive columns are preserved for reprocessing. Columns labelled `ODrive-Derived` use the provisional motion conversion and are not independent physical measurements. Moving-average columns are derived outputs and should not replace unfiltered data in verification analyses.
+Raw sensor and ODrive columns are preserved for reprocessing. Columns labelled `ODrive-Derived` use the accepted motion conversion but are not independent measurements. Moving-average columns are derived outputs and should not replace unfiltered data in verification analyses.
 
 ## Verification
 

@@ -2,11 +2,11 @@
 
 ## Status and scope
 
-Version 1.1.0 defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the single provisional calibration in `tester_config.json`:
+Version 1.1.0 defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
 
 `ODrive turns/s = commanded AFO deg/s / afo_degrees_per_odrive_turn`
 
-The configured value is currently 2.055 AFO degrees per ODrive turn. This definition is implemented consistently, but the physical conversion is not considered validated until it is checked against an independent angle reference.
+The accepted value is 2.055 AFO degrees per ODrive turn. It is implemented consistently for commands, ODrive-derived angles, and ODrive-derived velocities.
 
 The current provisional command limits are 0.1-20 deg/s for speed, 0.1-100 deg/s^2 for acceleration, and 0-12 deg magnitude at each angle limit. Acceleration is operator-editable during verification and is not a validated final protocol value. The software requires at least 5 deg of calculated constant-speed travel across the full commanded ROM:
 
@@ -35,7 +35,7 @@ This check predicts the commanded trapezoidal profile only. It does not measure 
 7. From the video/ImageJ angle-time trace, calculate independently measured speed in the constant-speed region and independently measured minimum/maximum angle at the movement reversals.
 8. Compare both internal ODrive-derived and independently measured speed with the command. Compare independently measured angular limits and total ROM with the commanded range. Report direction-specific mean, standard deviation, and percentage error.
 
-The CSV `ODrive-Derived AFO Angle (deg)` and `ODrive-Derived AFO Velocity (deg/s)` columns both use the same configured 2.055 degree/turn conversion as the command. Command-versus-CSV analysis therefore checks trajectory execution only under the assumed conversion; it cannot independently validate that conversion or prove the physical AFO speed. The independent angular reference is required for that claim. The analysis tool continues to accept the legacy `Raw AFO Angle (deg)` heading for older files.
+The CSV `ODrive-Derived AFO Angle (deg)` and `ODrive-Derived AFO Velocity (deg/s)` columns both use the same accepted 2.055 degree/turn conversion as the command. Command-versus-CSV analysis checks trajectory execution within the ODrive-derived coordinate system. The independent angular reference provides end-to-end verification of physical speed and ROM rather than re-validating the accepted conversion. The analysis tool continues to accept the legacy `Raw AFO Angle (deg)` heading for older files.
 
 Run the supplied analysis with:
 
@@ -58,4 +58,4 @@ Each run produces:
 - A CSV with wall-clock and monotonic elapsed time, command values, motion phase, raw and averaged angle/load/torque, raw ODrive position/velocity, converted AFO velocity, raw voltage ratio, tare offset, and ODrive error state.
 - A JSON sidecar with test parameters, operator/AFO/fixture/calibration identifiers, calibration and geometry constants, ODrive configuration snapshot, software version, Git commit, start/end time, run outcome, samples, and completed cycles.
 
-Formal AFO stiffness testing must not begin while the motion conversion, load-cell calibration, torque geometry, safety limits, or acceptance criteria remain unverified.
+Formal AFO stiffness testing must not begin while the load-cell calibration, torque geometry, safety limits, or acceptance criteria remain unverified.
