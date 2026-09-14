@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Increased both commanded angle-magnitude limits from 12 deg to 15 deg.
 - Kept the provisional maximum commanded speed at 20 deg/s and marked the unchanged 2.055 deg/turn conversion as accepted.
 - Added a 5 deg minimum calculated constant-speed span check using commanded speed, editable acceleration, and total ROM.
 - Added persistent GUI labels and a live commanded-parameter summary.
