@@ -38,8 +38,13 @@ class EastGuiPreview:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("1040x700")
-        self.root.minsize(860, 620)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        window_width = min(1040, max(860, screen_width - 80))
+        window_height = int(min(700, max(620, screen_height - 100)) * 0.8)
+        self.root.geometry(f"{window_width}x{window_height}")
+        self.root.minsize(860, 496)
+        self.root.resizable(True, True)
         self.root.configure(fg_color=BG)
 
         self.logo_images: list[ctk.CTkImage] = []
@@ -60,17 +65,16 @@ class EastGuiPreview:
 
     def _build_ui(self) -> None:
         shell = ctk.CTkFrame(self.root, fg_color=BG)
-        shell.pack(fill="both", expand=True, padx=28, pady=20)
+        shell.pack(fill="both", expand=True, padx=18, pady=8)
         shell.grid_columnconfigure(0, weight=1)
         shell.grid_rowconfigure(1, weight=1)
 
         self._build_header(shell)
         self._build_body(shell)
-        self._build_footer(shell)
 
     def _build_header(self, parent: ctk.CTkFrame) -> None:
         header = ctk.CTkFrame(parent, fg_color=BG)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         header.grid_columnconfigure(0, weight=1)
         header.grid_columnconfigure(1, weight=2)
         header.grid_columnconfigure(2, weight=1)
@@ -88,7 +92,7 @@ class EastGuiPreview:
         ctk.CTkLabel(
             title_panel,
             text=APP_NAME,
-            font=("Arial", 52, "bold"),
+            font=("Arial", 40, "bold"),
             text_color=TEXT,
         ).pack()
         ctk.CTkLabel(
@@ -124,7 +128,7 @@ class EastGuiPreview:
             corner_radius=10,
             scrollbar_button_color="#cbd5e1",
         )
-        controls.grid(row=0, column=0, sticky="nsew", padx=(0, 18))
+        controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
 
         self.status = ctk.CTkLabel(
@@ -134,10 +138,10 @@ class EastGuiPreview:
             font=("Arial", 13, "bold"),
             anchor="w",
         )
-        self.status.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        self.status.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
 
         reference = ctk.CTkFrame(controls, fg_color="#fff7ed", corner_radius=8)
-        reference.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+        reference.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         reference.grid_columnconfigure(0, weight=1)
         self.reference_status = ctk.CTkLabel(
             reference,
@@ -175,7 +179,7 @@ class EastGuiPreview:
             font=("Arial", 18, "bold"),
             text_color=TEXT,
             anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 5))
 
         self.terminal = ctk.CTkTextbox(
             right_panel,
@@ -187,11 +191,11 @@ class EastGuiPreview:
             corner_radius=8,
             wrap="word",
         )
-        self.terminal.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        self.terminal.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
 
     def _build_inputs(self, parent: ctk.CTkFrame) -> None:
         fields_panel = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        fields_panel.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        fields_panel.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         fields_panel.grid_columnconfigure((0, 1), weight=1)
 
         ctk.CTkLabel(
@@ -216,7 +220,7 @@ class EastGuiPreview:
         ]
         for attribute, label_text, row, column in fields:
             field = ctk.CTkFrame(fields_panel, fg_color="transparent")
-            field.grid(row=row + 1, column=column, padx=8, pady=4, sticky="ew")
+            field.grid(row=row + 1, column=column, padx=6, pady=3, sticky="ew")
             field.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(
                 field,
@@ -228,7 +232,7 @@ class EastGuiPreview:
             entry = ctk.CTkEntry(
                 field,
                 width=180,
-                height=34,
+                height=30,
                 placeholder_text="",
                 corner_radius=6,
             )
@@ -245,7 +249,7 @@ class EastGuiPreview:
 
     def _build_buttons(self, parent: ctk.CTkFrame) -> None:
         buttons = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=0)
-        buttons.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
+        buttons.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 6))
         buttons.grid_columnconfigure((0, 1), weight=1)
 
         self.parameter_summary = ctk.CTkLabel(
@@ -258,14 +262,14 @@ class EastGuiPreview:
             wraplength=390,
         )
         self.parameter_summary.grid(
-            row=0, column=0, columnspan=2, padx=6, pady=(0, 4), sticky="ew"
+            row=0, column=0, columnspan=2, padx=5, pady=(0, 3), sticky="ew"
         )
 
         button_defs = [
             ("Connect", GREEN, "#15803d", self._mock_connect),
             ("Start", BLUE, "#1d4ed8", self._mock_start),
             ("Stop", RED, "#b91c1c", self._mock_stop),
-            ("Reset", AMBER, "#b45309", self._mock_reset),
+            ("Reset Form", AMBER, "#b45309", self._mock_reset),
         ]
         self.action_buttons = []
         for index, (label, colour, hover, command) in enumerate(button_defs):
@@ -276,54 +280,54 @@ class EastGuiPreview:
                 fg_color=colour,
                 hover_color=hover,
                 corner_radius=8,
-                height=38,
+                height=34,
                 font=("Arial", 13, "bold"),
             )
-            button.grid(row=1 + index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+            button.grid(row=1 + index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
             self.action_buttons.append(button)
         self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
 
     def _build_manual_controls(self, parent: ctk.CTkFrame) -> None:
         manual = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        manual.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
+        manual.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual.grid_columnconfigure((0, 1, 2), weight=1)
 
         ctk.CTkEntry(
             manual,
             placeholder_text="Step Angle (0-10 deg)",
-            height=34,
+            height=30,
             corner_radius=6,
-        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8))
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 4))
 
         self.preview_manual_switch = ctk.CTkSwitch(manual, text="Manual Mode", state="disabled")
-        self.preview_manual_switch.grid(row=0, column=2, padx=8, pady=(10, 8))
+        self.preview_manual_switch.grid(row=0, column=2, padx=6, pady=(6, 4))
 
         ctk.CTkButton(
             manual,
             text="<",
             command=lambda: self._log("Preview left step."),
             width=60,
-            height=42,
+            height=34,
             corner_radius=8,
             fg_color="#64748b",
             hover_color="#475569",
             font=("Arial", 20, "bold"),
-        ).grid(row=1, column=0, padx=8, pady=(0, 10), sticky="ew")
+        ).grid(row=1, column=0, padx=6, pady=(0, 4), sticky="ew")
 
         ctk.CTkButton(
             manual,
             text=">",
             command=lambda: self._log("Preview right step."),
             width=60,
-            height=42,
+            height=34,
             corner_radius=8,
             fg_color="#64748b",
             hover_color="#475569",
             font=("Arial", 20, "bold"),
-        ).grid(row=1, column=1, padx=8, pady=(0, 10), sticky="ew")
+        ).grid(row=1, column=1, padx=6, pady=(0, 4), sticky="ew")
 
-        ctk.CTkSwitch(manual, text="Continuous Mode").grid(row=1, column=2, padx=8, pady=(0, 10))
+        ctk.CTkSwitch(manual, text="Continuous Mode").grid(row=1, column=2, padx=6, pady=(0, 4))
 
         ctk.CTkButton(
             manual,
@@ -332,20 +336,9 @@ class EastGuiPreview:
             fg_color="#0f766e",
             hover_color="#115e59",
             corner_radius=8,
-            height=40,
+            height=34,
             font=("Arial", 13, "bold"),
-        ).grid(row=2, column=0, columnspan=3, padx=8, pady=(0, 10), sticky="ew")
-
-    def _build_footer(self, parent: ctk.CTkFrame) -> None:
-        footer = ctk.CTkFrame(parent, fg_color=BG)
-        footer.grid(row=2, column=0, sticky="ew", pady=(14, 0))
-        footer.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            footer,
-            text=f"Version {APP_VERSION}",
-            font=("Arial", 12, "bold"),
-            text_color=MUTED,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=2, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
 
     def _logo_card(
         self,
@@ -357,7 +350,7 @@ class EastGuiPreview:
     ) -> None:
         logo_path = next((IMAGE_DIR / name for name in candidates if (IMAGE_DIR / name).exists()), None)
         if logo_path:
-            image = self._prepare_logo_image(logo_path, max_size=(width - 30, 68))
+            image = self._prepare_logo_image(logo_path, max_size=(width - 30, 50))
             logo = ctk.CTkImage(light_image=image, dark_image=image, size=image.size)
             self.logo_images.append(logo)
             label = ctk.CTkLabel(parent, image=logo, text="", fg_color="transparent")
