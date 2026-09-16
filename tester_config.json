@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "software_version": "1.1.0",
+  "schema_version": 2,
+  "software_version": "1.2.0-neutral-recovery",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -11,8 +11,6 @@
   },
   "motion": {
     "afo_degrees_per_odrive_turn": 2.055,
-    "neutral_position_turns": 0.0,
-    "neutral_reference_status": "fixed ODrive relative position; physical 90 degree alignment must be verified",
     "conversion_status": "accepted; 2.055 AFO degrees per ODrive turn",
     "minimum_speed_deg_s": 0.1,
     "maximum_speed_deg_s": 20.0,
@@ -28,7 +26,37 @@
     "manual_speed_deg_s": 5.0,
     "manual_acceleration_deg_s2": 10.0,
     "manual_continuous_increment_deg": 0.2,
-    "manual_update_interval_ms": 50
+    "manual_update_interval_ms": 50,
+    "neutral_return_speed_deg_s": 2.0,
+    "neutral_return_acceleration_deg_s2": 5.0
+  },
+  "reference": {
+    "feedback_poll_interval_ms": 8,
+    "feedback_stale_after_ms": 100,
+    "checkpoint_interval_ms": 500,
+    "stationary_velocity_limit_deg_s": 0.1,
+    "settle_velocity_limit_deg_s": 0.1,
+    "settle_dwell_ms": 300,
+    "post_idle_observation_ms": 500,
+    "idle_confirmation_timeout_s": 1.0,
+    "session_continuity_enabled": false,
+    "odrive_uptime_units": null,
+    "continuity_time_tolerance_s": 2.0,
+    "phase_recovery_enabled": false,
+    "phase_units": null,
+    "phase_period": null,
+    "controller_turns_per_phase_period": null,
+    "phase_sign": null,
+    "phase_uncertainty_turns": null,
+    "assisted_measured_angle_enabled": false,
+    "maximum_assisted_uncertainty_deg": 0.25,
+    "recovery_jog_step_deg": 0.25,
+    "recovery_jog_maximum_cumulative_deg": 5.0,
+    "recovery_timeout_s": 120.0,
+    "recovery_speed_deg_s": 1.0,
+    "recovery_acceleration_deg_s2": 5.0,
+    "watchdog_enabled": false,
+    "watchdog_timeout_s": 1.0
   },
   "controller": {
     "apply_controller_gains": false,

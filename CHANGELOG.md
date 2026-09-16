@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.2.0-neutral-recovery - 2026-09-18
+
+- Removed the unsafe assumption that ODrive relative position `0.0` is physical 90 degree neutral.
+- Added a persistent, operator-attributed physical-neutral record and a current-session position mapping; normal tests/manual motion are blocked until verified.
+- Added a guided recovery dialog with bounded slow jog and a no-motion `Set Neutral` action.
+- Added per-user runtime state outside the repository/executable, atomic fsync/replace writes, corrupt-state preservation, ordered generations, audit events, and an exclusive hardware process lock.
+- Added serialized ODrive access, continuous finite/fresh feedback monitoring, cancellation generations, single motion ownership, position/velocity settle dwell, and explicit idle confirmation.
+- Successful tests now require verified-neutral return, settling, confirmed idle, and post-idle observation. Stop, Escape, faults, and communication errors request idle without automatic return.
+- Added neutral-reference snapshots to run metadata and made CSV/metadata write failures visible as run errors.
+- Added a read-only live/mock reference inspection tool. Standalone motion diagnostics now require explicit unreferenced authorization and invalidate normal-test trust.
+- Implemented optional controller-session continuity, encoder-phase recovery, measured-angle recovery, and watchdog lifecycles; all remain disabled by default pending bench verification.
+- Added hardware-independent reference, race, stale/NaN, persistence, phase ambiguity, lock, adapter, and inspection tests plus a bench checklist.
+- Updated the GUI preview, Windows builder, README, and verification protocol for the recovery workflow.
+
 - Increased both commanded angle-magnitude limits from 12 deg to 15 deg.
 - Kept the provisional maximum commanded speed at 20 deg/s and marked the unchanged 2.055 deg/turn conversion as accepted.
 - Added a 5 deg minimum calculated constant-speed span check using commanded speed, editable acceleration, and total ROM.

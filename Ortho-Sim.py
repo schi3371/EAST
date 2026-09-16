@@ -51,6 +51,22 @@ from east_core import (
     validate_test_parameters,
     write_json_atomic,
 )
+from east_odrive import ODriveAdapter
+from east_reference import (
+    AtomicStateStore,
+    FeedbackError,
+    MotionConflictError,
+    MotionCoordinator,
+    MotionState,
+    ProcessLock,
+    ReferenceConfidence,
+    ReferenceError,
+    ReferenceManager,
+    ReferenceRequiredError,
+    evaluate_continuity,
+    runtime_state_directory,
+    wait_for_settle,
+)
 
 # Runtime tare state. Fixed calibration values are stored in tester_config.json.
 offset = 0
@@ -66,7 +82,7 @@ plot_curve = None
 plot_timer = None
 
 APP_NAME = "EAST"
-APP_VERSION = "1.1.1-gui"
+APP_VERSION = "1.2.0-neutral-recovery"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -110,6 +126,8 @@ class MyInterface:
 
         self.system_config = load_tester_config(resource_path("tester_config.json"))
         self.odrive_controller = None
+        self.odrive_adapter = None
+        self.hardware_fingerprint = None
         self.voltage_ratio_input = None
         self.run_parameters = None
         self.run_metadata = None
@@ -118,6 +136,9 @@ class MyInterface:
         self.test_started_monotonic = None
         self.test_stop_event = threading.Event()
         self.neutral_stop_event = threading.Event()
+        self.continuous_stop_event = threading.Event()
+        self.monitor_stop_event = threading.Event()
+        self.watchdog_stop_event = threading.Event()
         self.finalize_lock = threading.Lock()
         self.run_finalized = True
         self.motion_phase = "idle"
@@ -129,10 +150,29 @@ class MyInterface:
         self.plot_data_queue = queue.Queue()
         self.header_images = []
 
+        self.state_store = AtomicStateStore(runtime_state_directory())
+        self.process_lock = ProcessLock(self.state_store.lock_path)
+        self.startup_block_reason = None
+        try:
+            self.process_lock.acquire()
+        except MotionConflictError as exc:
+            self.startup_block_reason = str(exc)
+        self.reference_manager = ReferenceManager(self.system_config, self.state_store)
+        self.motion_coordinator = MotionCoordinator()
+        self.feedback_lock = threading.RLock()
+        self.latest_feedback = None
+        self.monitor_error = None
+        self.monitor_thread = None
+        self.run_motion_token = None
+        self.neutral_motion_token = None
+        self.continuous_motion_token = None
+        self.recovery_window = None
+        self.recovery_origin_turns = None
+        self.recovery_cumulative_deg = 0.0
+        self.recovery_started_monotonic = None
+
         self.strain_test_active = False
         self.strain_data_buffer = []
-        self.starting_position = 0
-        self.connected_neutral_position = None
         self.current_cycle = 0
         
         # Add continuous movement flags
@@ -156,6 +196,10 @@ class MyInterface:
         ctk.set_appearance_mode("light")
 
         self.setup_ui()
+        self.update_reference_display()
+        if self.startup_block_reason:
+            self.update_terminal(f"HARDWARE CONTROLS BLOCKED: {self.startup_block_reason}\n")
+            self.buttons[0].configure(state="disabled")
         self.master.after(50, self._drain_ui_queues)
         self.master.after(20, self._process_qt_events)
         self.master.after(350, self.create_plot_window)
@@ -288,8 +332,33 @@ class MyInterface:
         )
         self.status_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
 
+        reference_frame = ctk.CTkFrame(controls, fg_color="#fff7ed", corner_radius=8)
+        reference_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+        reference_frame.grid_columnconfigure(0, weight=1)
+        self.reference_status_label = ctk.CTkLabel(
+            reference_frame,
+            text="Neutral reference: checking",
+            font=("Arial", 11, "bold"),
+            text_color=AMBER,
+            anchor="w",
+            justify="left",
+            wraplength=310,
+        )
+        self.reference_status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=7)
+        self.reference_action_button = ctk.CTkButton(
+            reference_frame,
+            text="Verify / Recover",
+            width=118,
+            height=28,
+            command=self.open_reference_recovery,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+        )
+        self.reference_action_button.grid(row=0, column=1, padx=8, pady=6)
+
         inputs_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        inputs_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+        inputs_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         inputs_frame.grid_columnconfigure((0, 1), weight=1)
 
         ctk.CTkLabel(
@@ -344,7 +413,7 @@ class MyInterface:
             entry.bind("<KeyRelease>", self.update_parameter_summary, add="+")
 
         button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
-        button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
+        button_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 6))
         button_frame.grid_columnconfigure((0, 1), weight=1)
         self.parameter_summary_label = ctk.CTkLabel(
             button_frame,
@@ -381,7 +450,7 @@ class MyInterface:
         self.update_parameter_summary()
 
         manual_control_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        manual_control_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
+        manual_control_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual_control_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.step_angle_input = ctk.CTkEntry(
@@ -451,7 +520,7 @@ class MyInterface:
 
         self.neutral_button = ctk.CTkButton(
             manual_control_frame,
-            text="Return to 90 deg (0 turns)",
+            text="Return to Verified 90 deg Neutral",
             command=self.return_to_neutral,
             fg_color="#0f766e",
             hover_color="#115e59",
@@ -565,78 +634,323 @@ class MyInterface:
         ):
             entry.configure(state=state)
 
+    def get_feedback(self, require_fresh=True):
+        with self.feedback_lock:
+            snapshot = self.latest_feedback
+        if snapshot is None:
+            raise FeedbackError("No ODrive feedback is available")
+        stale_after_s = self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0
+        snapshot.validate(
+            now_monotonic_s=time.monotonic(),
+            max_age_s=stale_after_s if require_fresh else None,
+        )
+        return snapshot
+
+    def update_reference_display(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.ui_message_queue.put(("reference",))
+            return
+        manager = self.reference_manager
+        if manager.verified:
+            mapping = manager.require_verified()
+            text = (
+                "Neutral reference: VERIFIED\n"
+                f"90 deg = {mapping.neutral_position_turns:.8f} session turns"
+            )
+            colour = GREEN
+        elif manager.confidence == ReferenceConfidence.FAULT:
+            text = f"Neutral reference: FAULT\n{manager.reason}"
+            colour = RED
+        else:
+            text = f"Neutral reference: RECOVERY REQUIRED\n{manager.reason}"
+            colour = AMBER
+        if hasattr(self, "reference_status_label"):
+            self.reference_status_label.configure(text=text, text_color=colour)
+        self._refresh_motion_controls()
+
+    def _refresh_motion_controls(self):
+        if not hasattr(self, "buttons"):
+            return
+        connected = self.odrive_adapter is not None
+        verified = self.reference_manager.verified
+        idle_ui = not self.strain_test_active and self.motion_coordinator.owner is None
+        self.reference_action_button.configure(
+            state="normal" if connected and idle_ui else "disabled"
+        )
+        self.buttons[1].configure(
+            state="normal" if connected and verified and idle_ui and not self.manual_mode.get() else "disabled"
+        )
+        self.manual_mode_toggle.configure(state="normal" if connected and verified and idle_ui else "disabled")
+        manual_enabled = connected and verified and idle_ui and self.manual_mode.get()
+        manual_state = "normal" if manual_enabled else "disabled"
+        for widget in (
+            self.left_arrow,
+            self.right_arrow,
+            self.step_angle_input,
+            self.mode_toggle,
+            self.neutral_button,
+        ):
+            widget.configure(state=manual_state)
+
+    def _start_feedback_monitor(self):
+        self.monitor_stop_event.set()
+        prior = self.monitor_thread
+        if prior and prior.is_alive() and prior is not threading.current_thread():
+            prior.join(timeout=1.0)
+        self.monitor_stop_event = threading.Event()
+        self.monitor_error = None
+        self.monitor_thread = threading.Thread(
+            target=self._feedback_monitor_loop,
+            name="odrive-feedback-monitor",
+            daemon=True,
+        )
+        self.monitor_thread.start()
+
+    def _stop_feedback_monitor(self):
+        self.monitor_stop_event.set()
+        thread = self.monitor_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.5)
+        self.monitor_thread = None
+
+    def _start_watchdog_if_enabled(self):
+        cfg = self.system_config["reference"]
+        if not cfg["watchdog_enabled"]:
+            return
+        self.odrive_adapter.configure_watchdog(True, cfg["watchdog_timeout_s"])
+        self.watchdog_stop_event = threading.Event()
+        self.watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            name="odrive-watchdog-feed",
+            daemon=True,
+        )
+        self.watchdog_thread.start()
+
+    def _watchdog_loop(self):
+        interval = self.system_config["reference"]["watchdog_timeout_s"] / 3.0
+        try:
+            while not self.watchdog_stop_event.wait(interval):
+                adapter = self.odrive_adapter
+                if adapter is None:
+                    return
+                adapter.feed_watchdog()
+        except Exception as exc:
+            self.monitor_error = f"watchdog feed failed: {exc}"
+            self.test_stop_event.set()
+            self.neutral_stop_event.set()
+            self.continuous_stop_event.set()
+            self.motion_coordinator.request_stop()
+            try:
+                self.reference_manager.invalidate(self.monitor_error, fault=True)
+            except Exception:
+                pass
+            adapter = self.odrive_adapter
+            if adapter is not None:
+                idle_result = adapter.request_idle(
+                    self.system_config["reference"]["idle_confirmation_timeout_s"]
+                )
+                if idle_result.confirmed:
+                    self.motion_coordinator.confirm_idle()
+            self.ui_message_queue.put(("terminal", f"SAFETY STOP: {self.monitor_error}\n"))
+            self.ui_message_queue.put(("status", "FAULT / IDLE REQUESTED", RED))
+            self.ui_message_queue.put(("reference",))
+
+    def _stop_watchdog(self, disable=True):
+        self.watchdog_stop_event.set()
+        thread = getattr(self, "watchdog_thread", None)
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        if (
+            disable
+            and self.odrive_adapter is not None
+            and self.system_config["reference"]["watchdog_enabled"]
+        ):
+            try:
+                self.odrive_adapter.configure_watchdog(
+                    False, self.system_config["reference"]["watchdog_timeout_s"]
+                )
+            except Exception as exc:
+                self.update_terminal(f"Unable to disable ODrive watchdog: {exc}\n")
+        self.watchdog_thread = None
+
+    def _feedback_monitor_loop(self):
+        reference_cfg = self.system_config["reference"]
+        interval_s = reference_cfg["feedback_poll_interval_ms"] / 1000.0
+        checkpoint_s = reference_cfg["checkpoint_interval_ms"] / 1000.0
+        next_checkpoint = time.monotonic()
+        try:
+            while not self.monitor_stop_event.is_set():
+                adapter = self.odrive_adapter
+                if adapter is None:
+                    return
+                snapshot = adapter.snapshot(
+                    include_phase=bool(reference_cfg["phase_recovery_enabled"])
+                )
+                with self.feedback_lock:
+                    self.latest_feedback = snapshot
+                if snapshot.active_errors:
+                    raise FeedbackError(f"ODrive active errors: {snapshot.active_errors}")
+                if time.monotonic() >= next_checkpoint:
+                    motion_state = (
+                        MotionState.MOVING
+                        if self.motion_coordinator.owner is not None
+                        else MotionState.IDLE
+                    )
+                    self.reference_manager.write_checkpoint(
+                        motion_state,
+                        snapshot,
+                        clean_shutdown=False,
+                        extra={"motion_owner": self.motion_coordinator.owner},
+                    )
+                    next_checkpoint = time.monotonic() + checkpoint_s
+                self.monitor_stop_event.wait(interval_s)
+        except Exception as exc:
+            self.monitor_error = str(exc)
+            self.test_stop_event.set()
+            self.neutral_stop_event.set()
+            self.continuous_stop_event.set()
+            self.motion_coordinator.request_stop()
+            try:
+                self.reference_manager.invalidate(
+                    f"Feedback monitor failure: {exc}", fault=True
+                )
+            except Exception:
+                pass
+            adapter = self.odrive_adapter
+            result = adapter.request_idle(
+                self.system_config["reference"]["idle_confirmation_timeout_s"]
+            ) if adapter else None
+            if result and result.confirmed:
+                self.motion_coordinator.confirm_idle()
+            self.ui_message_queue.put(("terminal", f"SAFETY STOP: {exc}\n"))
+            self.ui_message_queue.put(("status", "FAULT / IDLE REQUESTED", RED))
+            self.ui_message_queue.put(("reference",))
+
     def configure_trajectory(self, speed_deg_s, acceleration_deg_s2):
-        axis = self.get_axis()
+        if self.odrive_adapter is None:
+            raise RuntimeError("ODrive is not connected")
         motion = self.system_config["motion"]
         trajectory_velocity = afo_speed_to_odrive_turns_s(speed_deg_s, self.system_config)
         trajectory_acceleration = afo_acceleration_to_odrive_turns_s2(
             acceleration_deg_s2, self.system_config
         )
         controller_limit = trajectory_velocity * float(motion["controller_velocity_safety_multiplier"])
-        axis.controller.config.control_mode = CONTROL_MODE_POSITION_CONTROL
-        axis.controller.config.input_mode = INPUT_MODE_TRAP_TRAJ
-        axis.trap_traj.config.vel_limit = trajectory_velocity
-        axis.trap_traj.config.accel_limit = trajectory_acceleration
-        axis.trap_traj.config.decel_limit = trajectory_acceleration
-        axis.controller.config.vel_limit = controller_limit
+        self.odrive_adapter.configure_trajectory(
+            trajectory_velocity,
+            trajectory_acceleration,
+            controller_limit,
+            CONTROL_MODE_POSITION_CONTROL,
+            INPUT_MODE_TRAP_TRAJ,
+        )
         self.commanded_odrive_velocity = trajectory_velocity
         self.commanded_afo_acceleration = float(acceleration_deg_s2)
 
     def odrive_configuration_snapshot(self):
-        axis = self.get_axis()
-        def read(value, default=None):
-            try:
-                return value()
-            except Exception:
-                return default
-        return {
-            "axis": int(self.system_config["hardware"]["odrive_axis"]),
-            "axis_active_errors": read(lambda: int(axis.active_errors)),
-            "control_mode": read(lambda: int(axis.controller.config.control_mode)),
-            "input_mode": read(lambda: int(axis.controller.config.input_mode)),
-            "controller_velocity_limit_turns_s": read(lambda: float(axis.controller.config.vel_limit)),
-            "trajectory_velocity_limit_turns_s": read(lambda: float(axis.trap_traj.config.vel_limit)),
-            "trajectory_acceleration_limit_turns_s2": read(lambda: float(axis.trap_traj.config.accel_limit)),
-            "trajectory_deceleration_limit_turns_s2": read(lambda: float(axis.trap_traj.config.decel_limit)),
-            "position_gain": read(lambda: float(axis.controller.config.pos_gain)),
-            "velocity_gain": read(lambda: float(axis.controller.config.vel_gain)),
-            "velocity_integrator_gain": read(lambda: float(axis.controller.config.vel_integrator_gain)),
-        }
+        if self.odrive_adapter is None:
+            raise RuntimeError("ODrive is not connected")
+        return self.odrive_adapter.read_only_report(include_phase=False)
 
-    def safe_idle_motor(self, reason=None):
-        self.stop_continuous_movement()
-        if self.odrive_controller is None:
-            return
+    def safe_idle_motor(self, reason=None, invalidate_reference=False):
+        self.continuous_movement_active = False
+        self.continuous_stop_event.set()
+        if self.movement_timer:
+            try:
+                self.master.after_cancel(self.movement_timer)
+            except Exception:
+                pass
+            self.movement_timer = None
+        self.motion_coordinator.request_stop()
+        if self.odrive_adapter is None:
+            return None
         try:
-            self.get_axis().requested_state = AXIS_STATE_IDLE
+            result = self.odrive_adapter.request_idle(
+                self.system_config["reference"]["idle_confirmation_timeout_s"]
+            )
             self.motion_phase = "idle"
+            if result.confirmed:
+                self.motion_coordinator.confirm_idle()
+            if invalidate_reference or not result.confirmed:
+                self.reference_manager.invalidate(
+                    reason or result.detail,
+                    fault=not result.confirmed,
+                )
+            try:
+                snapshot = self.odrive_adapter.snapshot()
+                with self.feedback_lock:
+                    self.latest_feedback = snapshot
+                self.reference_manager.write_checkpoint(
+                    MotionState.IDLE if result.confirmed else MotionState.FAULT,
+                    snapshot,
+                    clean_shutdown=False,
+                    extra={"idle_result": result.__dict__, "reason": reason},
+                )
+            except Exception as checkpoint_exc:
+                self.update_terminal(f"Unable to persist idle checkpoint: {checkpoint_exc}\n")
+                if result.confirmed:
+                    self.reference_manager.invalidate(
+                        f"Runtime-state write failed: {checkpoint_exc}", fault=True
+                    )
             if reason:
-                self.update_terminal(f"Motor set to idle: {reason}\n")
+                self.update_terminal(
+                    f"Motor idle {'confirmed' if result.confirmed else 'NOT CONFIRMED'}: {reason}\n"
+                )
+            self.update_reference_display()
+            return result
         except Exception as exc:
             self.update_terminal(f"Unable to confirm ODrive idle state: {exc}\n")
+            try:
+                self.reference_manager.invalidate(
+                    f"Idle confirmation failed: {exc}", fault=True
+                )
+            except Exception:
+                pass
+            self.update_reference_display()
+            return None
 
-    def enter_closed_loop(self):
-        axis = self.get_axis()
-        axis.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            if int(axis.active_errors):
-                raise RuntimeError(f"ODrive active errors entering closed loop: {int(axis.active_errors)}")
-            if int(axis.current_state) == int(AXIS_STATE_CLOSED_LOOP_CONTROL):
-                return axis
-            time.sleep(0.02)
-        raise TimeoutError("ODrive did not enter closed-loop control within 2 seconds")
+    def enter_closed_loop(self, token, allow_unreferenced=False):
+        if self.odrive_adapter is None:
+            raise RuntimeError("ODrive is not connected")
+        if not allow_unreferenced:
+            self.reference_manager.require_verified()
+        self.motion_coordinator.assert_active(token)
+        snapshot = self.get_feedback()
+        if snapshot.active_errors:
+            raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
+        # A durable 'arming' checkpoint must succeed before any enable request.
+        self.reference_manager.write_checkpoint(
+            MotionState.ARMING,
+            snapshot,
+            clean_shutdown=False,
+            extra={"motion_owner": token.owner},
+        )
+        self.odrive_adapter.enter_closed_loop_holding_current(
+            cancelled=lambda: self._motion_cancelled(token)
+        )
+        self.motion_coordinator.assert_active(token)
+        return self.odrive_adapter
+
+    def _motion_cancelled(self, token):
+        try:
+            self.motion_coordinator.assert_active(token)
+            return False
+        except MotionConflictError:
+            return True
 
     def connect_system(self):
         if self.strain_test_active:
             self.update_terminal("Cannot reconnect while a strain test is active.\n")
             return
+        if self.startup_block_reason or not self.process_lock.held:
+            self.update_terminal(
+                f"Hardware controls are blocked: {self.startup_block_reason or 'process lock unavailable'}\n"
+            )
+            return
         self.clear_terminal()
-        if self.odrive_controller is not None:
+        if self.odrive_adapter is not None:
             self.safe_idle_motor("reconnect")
+            self._stop_feedback_monitor()
         self.buttons[1].configure(state="disabled")
         self.neutral_button.configure(state="disabled")
-        self.connected_neutral_position = None
         self.set_status("CONNECTING", AMBER)
         serial_number = self.system_config["hardware"]["odrive_serial_number"]
         timeout_duration = self.system_config["hardware"]["odrive_connection_timeout_s"]
@@ -650,58 +964,128 @@ class MyInterface:
             if self.odrive_controller is None:
                 raise TimeoutError(f"ODrive {serial_number} was not found")
 
-            axis = self.get_axis()
-            prior_errors = int(axis.active_errors)
-            if prior_errors:
-                self.update_terminal(f"ODrive active errors before clear: {prior_errors}\n")
-            self.odrive_controller.clear_errors()
-
-            controller = self.system_config["controller"]
-            if controller["apply_controller_gains"]:
-                axis.controller.config.pos_gain = controller["position_gain"]
-                axis.controller.config.vel_gain = controller["velocity_gain"]
-                axis.controller.config.vel_integrator_gain = controller["velocity_integrator_gain"]
-
-            motion = self.system_config["motion"]
-            self.connected_neutral_position = float(motion["neutral_position_turns"])
-            self.configure_trajectory(
-                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+            self.odrive_adapter = ODriveAdapter(
+                self.odrive_controller,
+                self.system_config["hardware"]["odrive_axis"],
+                AXIS_STATE_IDLE,
+                AXIS_STATE_CLOSED_LOOP_CONTROL,
             )
-            self.starting_position = axis.pos_vel_mapper.pos_rel
-            self.safe_idle_motor()
+            if self.system_config["controller"]["apply_controller_gains"]:
+                raise RuntimeError(
+                    "Runtime controller-gain writes are disabled in the neutral-recovery build"
+                )
+            self.hardware_fingerprint = self.odrive_adapter.fingerprint()
+            initial = self.odrive_adapter.snapshot(
+                include_phase=bool(self.system_config["reference"]["phase_recovery_enabled"])
+            )
+            with self.feedback_lock:
+                self.latest_feedback = initial
+            idle_result = self.odrive_adapter.request_idle(
+                self.system_config["reference"]["idle_confirmation_timeout_s"]
+            )
+            if not idle_result.confirmed:
+                raise RuntimeError(idle_result.detail)
+            self.motion_coordinator.confirm_idle()
+
+            record = self.reference_manager.record
+            if record is not None:
+                prior_digest = record.hardware_fingerprint.get("configuration_digest")
+                if prior_digest != self.hardware_fingerprint.configuration_digest:
+                    self.reference_manager.invalidate(
+                        "ODrive identity or frame-relevant configuration changed; physical recovery required"
+                    )
+                else:
+                    checkpoint = self.state_store.load_checkpoint()
+                    if checkpoint:
+                        valid, reason, mapping = evaluate_continuity(
+                            checkpoint,
+                            initial,
+                            self.hardware_fingerprint,
+                            self.system_config,
+                        )
+                        if valid and mapping is not None:
+                            self.reference_manager.mapping = mapping
+                            self.reference_manager.confidence = ReferenceConfidence.VERIFIED
+                            self.reference_manager.reason = reason
+                        else:
+                            phase_valid, phase_reason = self.reference_manager.recover_from_phase(
+                                initial, self.hardware_fingerprint
+                            )
+                            if not phase_valid:
+                                self.reference_manager.invalidate(
+                                    f"{reason}; {phase_reason}"
+                                )
+                    else:
+                        phase_valid, phase_reason = self.reference_manager.recover_from_phase(
+                            initial, self.hardware_fingerprint
+                        )
+                        if not phase_valid:
+                            self.reference_manager.invalidate(
+                                f"No continuity checkpoint; {phase_reason}"
+                            )
+            self._start_feedback_monitor()
+            self._start_watchdog_if_enabled()
+
+            if initial.active_errors:
+                self.reference_manager.invalidate(
+                    f"ODrive has active errors ({initial.active_errors}); clear and reconnect",
+                    fault=True,
+                )
 
             self.update_terminal(
                 f"Connected to ODrive S1\nSerial number: {serial_number}\n"
-                f"Axis errors after clear: {int(axis.active_errors)}\n"
-                f"Fixed 90 degree neutral: {self.connected_neutral_position:.8f} turns.\n"
+                f"Axis active errors: {initial.active_errors}\n"
+                "No errors were cleared and no encoder/controller configuration was saved.\n"
+                f"Runtime state: {self.state_store.directory}\n"
             )
-            self.set_status("CONNECTED / IDLE", GREEN)
-            if self.manual_mode.get():
-                self.toggle_manual_mode()
+            if self.reference_manager.verified:
+                self.set_status("CONNECTED / REFERENCE VERIFIED", GREEN)
             else:
-                self.buttons[1].configure(state="normal")
+                self.set_status("CONNECTED / RECOVERY REQUIRED", AMBER)
+                self.update_terminal(
+                    "Normal tests and manual motion are blocked until physical neutral is verified.\n"
+                )
+            self.update_reference_display()
         except (concurrent.futures.TimeoutError, TimeoutError) as exc:
+            self._stop_watchdog(disable=True)
+            self._stop_feedback_monitor()
             self.odrive_controller = None
+            self.odrive_adapter = None
             self.update_terminal(f"Connection timed out: {exc}\n")
             self.set_status("DISCONNECTED", RED)
         except Exception as exc:
             self.safe_idle_motor("connection/configuration error")
+            self._stop_watchdog(disable=True)
+            self._stop_feedback_monitor()
             self.odrive_controller = None
+            self.odrive_adapter = None
             self.update_terminal(f"Error connecting to ODrive: {exc}\n")
             self.set_status("ERROR", RED)
+        finally:
+            self.update_reference_display()
 
     def disconnect_odrive(self):
         """Disconnect from ODrive safely"""
         try:
             if self.odrive_controller:
                 self.neutral_stop_event.set()
+                self.continuous_stop_event.set()
                 self.safe_idle_motor("disconnect")
+                self._stop_watchdog(disable=True)
+                self._stop_feedback_monitor()
                 self.odrive_controller = None
-                self.connected_neutral_position = None
+                self.odrive_adapter = None
+                self.hardware_fingerprint = None
+                with self.feedback_lock:
+                    self.latest_feedback = None
+                self.reference_manager.mapping = None
+                self.reference_manager.confidence = ReferenceConfidence.RECOVERY_REQUIRED
+                self.reference_manager.reason = "ODrive disconnected; session mapping cleared"
                 self.buttons[1].configure(state="disabled")
                 self.neutral_button.configure(state="disabled")
                 self.set_status("DISCONNECTED", RED)
                 self.update_terminal("ODrive disconnected and set to idle state\n")
+                self.update_reference_display()
         except Exception as e:
             self.update_terminal(f"Error disconnecting ODrive: {e}\n")
 
@@ -709,9 +1093,13 @@ class MyInterface:
         was_active = self.strain_test_active
         self.test_stop_event.set()
         self.neutral_stop_event.set()
+        self.continuous_stop_event.set()
         self.strain_test_active = False
-        self.safe_idle_motor("operator stop")
-        self.set_status("STOPPED / IDLE", AMBER)
+        idle_result = self.safe_idle_motor("operator stop")
+        self.set_status(
+            "STOPPED / IDLE" if idle_result and idle_result.confirmed else "STOPPED / IDLE UNCONFIRMED",
+            AMBER if idle_result and idle_result.confirmed else RED,
+        )
         if was_active:
             self.update_terminal("Test stop requested; the data file will be finalized as aborted.\n")
         else:
@@ -741,7 +1129,7 @@ class MyInterface:
 
         self.safe_idle_motor("reset")
         if self.odrive_controller and not self.manual_mode.get():
-            self.buttons[1].configure(state="normal")
+            self._refresh_motion_controls()
             self.set_status("CONNECTED / IDLE", GREEN)
 
 
@@ -769,27 +1157,21 @@ class MyInterface:
                     self.set_test_inputs_state(item[1])
                 elif item[0] == "run_buttons":
                     self.buttons[0].configure(state=item[1])
-                    self.buttons[1].configure(
-                        state=(
-                            item[1]
-                            if self.odrive_controller is not None
-                            and self.connected_neutral_position is not None
-                            else "disabled"
-                        )
-                    )
+                    self._refresh_motion_controls()
                     self.manual_mode_toggle.configure(state=item[1])
                 elif item[0] == "neutral_finished":
                     self.neutral_motion_active = False
-                    enabled = (
-                        self.manual_mode.get()
-                        and self.odrive_controller is not None
-                        and self.connected_neutral_position is not None
-                        and not self.strain_test_active
-                    )
-                    state = "normal" if enabled else "disabled"
-                    self.left_arrow.configure(state=state)
-                    self.right_arrow.configure(state=state)
-                    self.neutral_button.configure(state=state)
+                    self._refresh_motion_controls()
+                elif item[0] == "reference":
+                    self.update_reference_display()
+                elif item[0] == "recovery_motion_finished":
+                    if self.recovery_window is not None and self.recovery_window.winfo_exists():
+                        for button in self.recovery_jog_buttons:
+                            button.configure(state="normal")
+                        self.recovery_set_button.configure(state="normal")
+                        self.recovery_position_label.configure(
+                            text=self._recovery_position_text()
+                        )
         except queue.Empty:
             pass
 
@@ -804,6 +1186,301 @@ class MyInterface:
             self.master.after(50, self._drain_ui_queues)
         except tk.TclError:
             pass
+
+    def _recovery_position_text(self):
+        try:
+            snapshot = self.get_feedback()
+            return (
+                f"Session position: {snapshot.position_turns:.8f} turns | "
+                f"Jog total: {self.recovery_cumulative_deg:+.2f} deg"
+            )
+        except Exception as exc:
+            return f"Feedback unavailable: {exc}"
+
+    def open_reference_recovery(self):
+        if self.odrive_adapter is None:
+            self.update_terminal("Connect the ODrive before reference recovery.\n")
+            return
+        if self.motion_coordinator.owner is not None or self.strain_test_active:
+            self.update_terminal("Reference recovery is blocked while motion is active.\n")
+            return
+        if self.recovery_window is not None and self.recovery_window.winfo_exists():
+            self.recovery_window.lift()
+            return
+        try:
+            snapshot = self.get_feedback()
+        except FeedbackError as exc:
+            self.update_terminal(f"Cannot start recovery: {exc}\n")
+            return
+        self.recovery_origin_turns = snapshot.position_turns
+        self.recovery_cumulative_deg = 0.0
+        self.recovery_started_monotonic = time.monotonic()
+
+        window = ctk.CTkToplevel(self.master)
+        self.recovery_window = window
+        window.title("EAST Neutral Reference Recovery")
+        window.geometry("610x500")
+        window.minsize(560, 460)
+        window.configure(fg_color=BG)
+        window.transient(self.master)
+        window.protocol("WM_DELETE_WINDOW", self.close_reference_recovery)
+
+        panel = ctk.CTkFrame(window, fg_color=PANEL, corner_radius=8)
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(
+            panel,
+            text="Verify Physical 90 Degree Neutral",
+            font=("Arial", 20, "bold"),
+            text_color=TEXT,
+        ).pack(anchor="w", padx=16, pady=(14, 5))
+        ctk.CTkLabel(
+            panel,
+            text=(
+                "Normal tests and manual controls remain disabled until neutral is verified. "
+                "Use only the slow bounded jog below, physically align the mounted fixture/AFO "
+                "at 90 degrees, then set neutral. Nothing moves when neutral is set."
+            ),
+            font=("Arial", 12),
+            text_color=TEXT,
+            wraplength=540,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+        self.recovery_position_label = ctk.CTkLabel(
+            panel,
+            text=self._recovery_position_text(),
+            font=("Arial", 12, "bold"),
+            text_color=MUTED,
+        )
+        self.recovery_position_label.pack(anchor="w", padx=16, pady=5)
+
+        self.recovery_acknowledgement = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            panel,
+            text="Fixture is clear, E-stop is accessible, and I am observing the mechanism",
+            variable=self.recovery_acknowledgement,
+        ).pack(anchor="w", padx=16, pady=8)
+
+        jog_frame = ctk.CTkFrame(panel, fg_color=PANEL_SOFT, corner_radius=6)
+        jog_frame.pack(fill="x", padx=16, pady=6)
+        step = self.system_config["reference"]["recovery_jog_step_deg"]
+        left = ctk.CTkButton(
+            jog_frame,
+            text=f"Jog -{step:g} deg",
+            command=lambda: self.recovery_jog(-1),
+            fg_color=MUTED,
+            hover_color="#475569",
+        )
+        right = ctk.CTkButton(
+            jog_frame,
+            text=f"Jog +{step:g} deg",
+            command=lambda: self.recovery_jog(1),
+            fg_color=MUTED,
+            hover_color="#475569",
+        )
+        left.pack(side="left", fill="x", expand=True, padx=6, pady=8)
+        right.pack(side="left", fill="x", expand=True, padx=6, pady=8)
+        self.recovery_jog_buttons = (left, right)
+
+        self.recovery_set_button = ctk.CTkButton(
+            panel,
+            text="Set Current Physical Position as 90 deg Neutral",
+            command=self.set_physical_neutral,
+            fg_color="#0f766e",
+            hover_color="#115e59",
+            height=36,
+        )
+        self.recovery_set_button.pack(fill="x", padx=16, pady=(10, 5))
+
+        if self.system_config["reference"]["assisted_measured_angle_enabled"]:
+            measured = ctk.CTkFrame(panel, fg_color="transparent")
+            measured.pack(fill="x", padx=16, pady=5)
+            self.recovery_angle_entry = ctk.CTkEntry(
+                measured, placeholder_text="Measured angle from neutral (deg)"
+            )
+            self.recovery_uncertainty_entry = ctk.CTkEntry(
+                measured, placeholder_text="Uncertainty (deg)"
+            )
+            self.recovery_angle_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+            self.recovery_uncertainty_entry.pack(side="left", fill="x", expand=True, padx=5)
+            ctk.CTkButton(
+                measured,
+                text="Use Measurement",
+                command=self.set_neutral_from_measurement,
+                width=130,
+            ).pack(side="left", padx=(5, 0))
+
+        ctk.CTkButton(
+            panel,
+            text="Cancel / Keep Motion Blocked",
+            command=self.close_reference_recovery,
+            fg_color="#94a3b8",
+            hover_color=MUTED,
+        ).pack(fill="x", padx=16, pady=(5, 14))
+
+    def close_reference_recovery(self):
+        self.neutral_stop_event.set()
+        if self.motion_coordinator.owner == "reference-recovery-jog":
+            self.safe_idle_motor("reference recovery closed")
+        if self.recovery_window is not None:
+            try:
+                self.recovery_window.destroy()
+            except tk.TclError:
+                pass
+        self.recovery_window = None
+
+    def recovery_jog(self, direction):
+        if not self.recovery_acknowledgement.get():
+            CTkMessagebox(
+                title="Acknowledgement Required",
+                message="Confirm the recovery safety acknowledgement before jogging.",
+            )
+            return
+        cfg = self.system_config["reference"]
+        if time.monotonic() - self.recovery_started_monotonic > cfg["recovery_timeout_s"]:
+            self.update_terminal("Recovery jog window expired; close and reopen recovery.\n")
+            return
+        next_total = self.recovery_cumulative_deg + direction * cfg["recovery_jog_step_deg"]
+        if abs(next_total) > cfg["recovery_jog_maximum_cumulative_deg"] + 1e-9:
+            self.update_terminal("Recovery jog blocked at its cumulative travel limit.\n")
+            return
+        try:
+            token = self.motion_coordinator.acquire("reference-recovery-jog")
+            self.reference_manager.invalidate("Unreferenced recovery jog performed")
+        except Exception as exc:
+            self.update_terminal(f"Recovery jog blocked: {exc}\n")
+            return
+        for button in self.recovery_jog_buttons:
+            button.configure(state="disabled")
+        self.recovery_set_button.configure(state="disabled")
+        worker = threading.Thread(
+            target=self._recovery_jog_worker,
+            args=(token, direction, next_total),
+            name="reference-recovery-jog",
+            daemon=True,
+        )
+        worker.start()
+
+    def _recovery_jog_worker(self, token, direction, next_total):
+        try:
+            cfg = self.system_config["reference"]
+            self.configure_trajectory(
+                cfg["recovery_speed_deg_s"], cfg["recovery_acceleration_deg_s2"]
+            )
+            self.enter_closed_loop(token, allow_unreferenced=True)
+            snapshot = self.get_feedback()
+            step_turns = afo_degrees_to_odrive_turns(
+                direction * cfg["recovery_jog_step_deg"], self.system_config
+            )
+            target = snapshot.position_turns + step_turns
+            origin_limit = afo_degrees_to_odrive_turns(
+                cfg["recovery_jog_maximum_cumulative_deg"], self.system_config
+            )
+            if abs(target - self.recovery_origin_turns) > origin_limit + 1e-9:
+                raise ReferenceError("Recovery target exceeds bounded travel")
+            self.reference_manager.write_checkpoint(
+                MotionState.MOVING,
+                snapshot,
+                clean_shutdown=False,
+                extra={"phase": "unreferenced_recovery_jog", "target_turns": target},
+            )
+            self.motion_coordinator.assert_active(token)
+            self.odrive_adapter.command_position(target)
+            wait_for_settle(
+                self.get_feedback,
+                target_turns=target,
+                tolerance_turns=afo_degrees_to_odrive_turns(
+                    self.system_config["motion"]["position_tolerance_deg"], self.system_config
+                ),
+                velocity_limit_turns_s=afo_speed_to_odrive_turns_s(
+                    cfg["settle_velocity_limit_deg_s"], self.system_config
+                ),
+                dwell_s=cfg["settle_dwell_ms"] / 1000.0,
+                timeout_s=motion_timeout_seconds(
+                    cfg["recovery_jog_step_deg"],
+                    cfg["recovery_speed_deg_s"],
+                    cfg["recovery_acceleration_deg_s2"],
+                    self.system_config,
+                ),
+                stale_after_s=cfg["feedback_stale_after_ms"] / 1000.0,
+                cancelled=lambda: self._motion_cancelled(token),
+            )
+            self.recovery_cumulative_deg = next_total
+            self.update_terminal(
+                f"Recovery jog complete ({self.recovery_cumulative_deg:+.2f} deg cumulative).\n"
+            )
+        except Exception as exc:
+            self.update_terminal(f"Recovery jog failed: {exc}\n")
+        finally:
+            self.safe_idle_motor("recovery jog complete")
+            self.motion_coordinator.release(token)
+            self.ui_message_queue.put(("recovery_motion_finished",))
+
+    def set_physical_neutral(self):
+        if not self.recovery_acknowledgement.get():
+            CTkMessagebox(
+                title="Acknowledgement Required",
+                message="Confirm the safety acknowledgement before setting neutral.",
+            )
+            return
+        confirmation = CTkMessagebox(
+            title="Set Physical Neutral",
+            message=(
+                "Confirm the mounted fixture/AFO is physically aligned at exactly 90 degrees.\n\n"
+                "This records a reference only; the motor will not move."
+            ),
+            icon="question",
+            option_1="Cancel",
+            option_2="Set Neutral",
+        )
+        if confirmation.get() != "Set Neutral":
+            return
+        try:
+            if self.motion_coordinator.owner is not None:
+                raise MotionConflictError("Wait for recovery motion to finish")
+            idle_result = self.odrive_adapter.request_idle(
+                self.system_config["reference"]["idle_confirmation_timeout_s"]
+            )
+            if not idle_result.confirmed:
+                raise RuntimeError("ODrive idle could not be confirmed")
+            snapshot = self.odrive_adapter.snapshot(
+                include_phase=bool(self.system_config["reference"]["phase_recovery_enabled"])
+            )
+            with self.feedback_lock:
+                self.latest_feedback = snapshot
+            self.reference_manager.establish_at_physical_neutral(
+                snapshot,
+                self.hardware_fingerprint,
+                self.operator_input.get(),
+                self.fixture_id_input.get(),
+                acknowledgement=True,
+            )
+            self.update_terminal(
+                "Physical 90 degree neutral persisted and verified for this controller session.\n"
+            )
+            self.set_status("CONNECTED / REFERENCE VERIFIED", GREEN)
+            self.update_reference_display()
+            self.close_reference_recovery()
+        except Exception as exc:
+            self.update_terminal(f"Unable to set neutral: {exc}\n")
+            CTkMessagebox(title="Neutral Not Set", message=str(exc))
+
+    def set_neutral_from_measurement(self):
+        try:
+            snapshot = self.get_feedback()
+            self.reference_manager.verify_measured_displacement(
+                snapshot,
+                self.hardware_fingerprint,
+                float(self.recovery_angle_entry.get()),
+                float(self.recovery_uncertainty_entry.get()),
+                self.operator_input.get(),
+                self.fixture_id_input.get(),
+                self.recovery_acknowledgement.get(),
+            )
+            self.update_terminal("Measured-angle neutral recovery completed; no motor motion was commanded.\n")
+            self.update_reference_display()
+            self.close_reference_recovery()
+        except Exception as exc:
+            self.update_terminal(f"Measured-angle recovery failed: {exc}\n")
 
     def on_close(self):
         """Handle application closing"""
@@ -849,6 +1526,7 @@ class MyInterface:
                     self.stop_logging()
 
                 self.neutral_stop_event.set()
+                self.continuous_stop_event.set()
                 for thread_name in ("strain_thread", "data_collection_thread", "neutral_thread"):
                     thread = getattr(self, thread_name, None)
                     if thread and thread.is_alive() and thread is not threading.current_thread():
@@ -857,12 +1535,22 @@ class MyInterface:
                 # Close the plot window safely
                 self.close_plot_window()
                 
-                # Disconnect from ODrive if connected
-                if hasattr(self, 'odrive_controller') and self.odrive_controller:
-                    try:
-                        self.disconnect_odrive()
-                    except Exception:
-                        pass  # Ignore any errors during ODrive disconnection
+                # Confirm idle before recording a clean shutdown. This checkpoint is
+                # evidence only; automatic continuity remains disabled by default.
+                if self.odrive_adapter is not None:
+                    idle_result = self.safe_idle_motor("application shutdown")
+                    self._stop_watchdog(disable=True)
+                    self._stop_feedback_monitor()
+                    if idle_result and idle_result.confirmed:
+                        snapshot = self.odrive_adapter.snapshot()
+                        self.reference_manager.write_checkpoint(
+                            MotionState.IDLE,
+                            snapshot,
+                            clean_shutdown=True,
+                            extra={"reason": "application shutdown"},
+                        )
+                    self.odrive_controller = None
+                    self.odrive_adapter = None
                 
                 # Disconnect from Phidget if connected
                 if hasattr(self, 'voltage_ratio_input') and self.voltage_ratio_input:
@@ -872,12 +1560,14 @@ class MyInterface:
                         pass
                 
                 # Destroy the main window
+                self.process_lock.release()
                 self.master.quit()
                 self.master.destroy()
                 
             except Exception as e:
                 print(f"Error during shutdown: {e}")
                 # Force quit if there's an error
+                self.process_lock.release()
                 self.master.quit()
                 self.master.destroy()
 
@@ -900,20 +1590,22 @@ class MyInterface:
             self.update_terminal("No serial connection established. Please connect ODrive first.\n")
             return
 
-        if self.connected_neutral_position is None:
+        if not self.reference_manager.verified:
             self.update_terminal(
-                "The fixed 90 degree neutral reference is unavailable. Check tester_config.json.\n"
+                f"Neutral reference is not verified: {self.reference_manager.reason}\n"
             )
             return
 
-        axis = self.get_axis()
-        tolerance_turns = afo_degrees_to_odrive_turns(
-            self.system_config["motion"]["position_tolerance_deg"], self.system_config
-        )
-        if abs(axis.pos_vel_mapper.pos_rel - self.connected_neutral_position) > tolerance_turns:
+        try:
+            snapshot = self.get_feedback()
+            current_angle = self.reference_manager.angle_from_position(snapshot.position_turns)
+        except ReferenceError as exc:
+            self.update_terminal(f"Cannot verify neutral before test: {exc}\n")
+            return
+        if abs(current_angle) > self.system_config["motion"]["position_tolerance_deg"]:
             self.update_terminal(
-                "Fixture is not at the fixed 90 degree neutral (0 turns). Enable manual mode "
-                "and press 'Return to 90 deg (0 turns)' before starting.\n"
+                "Fixture is not at the verified physical 90 degree neutral. Enable manual mode "
+                "and press 'Return to Verified 90 deg Neutral' before starting.\n"
             )
             return
 
@@ -950,6 +1642,12 @@ class MyInterface:
         if confirmation.get() != "Start":
             return
 
+        try:
+            self.run_motion_token = self.motion_coordinator.acquire("strain-test")
+        except MotionConflictError as exc:
+            self.update_terminal(f"Cannot start test: {exc}\n")
+            return
+
         self.set_test_inputs_state("disabled")
         self.buttons[0].configure(state="disabled")
         self.buttons[1].configure(state="disabled")
@@ -959,9 +1657,9 @@ class MyInterface:
         self.strain_file_name = None
         self.test_started_monotonic = time.monotonic()
         try:
-            axis = self.get_axis()
-            if int(axis.active_errors):
-                raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
+            snapshot = self.get_feedback()
+            if snapshot.active_errors:
+                raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
             self.voltage_ratio_input = VoltageRatioInput()
             hardware = self.system_config["hardware"]
@@ -979,7 +1677,6 @@ class MyInterface:
                 parameters.commanded_afo_speed_deg_s,
                 parameters.commanded_afo_acceleration_deg_s2,
             )
-            self.starting_position = self.connected_neutral_position
             app_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
             csv_path, metadata_path = create_run_paths(parameters, self.system_config, app_base)
             self.strain_file_name = str(csv_path)
@@ -993,11 +1690,7 @@ class MyInterface:
                 self.odrive_configuration_snapshot(),
             )
             self.run_metadata["software"]["gui_version"] = APP_VERSION
-            self.run_metadata["neutral_reference"] = {
-                "definition": "fixed configured 90 degree position",
-                "odrive_pos_rel_turns": self.connected_neutral_position,
-                "reference_status": self.system_config["motion"]["neutral_reference_status"],
-            }
+            self.run_metadata["neutral_reference"] = self.reference_manager.metadata_snapshot()
             try:
                 self.run_metadata["hardware"]["connected_phidget_serial_number"] = (
                     self.voltage_ratio_input.getDeviceSerialNumber()
@@ -1041,6 +1734,7 @@ class MyInterface:
             self.strain_test_active = False
             self.test_stop_event.set()
             self.safe_idle_motor("test initialization error")
+            self.run_motion_token = None
             data_thread = getattr(self, "data_collection_thread", None)
             if data_thread and data_thread.is_alive():
                 data_thread.join(timeout=2.0)
@@ -1056,9 +1750,7 @@ class MyInterface:
             self.buttons[0].configure(state="normal")
             self.manual_mode_toggle.configure(state="normal")
             if self.odrive_controller:
-                self.buttons[1].configure(
-                    state="normal" if self.connected_neutral_position is not None else "disabled"
-                )
+                self._refresh_motion_controls()
             if self.run_metadata is not None and not self.run_finalized:
                 self.completed_cycles = 0
                 self.finalize_run("error", str(exc))
@@ -1100,11 +1792,10 @@ class MyInterface:
             if calibrated:
                 wall_time = datetime.now().astimezone()
                 monotonic_time = time.monotonic()
-                axis = self.get_axis()
-                current_pos_turns = axis.pos_vel_mapper.pos_rel
-                relative_turns = current_pos_turns - self.starting_position
-                relative_angle = odrive_turns_to_afo_degrees(relative_turns, self.system_config)
-                velocity_turns_s = axis.pos_vel_mapper.vel
+                snapshot = self.get_feedback()
+                current_pos_turns = snapshot.position_turns
+                relative_angle = self.reference_manager.angle_from_position(current_pos_turns)
+                velocity_turns_s = snapshot.velocity_turns_s
                 afo_velocity_deg_s = odrive_turns_to_afo_degrees(
                     velocity_turns_s, self.system_config
                 )
@@ -1158,13 +1849,15 @@ class MyInterface:
                     f"{avg_torque:.6f}",
                     f"{velocity_turns_s:.8f}",
                     f"{afo_velocity_deg_s:.6f}",
-                    int(axis.active_errors),
+                    snapshot.active_errors,
                 ]
                 self.strain_data_buffer.append(data_row)
                 if len(self.strain_data_buffer) >= self.system_config["acquisition"]["csv_flush_rows"]:
                     with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
                         writer = csv.writer(file)
                         writer.writerows(self.strain_data_buffer)
+                        file.flush()
+                        os.fsync(file.fileno())
                     self.strain_data_buffer = []
                 
                 # Update plot data if plot window is open (using moving average values)
@@ -1190,21 +1883,28 @@ class MyInterface:
                 
         except Exception as e:
             self.update_terminal(f"Error logging strain data: {str(e)}\n")
+            raise
     
     def strain_test_control(self):
         """Control the motor and log strain data during the test"""
         final_status = "aborted"
         final_error = None
+        idle_confirmed = False
+        token = self.run_motion_token
         try:
+            if token is None:
+                raise RuntimeError("Test motion ownership was not acquired")
             if self.test_stop_event.is_set():
                 raise TestStopped()
-            axis = self.enter_closed_loop()
-            self.update_terminal(f"Starting position (zero point): {self.starting_position} turns\n")
+            self.enter_closed_loop(token)
+            mapping = self.reference_manager.require_verified()
+            self.update_terminal(
+                f"Verified physical 90 degree neutral: "
+                f"{mapping.neutral_position_turns:.8f} session turns\n"
+            )
             parameters = self.run_parameters
-            min_turns = afo_degrees_to_odrive_turns(parameters.min_angle_deg, self.system_config)
-            max_turns = afo_degrees_to_odrive_turns(parameters.max_angle_deg, self.system_config)
-            absolute_min = self.starting_position - min_turns
-            absolute_max = self.starting_position + max_turns
+            absolute_min = self.reference_manager.target_for_angle(-parameters.min_angle_deg)
+            absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
 
             self.update_terminal(
                 f"Commanded AFO range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
@@ -1217,18 +1917,41 @@ class MyInterface:
             for cycle in range(1, parameters.cycles + 1):
                 self.current_cycle = cycle
                 self.command_position_and_wait(
-                    absolute_max, "moving_to_max", parameters.max_angle_deg
+                    absolute_max, "moving_to_max", parameters.max_angle_deg, token
                 )
                 self.command_position_and_wait(
-                    absolute_min, "moving_to_min", parameters.max_angle_deg + parameters.min_angle_deg
+                    absolute_min,
+                    "moving_to_min",
+                    parameters.max_angle_deg + parameters.min_angle_deg,
+                    token,
                 )
                 self.completed_cycles = cycle
                 self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
 
-            self.current_cycle = parameters.cycles
-            self.command_position_and_wait(
-                self.starting_position, "returning_to_zero", parameters.min_angle_deg
+            # A successful run uses the dedicated, conservative neutral-return profile.
+            motion = self.system_config["motion"]
+            self.configure_trajectory(
+                motion["neutral_return_speed_deg_s"],
+                motion["neutral_return_acceleration_deg_s2"],
             )
+            neutral_target = mapping.neutral_position_turns
+            current_angle = self.reference_manager.angle_from_position(
+                self.get_feedback().position_turns
+            )
+            self.command_position_and_wait(
+                neutral_target,
+                "returning_to_verified_neutral",
+                abs(current_angle),
+                token,
+                speed_deg_s=motion["neutral_return_speed_deg_s"],
+                acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
+            )
+            idle_result = self.safe_idle_motor("successful neutral return")
+            if not idle_result or not idle_result.confirmed:
+                raise RuntimeError("Test finished but ODrive idle could not be confirmed")
+            idle_confirmed = True
+            self.motion_phase = "post_idle_observation"
+            self.observe_post_idle_neutral(neutral_target)
             final_status = "completed"
             self.update_terminal(f"Strain test completed. Data saved to {self.strain_file_name}\n")
         except TestStopped:
@@ -1242,48 +1965,112 @@ class MyInterface:
         finally:
             self.strain_test_active = False
             self.test_stop_event.set()
+            # Motor idle is requested before waiting for acquisition or closing devices.
+            if not idle_confirmed:
+                idle_result = self.safe_idle_motor(final_status)
+                if not idle_result or not idle_result.confirmed:
+                    final_status = "error"
+                    suffix = "ODrive idle was not confirmed"
+                    final_error = f"{final_error}; {suffix}" if final_error else suffix
             if hasattr(self, "data_collection_thread"):
                 self.data_collection_thread.join(timeout=2.0)
-            self.safe_idle_motor(final_status)
+                if self.data_collection_thread.is_alive():
+                    final_status = "error"
+                    suffix = "data acquisition thread did not stop within 2 seconds"
+                    final_error = f"{final_error}; {suffix}" if final_error else suffix
             try:
                 if self.voltage_ratio_input is not None:
                     self.voltage_ratio_input.close()
             except Exception:
                 pass
             self.voltage_ratio_input = None
+            if token is not None:
+                self.motion_coordinator.release(token)
+            self.run_motion_token = None
             self.finalize_run(final_status, final_error)
 
-    def command_position_and_wait(self, target_turns, phase, nominal_distance_deg):
+    def command_position_and_wait(
+        self,
+        target_turns,
+        phase,
+        nominal_distance_deg,
+        token,
+        speed_deg_s=None,
+        acceleration_deg_s2=None,
+    ):
         if self.test_stop_event.is_set():
             raise TestStopped()
-        axis = self.get_axis()
+        self.motion_coordinator.assert_active(token)
+        if self.odrive_adapter is None:
+            raise RuntimeError("ODrive disconnected during motion")
         self.motion_phase = phase
         self.current_nominal_distance_deg = float(nominal_distance_deg)
+        effective_speed = (
+            self.run_parameters.commanded_afo_speed_deg_s
+            if speed_deg_s is None else float(speed_deg_s)
+        )
+        effective_acceleration = (
+            self.run_parameters.commanded_afo_acceleration_deg_s2
+            if acceleration_deg_s2 is None else float(acceleration_deg_s2)
+        )
         self.current_expected_constant_speed_span_deg = constant_speed_span_deg(
             nominal_distance_deg,
-            self.run_parameters.commanded_afo_speed_deg_s,
-            self.run_parameters.commanded_afo_acceleration_deg_s2,
+            effective_speed,
+            effective_acceleration,
         )
-        axis.controller.input_pos = target_turns
         timeout_s = motion_timeout_seconds(
             nominal_distance_deg,
-            self.run_parameters.commanded_afo_speed_deg_s,
-            self.run_parameters.commanded_afo_acceleration_deg_s2,
+            effective_speed,
+            effective_acceleration,
             self.system_config,
         )
         tolerance_turns = afo_degrees_to_odrive_turns(
             self.system_config["motion"]["position_tolerance_deg"], self.system_config
         )
-        deadline = time.monotonic() + timeout_s
-        while abs(axis.pos_vel_mapper.pos_rel - target_turns) > tolerance_turns:
-            if self.test_stop_event.is_set():
-                raise TestStopped()
-            active_errors = int(axis.active_errors)
-            if active_errors:
-                raise RuntimeError(f"ODrive active errors during {phase}: {active_errors}")
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Motion timed out during {phase} after {timeout_s:.1f} s")
-            time.sleep(0.01)
+        velocity_limit_turns_s = afo_speed_to_odrive_turns_s(
+            self.system_config["reference"]["settle_velocity_limit_deg_s"],
+            self.system_config,
+        )
+        snapshot = self.get_feedback()
+        self.reference_manager.write_checkpoint(
+            MotionState.MOVING,
+            snapshot,
+            clean_shutdown=False,
+            extra={"phase": phase, "target_turns": float(target_turns)},
+        )
+        self.motion_coordinator.assert_active(token)
+        self.odrive_adapter.command_position(target_turns)
+        try:
+            wait_for_settle(
+                self.get_feedback,
+                target_turns=float(target_turns),
+                tolerance_turns=tolerance_turns,
+                velocity_limit_turns_s=velocity_limit_turns_s,
+                dwell_s=self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
+                timeout_s=timeout_s,
+                stale_after_s=self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
+                cancelled=lambda: self.test_stop_event.is_set() or self._motion_cancelled(token),
+            )
+        except MotionConflictError as exc:
+            raise TestStopped() from exc
+
+    def observe_post_idle_neutral(self, neutral_target):
+        duration_s = self.system_config["reference"]["post_idle_observation_ms"] / 1000.0
+        tolerance_turns = afo_degrees_to_odrive_turns(
+            self.system_config["motion"]["position_tolerance_deg"], self.system_config
+        )
+        deadline = time.monotonic() + duration_s
+        while time.monotonic() < deadline:
+            snapshot = self.get_feedback()
+            if snapshot.current_state != int(AXIS_STATE_IDLE):
+                raise RuntimeError("ODrive left idle during post-test observation")
+            if snapshot.active_errors:
+                raise RuntimeError(
+                    f"ODrive error during post-test observation: {snapshot.active_errors}"
+                )
+            if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
+                raise RuntimeError("Neutral position drifted after ODrive entered idle")
+            time.sleep(0.02)
     
     def continuous_strain_read(self):
         """Continuously read strain data while the test is running"""
@@ -1301,10 +2088,17 @@ class MyInterface:
             self.test_stop_event.set()
         finally:
             if self.strain_data_buffer:
-                with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
-                    writer = csv.writer(file)
-                    writer.writerows(self.strain_data_buffer)
-                self.strain_data_buffer = []
+                try:
+                    with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
+                        writer = csv.writer(file)
+                        writer.writerows(self.strain_data_buffer)
+                        file.flush()
+                        os.fsync(file.fileno())
+                    self.strain_data_buffer = []
+                except Exception as exc:
+                    self.acquisition_error = f"CSV flush error: {exc}"
+                    self.test_stop_event.set()
+                    self.update_terminal(f"SAFETY STOP: {self.acquisition_error}\n")
 
     def finalize_run(self, status, error=None):
         with self.finalize_lock:
@@ -1316,6 +2110,11 @@ class MyInterface:
             self.run_metadata["sample_count"] = self.sample_count
             self.run_metadata["completed_cycles"] = self.completed_cycles
             self.run_metadata["error"] = error
+            self.run_metadata["neutral_reference_final"] = self.reference_manager.metadata_snapshot()
+            self.run_metadata["idle_confirmation"] = {
+                "motion_owner": self.motion_coordinator.owner,
+                "monitor_error": self.monitor_error,
+            }
             duration_s = max(0.0, time.monotonic() - self.test_started_monotonic)
             self.run_metadata["duration_s"] = duration_s
             self.run_metadata["achieved_average_sample_rate_hz"] = (
@@ -1328,7 +2127,13 @@ class MyInterface:
             try:
                 write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
             except Exception as exc:
-                self.update_terminal(f"Failed to finalize metadata: {exc}\n")
+                status = "error"
+                self.run_metadata["run_status"] = "error"
+                self.run_metadata["error"] = (
+                    f"{error}; metadata finalization failed: {exc}"
+                    if error else f"metadata finalization failed: {exc}"
+                )
+                self.update_terminal(f"RUN ERROR: failed to finalize metadata: {exc}\n")
             colour = GREEN if status == "completed" else AMBER if status == "aborted" else RED
             self.set_status(f"{status.upper()} / IDLE", colour)
             self.ui_message_queue.put(("inputs", "normal"))
@@ -1568,105 +2373,155 @@ class MyInterface:
             self.step_angle_input.delete(0, 'end')
 
     def move_motor_left(self):
-        """Move the motor to the left (negative direction)"""
-        if not hasattr(self, 'odrive_controller') or not self.odrive_controller:
-            self.update_terminal("ODrive not connected\n")
-            return
-            
-        try:
-            axis = self.prepare_manual_motion()
-            current_pos = axis.pos_vel_mapper.pos_rel
-            
-            if self.continuous_mode.get():
-                return
-            else:
-                # In step mode, move by the specified angle
-                try:
-                    step_angle = float(self.step_angle_input.get())
-                    # Constrain step angle between 0.01 and 5 degrees
-                    step_angle = max(0.01, min(10.0, step_angle))
-                    step_turns = afo_degrees_to_odrive_turns(step_angle, self.system_config)
-                    target_pos = self.clamp_manual_target(current_pos - step_turns)
-                    axis.controller.input_pos = target_pos
-                    self.update_terminal(f"Moved left by {step_angle:.2f} degrees\n")
-                except ValueError:
-                    self.update_terminal("Please enter a valid step angle between 0 and 10 degrees\n")
-                    
-        except Exception as e:
-            self.update_terminal(f"Error moving motor: {e}\n")
+        self._start_manual_step(-1)
 
     def move_motor_right(self):
-        """Move the motor to the right (positive direction)"""
-        if not hasattr(self, 'odrive_controller') or not self.odrive_controller:
-            self.update_terminal("ODrive not connected\n")
+        self._start_manual_step(1)
+
+    def _start_manual_step(self, direction):
+        if self.continuous_mode.get():
             return
-            
         try:
-            axis = self.prepare_manual_motion()
-            current_pos = axis.pos_vel_mapper.pos_rel
-            
-            if self.continuous_mode.get():
-                return
-            else:
-                # In step mode, move by the specified angle
-                try:
-                    step_angle = float(self.step_angle_input.get())
-                    # Constrain step angle between 0.01 and 5 degrees
-                    step_angle = max(0.01, min(10.0, step_angle))
-                    step_turns = afo_degrees_to_odrive_turns(step_angle, self.system_config)
-                    target_pos = self.clamp_manual_target(current_pos + step_turns)
-                    axis.controller.input_pos = target_pos
-                    self.update_terminal(f"Moved right by {step_angle:.2f} degrees\n")
-                except ValueError:
-                    self.update_terminal("Please enter a valid step angle between 0 and 10 degrees\n")
-                    
-        except Exception as e:
-            self.update_terminal(f"Error moving motor: {e}\n")
+            self.prepare_manual_motion()
+            step_angle = float(self.step_angle_input.get())
+            if not 0.01 <= step_angle <= 10.0:
+                raise ValueError("Step angle must be between 0.01 and 10 degrees")
+            token = self.motion_coordinator.acquire("manual-step")
+        except Exception as exc:
+            self.update_terminal(f"Manual step blocked: {exc}\n")
+            return
+        self._refresh_motion_controls()
+        threading.Thread(
+            target=self._manual_step_worker,
+            args=(token, direction, step_angle),
+            name="manual-step",
+            daemon=True,
+        ).start()
+
+    def _manual_step_worker(self, token, direction, step_angle):
+        try:
+            motion = self.system_config["motion"]
+            self.configure_trajectory(
+                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+            )
+            self.enter_closed_loop(token)
+            current = self.get_feedback().position_turns
+            target = self.clamp_manual_target(
+                current + afo_degrees_to_odrive_turns(
+                    direction * step_angle, self.system_config
+                )
+            )
+            snapshot = self.get_feedback()
+            self.reference_manager.write_checkpoint(
+                MotionState.MOVING,
+                snapshot,
+                clean_shutdown=False,
+                extra={"phase": "manual_step", "target_turns": target},
+            )
+            self.motion_coordinator.assert_active(token)
+            self.odrive_adapter.command_position(target)
+            wait_for_settle(
+                self.get_feedback,
+                target,
+                afo_degrees_to_odrive_turns(motion["position_tolerance_deg"], self.system_config),
+                afo_speed_to_odrive_turns_s(
+                    self.system_config["reference"]["settle_velocity_limit_deg_s"],
+                    self.system_config,
+                ),
+                self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
+                motion_timeout_seconds(
+                    step_angle,
+                    motion["manual_speed_deg_s"],
+                    motion["manual_acceleration_deg_s2"],
+                    self.system_config,
+                ),
+                self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
+                lambda: self._motion_cancelled(token),
+            )
+            self.update_terminal(f"Manual step complete: {direction * step_angle:+.2f} degrees.\n")
+        except Exception as exc:
+            self.update_terminal(f"Manual step failed: {exc}\n")
+        finally:
+            self.safe_idle_motor("manual step complete")
+            self.motion_coordinator.release(token)
+            self.ui_message_queue.put(("reference",))
 
     def start_continuous_movement(self):
-        """Start continuous movement in the current direction"""
-        if not self.continuous_movement_active:
-            return
-
-        try:
-            axis = self.prepare_manual_motion()
-            current_pos = axis.pos_vel_mapper.pos_rel
-            increment = afo_degrees_to_odrive_turns(
-                self.system_config["motion"]["manual_continuous_increment_deg"],
-                self.system_config,
-            )
-            
-            if self.movement_direction == "left":
-                target_pos = current_pos - increment
-            else:  # right
-                target_pos = current_pos + increment
-                
-            target_pos = self.clamp_manual_target(target_pos)
-            axis.controller.input_pos = target_pos
-            
-            # Schedule the next movement
-            self.movement_timer = self.master.after(
-                self.system_config["motion"]["manual_update_interval_ms"],
-                self.start_continuous_movement,
-            )
-            
-        except Exception as e:
-            self.update_terminal(f"Error in continuous movement: {e}\n")
-            self.stop_continuous_movement()
+        """Continuous movement is handled by one owned worker while the button is held."""
+        return
 
     def begin_continuous_movement(self, direction):
         if not self.continuous_mode.get() or self.continuous_movement_active:
             return
+        try:
+            self.prepare_manual_motion()
+            token = self.motion_coordinator.acquire("manual-continuous")
+        except Exception as exc:
+            self.update_terminal(f"Continuous movement blocked: {exc}\n")
+            return
         self.continuous_movement_active = True
         self.movement_direction = direction
-        self.start_continuous_movement()
+        self.continuous_stop_event = threading.Event()
+        self.continuous_motion_token = token
+        self._refresh_motion_controls()
+        threading.Thread(
+            target=self._continuous_movement_worker,
+            args=(token, direction),
+            name="manual-continuous",
+            daemon=True,
+        ).start()
+
+    def _continuous_movement_worker(self, token, direction):
+        try:
+            motion = self.system_config["motion"]
+            self.configure_trajectory(
+                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+            )
+            self.enter_closed_loop(token)
+            increment = afo_degrees_to_odrive_turns(
+                motion["manual_continuous_increment_deg"], self.system_config
+            )
+            if direction == "left":
+                increment = -increment
+            while not self.continuous_stop_event.is_set():
+                self.motion_coordinator.assert_active(token)
+                snapshot = self.get_feedback()
+                target = self.clamp_manual_target(snapshot.position_turns + increment)
+                self.reference_manager.write_checkpoint(
+                    MotionState.MOVING,
+                    snapshot,
+                    clean_shutdown=False,
+                    extra={"phase": "manual_continuous", "target_turns": target},
+                )
+                self.motion_coordinator.assert_active(token)
+                self.odrive_adapter.command_position(target)
+                self.continuous_stop_event.wait(motion["manual_update_interval_ms"] / 1000.0)
+        except MotionConflictError:
+            pass
+        except Exception as exc:
+            self.update_terminal(f"Continuous movement failed: {exc}\n")
+        finally:
+            self.safe_idle_motor("continuous manual movement stopped")
+            self.motion_coordinator.release(token)
+            self.continuous_movement_active = False
+            self.continuous_motion_token = None
+            self.ui_message_queue.put(("reference",))
 
     def stop_continuous_movement(self):
         """Stop continuous movement"""
         self.continuous_movement_active = False
+        self.continuous_stop_event.set()
         if self.movement_timer:
             self.master.after_cancel(self.movement_timer)
             self.movement_timer = None
+        if self.motion_coordinator.owner == "manual-continuous":
+            self.motion_coordinator.request_stop()
+            if self.odrive_adapter is not None:
+                result = self.odrive_adapter.request_idle(
+                    self.system_config["reference"]["idle_confirmation_timeout_s"]
+                )
+                if result.confirmed:
+                    self.motion_coordinator.confirm_idle()
 
     def prepare_manual_motion(self):
         if not self.manual_mode.get():
@@ -1675,24 +2530,18 @@ class MyInterface:
             raise RuntimeError("Manual movement is disabled while a strain test is active")
         if self.neutral_motion_active:
             raise RuntimeError("Wait for the neutral return to finish")
-        motion = self.system_config["motion"]
-        self.configure_trajectory(
-            motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
-        )
-        axis = self.enter_closed_loop()
-        if int(axis.active_errors):
-            self.safe_idle_motor("manual movement error")
-            raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
-        self.set_status("MANUAL / ACTIVE", AMBER)
-        return axis
+        self.reference_manager.require_verified()
+        snapshot = self.get_feedback()
+        if snapshot.active_errors:
+            raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
     def return_to_neutral(self):
-        """Return to the fixed 90 degree encoder position from configuration."""
+        """Return to the verified physical 90 degree neutral for this session."""
         if self.odrive_controller is None:
             self.update_terminal("Connect the ODrive before returning to neutral.\n")
             return
-        if self.connected_neutral_position is None:
-            self.update_terminal("The fixed 90 degree neutral reference is unavailable.\n")
+        if not self.reference_manager.verified:
+            self.update_terminal(f"Neutral reference is unavailable: {self.reference_manager.reason}\n")
             return
         if not self.manual_mode.get():
             self.update_terminal("Enable manual mode before returning to neutral.\n")
@@ -1704,7 +2553,7 @@ class MyInterface:
         confirmation = CTkMessagebox(
             title="Return to Neutral",
             message=(
-                "Return to the fixed 90 degree target at 0 ODrive turns?\n\n"
+                "Return to the verified physical 90 degree neutral?\n\n"
                 "Confirm the fixture is clear and the physical E-stop is accessible."
             ),
             icon="question",
@@ -1715,28 +2564,34 @@ class MyInterface:
             return
 
         self.stop_continuous_movement()
-        self.neutral_stop_event.clear()
+        try:
+            token = self.motion_coordinator.acquire("neutral-return")
+        except MotionConflictError as exc:
+            self.update_terminal(f"Neutral return blocked: {exc}\n")
+            return
+        self.neutral_stop_event = threading.Event()
+        self.neutral_motion_token = token
         self.neutral_motion_active = True
         self.left_arrow.configure(state="disabled")
         self.right_arrow.configure(state="disabled")
         self.neutral_button.configure(state="disabled")
         self.neutral_thread = threading.Thread(
             target=self._return_to_neutral_worker,
+            args=(token,),
             name="neutral-return",
         )
         self.neutral_thread.start()
 
-    def _return_to_neutral_worker(self):
+    def _return_to_neutral_worker(self, token):
         try:
             motion = self.system_config["motion"]
             self.configure_trajectory(
-                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
+                motion["neutral_return_speed_deg_s"],
+                motion["neutral_return_acceleration_deg_s2"],
             )
-            axis = self.enter_closed_loop()
-            neutral_target = self.connected_neutral_position
-            if neutral_target is None:
-                raise RuntimeError("Neutral reference is unavailable")
-            current_turns = axis.pos_vel_mapper.pos_rel
+            self.enter_closed_loop(token)
+            neutral_target = self.reference_manager.require_verified().neutral_position_turns
+            current_turns = self.get_feedback().position_turns
             distance_deg = abs(
                 odrive_turns_to_afo_degrees(
                     current_turns - neutral_target, self.system_config
@@ -1744,32 +2599,42 @@ class MyInterface:
             )
             timeout_s = motion_timeout_seconds(
                 distance_deg,
-                motion["manual_speed_deg_s"],
-                motion["manual_acceleration_deg_s2"],
+                motion["neutral_return_speed_deg_s"],
+                motion["neutral_return_acceleration_deg_s2"],
                 self.system_config,
             )
             tolerance_turns = afo_degrees_to_odrive_turns(
                 motion["position_tolerance_deg"], self.system_config
             )
-            self.motion_phase = "returning_to_connected_zero"
-            axis.controller.input_pos = neutral_target
-            self.update_terminal(
-                f"Returning to fixed 90 degree neutral at {neutral_target:.8f} turns.\n"
+            self.motion_phase = "returning_to_verified_neutral"
+            snapshot = self.get_feedback()
+            self.reference_manager.write_checkpoint(
+                MotionState.MOVING,
+                snapshot,
+                clean_shutdown=False,
+                extra={"phase": self.motion_phase, "target_turns": neutral_target},
             )
-            deadline = time.monotonic() + timeout_s
-            while abs(axis.pos_vel_mapper.pos_rel - neutral_target) > tolerance_turns:
-                if self.neutral_stop_event.is_set():
-                    raise TestStopped()
-                active_errors = int(axis.active_errors)
-                if active_errors:
-                    raise RuntimeError(
-                        f"ODrive active errors during neutral return: {active_errors}"
-                    )
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"Neutral return timed out after {timeout_s:.1f} seconds"
-                    )
-                time.sleep(0.01)
+            self.motion_coordinator.assert_active(token)
+            self.odrive_adapter.command_position(neutral_target)
+            self.update_terminal(
+                f"Returning to verified 90 degree neutral at {neutral_target:.8f} session turns.\n"
+            )
+            wait_for_settle(
+                self.get_feedback,
+                neutral_target,
+                tolerance_turns,
+                afo_speed_to_odrive_turns_s(
+                    self.system_config["reference"]["settle_velocity_limit_deg_s"],
+                    self.system_config,
+                ),
+                self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
+                timeout_s,
+                self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
+                lambda: self.neutral_stop_event.is_set() or self._motion_cancelled(token),
+            )
+            idle_result = self.safe_idle_motor("neutral reached")
+            if not idle_result or not idle_result.confirmed:
+                raise RuntimeError("Neutral reached but ODrive idle was not confirmed")
             self.update_terminal("Neutral reference reached.\n")
             self.set_status("MANUAL / NEUTRAL", "#0f766e")
         except TestStopped:
@@ -1781,13 +2646,14 @@ class MyInterface:
             self.update_terminal(f"Neutral return failed: {exc}\n")
         finally:
             self.motion_phase = "idle"
+            self.motion_coordinator.release(token)
+            self.neutral_motion_token = None
             self.ui_message_queue.put(("neutral_finished",))
 
     def clamp_manual_target(self, target_turns):
         maximum_angle = self.system_config["motion"]["maximum_afo_angle_deg"]
-        travel_turns = afo_degrees_to_odrive_turns(maximum_angle, self.system_config)
-        lower = self.starting_position - travel_turns
-        upper = self.starting_position + travel_turns
+        lower = self.reference_manager.target_for_angle(-maximum_angle)
+        upper = self.reference_manager.target_for_angle(maximum_angle)
         clamped = max(lower, min(upper, target_turns))
         if clamped != target_turns:
             self.update_terminal(f"Manual travel limited to +/-{maximum_angle:g} degrees from zero.\n")
@@ -1800,6 +2666,13 @@ class MyInterface:
             self.update_terminal("Manual mode cannot be changed during a strain test.\n")
             return
         if self.manual_mode.get():
+            if not self.reference_manager.verified:
+                self.manual_mode.set(False)
+                self.update_terminal(
+                    f"Manual mode blocked: {self.reference_manager.reason}\n"
+                )
+                self._refresh_motion_controls()
+                return
             # Enable manual controls
             self.left_arrow.configure(state="normal")
             self.right_arrow.configure(state="normal")
@@ -1809,7 +2682,7 @@ class MyInterface:
                 state=(
                     "normal"
                     if self.odrive_controller is not None
-                    and self.connected_neutral_position is not None
+                    and self.reference_manager.verified
                     else "disabled"
                 )
             )
@@ -1823,11 +2696,7 @@ class MyInterface:
             self.min_angle_input.configure(state="disabled")
             self.max_angle_input.configure(state="disabled")
             self.cycles_input.configure(state="disabled")
-            if self.odrive_controller:
-                try:
-                    self.prepare_manual_motion()
-                except Exception as exc:
-                    self.update_terminal(f"Unable to enable manual motion: {exc}\n")
+            self.set_status("MANUAL / READY", AMBER)
         else:
             self.neutral_stop_event.set()
             self.stop_continuous_movement()
@@ -1841,9 +2710,7 @@ class MyInterface:
             
             # Enable Start button when not in manual mode (only if connected)
             if hasattr(self, 'odrive_controller') and self.odrive_controller:
-                self.buttons[1].configure(
-                    state="normal" if self.connected_neutral_position is not None else "disabled"
-                )
+                self._refresh_motion_controls()
             
             # Enable input fields
             self.speed_input.configure(state="normal")

@@ -7,6 +7,7 @@ import math
 import os
 import re
 import subprocess
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,7 +76,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
 
     required_sections = {
         "hardware", "motion", "controller", "load_cell", "torque",
-        "acquisition", "logging",
+        "acquisition", "logging", "reference",
     }
     missing = sorted(required_sections.difference(config))
     if missing:
@@ -88,7 +89,6 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError("minimum_constant_speed_span_deg must be positive")
     if not 0 < config["motion"]["minimum_speed_deg_s"] <= config["motion"]["maximum_speed_deg_s"]:
         raise ValueError("Configured speed limits are invalid")
-    float(config["motion"]["neutral_position_turns"])
     if config["motion"]["controller_velocity_safety_multiplier"] <= 1:
         raise ValueError("controller_velocity_safety_multiplier must be greater than 1")
     if config["motion"]["maximum_afo_angle_deg"] <= 0:
@@ -109,6 +109,27 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError("lever_arm_m must be positive")
     if len(config["torque"]["force_angle_polynomial_deg"]) != 3:
         raise ValueError("force_angle_polynomial_deg must contain three coefficients")
+    reference = config["reference"]
+    for key in (
+        "feedback_poll_interval_ms", "feedback_stale_after_ms", "checkpoint_interval_ms",
+        "settle_dwell_ms", "post_idle_observation_ms",
+    ):
+        if float(reference[key]) <= 0:
+            raise ValueError(f"reference.{key} must be positive")
+    for key in (
+        "stationary_velocity_limit_deg_s", "settle_velocity_limit_deg_s",
+        "idle_confirmation_timeout_s", "recovery_jog_step_deg",
+        "recovery_jog_maximum_cumulative_deg", "recovery_timeout_s",
+        "recovery_speed_deg_s", "recovery_acceleration_deg_s2", "watchdog_timeout_s",
+    ):
+        if float(reference[key]) <= 0:
+            raise ValueError(f"reference.{key} must be positive")
+    if reference["phase_recovery_enabled"]:
+        for key in ("phase_units", "phase_period", "controller_turns_per_phase_period", "phase_sign"):
+            if reference.get(key) is None:
+                raise ValueError(f"reference.{key} is required when phase recovery is enabled")
+        if int(reference["phase_sign"]) not in (-1, 1):
+            raise ValueError("reference.phase_sign must be -1 or +1")
     return config
 
 
@@ -352,8 +373,11 @@ def make_run_metadata(
 
 def write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
     path = Path(path)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    with temporary.open("x", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
         handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)

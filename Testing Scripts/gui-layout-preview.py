@@ -17,7 +17,7 @@ from PIL import Image
 
 
 APP_NAME = "EAST"
-APP_VERSION = "1.1.1-gui-preview"
+APP_VERSION = "1.2.0-neutral-recovery-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -45,6 +45,8 @@ class EastGuiPreview:
         self.logo_images: list[ctk.CTkImage] = []
         self.plot_window: ctk.CTkToplevel | None = None
         self.floating_canvas: tk.Canvas | None = None
+        self.connected = False
+        self.reference_verified = False
 
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
@@ -53,7 +55,8 @@ class EastGuiPreview:
         self._log(f"{APP_NAME} {APP_VERSION}")
         self._log("Preview only. No hardware modules are imported.")
         self._log(f"Running from: {Path(__file__).resolve()}")
-        self.root.after(250, self.show_plot)
+        if "--no-auto-plot" not in sys.argv:
+            self.root.after(250, self.show_plot)
 
     def _build_ui(self) -> None:
         shell = ctk.CTkFrame(self.root, fg_color=BG)
@@ -112,8 +115,7 @@ class EastGuiPreview:
     def _build_body(self, parent: ctk.CTkFrame) -> None:
         body = ctk.CTkFrame(parent, fg_color=BG)
         body.grid(row=1, column=0, sticky="nsew")
-        body.grid_columnconfigure(0, weight=0)
-        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure((0, 1), weight=1, uniform="main_body")
         body.grid_rowconfigure(0, weight=1)
 
         controls = ctk.CTkScrollableFrame(
@@ -122,7 +124,7 @@ class EastGuiPreview:
             corner_radius=10,
             scrollbar_button_color="#cbd5e1",
         )
-        controls.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
+        controls.grid(row=0, column=0, sticky="nsew", padx=(0, 18))
         controls.grid_columnconfigure(0, weight=1)
 
         self.status = ctk.CTkLabel(
@@ -133,6 +135,30 @@ class EastGuiPreview:
             anchor="w",
         )
         self.status.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+
+        reference = ctk.CTkFrame(controls, fg_color="#fff7ed", corner_radius=8)
+        reference.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+        reference.grid_columnconfigure(0, weight=1)
+        self.reference_status = ctk.CTkLabel(
+            reference,
+            text="Neutral reference: RECOVERY REQUIRED\nNo hardware in preview",
+            text_color=AMBER,
+            font=("Arial", 11, "bold"),
+            justify="left",
+            anchor="w",
+        )
+        self.reference_status.grid(row=0, column=0, sticky="ew", padx=8, pady=7)
+        self.reference_button = ctk.CTkButton(
+            reference,
+            text="Verify / Recover",
+            command=self._show_recovery_preview,
+            width=118,
+            height=28,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+        )
+        self.reference_button.grid(row=0, column=1, padx=8, pady=6)
 
         self._build_inputs(controls)
         self._build_buttons(controls)
@@ -165,7 +191,7 @@ class EastGuiPreview:
 
     def _build_inputs(self, parent: ctk.CTkFrame) -> None:
         fields_panel = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        fields_panel.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        fields_panel.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
         fields_panel.grid_columnconfigure((0, 1), weight=1)
 
         ctk.CTkLabel(
@@ -219,7 +245,7 @@ class EastGuiPreview:
 
     def _build_buttons(self, parent: ctk.CTkFrame) -> None:
         buttons = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=0)
-        buttons.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        buttons.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
         buttons.grid_columnconfigure((0, 1), weight=1)
 
         self.parameter_summary = ctk.CTkLabel(
@@ -241,8 +267,9 @@ class EastGuiPreview:
             ("Stop", RED, "#b91c1c", self._mock_stop),
             ("Reset", AMBER, "#b45309", self._mock_reset),
         ]
+        self.action_buttons = []
         for index, (label, colour, hover, command) in enumerate(button_defs):
-            ctk.CTkButton(
+            button = ctk.CTkButton(
                 buttons,
                 text=label,
                 command=command,
@@ -251,12 +278,15 @@ class EastGuiPreview:
                 corner_radius=8,
                 height=38,
                 font=("Arial", 13, "bold"),
-            ).grid(row=1 + index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+            )
+            button.grid(row=1 + index // 2, column=index % 2, padx=6, pady=6, sticky="ew")
+            self.action_buttons.append(button)
+        self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
 
     def _build_manual_controls(self, parent: ctk.CTkFrame) -> None:
         manual = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        manual.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 16))
+        manual.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
         manual.grid_columnconfigure((0, 1, 2), weight=1)
 
         ctk.CTkEntry(
@@ -266,7 +296,8 @@ class EastGuiPreview:
             corner_radius=6,
         ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(10, 8))
 
-        ctk.CTkSwitch(manual, text="Manual Mode").grid(row=0, column=2, padx=8, pady=(10, 8))
+        self.preview_manual_switch = ctk.CTkSwitch(manual, text="Manual Mode", state="disabled")
+        self.preview_manual_switch.grid(row=0, column=2, padx=8, pady=(10, 8))
 
         ctk.CTkButton(
             manual,
@@ -296,7 +327,7 @@ class EastGuiPreview:
 
         ctk.CTkButton(
             manual,
-            text='Return to Neutral (90 deg)',
+            text='Return to Verified 90 deg Neutral',
             command=self._mock_return_neutral,
             fg_color="#0f766e",
             hover_color="#115e59",
@@ -365,10 +396,22 @@ class EastGuiPreview:
         )
 
     def _mock_connect(self) -> None:
-        self.status.configure(text="CONNECTED PREVIEW / NO HARDWARE", text_color="#15803d")
-        self._log("Mock connect pressed. No ODrive lookup was attempted.")
+        self.connected = True
+        self.reference_verified = False
+        self.status.configure(text="CONNECTED / RECOVERY REQUIRED (PREVIEW)", text_color=AMBER)
+        self.reference_status.configure(
+            text="Neutral reference: RECOVERY REQUIRED\nPhysical 90 deg verification required",
+            text_color=AMBER,
+        )
+        self.reference_button.configure(state="normal")
+        self.action_buttons[1].configure(state="disabled")
+        self.preview_manual_switch.configure(state="disabled")
+        self._log("Mock connect: normal movement remains blocked pending neutral recovery.")
 
     def _mock_start(self) -> None:
+        if not self.reference_verified:
+            self._log("Mock start blocked: neutral reference is not verified.")
+            return
         self._log("Mock start pressed. No motor command was sent.")
         self.show_plot()
 
@@ -393,13 +436,95 @@ class EastGuiPreview:
         self._update_parameter_summary()
         self.terminal.delete("1.0", "end")
         self.status.configure(text="PREVIEW / NO HARDWARE", text_color="#0369a1")
+        self.connected = False
+        self.reference_verified = False
+        self.reference_button.configure(state="disabled")
+        self.action_buttons[1].configure(state="disabled")
+        self.preview_manual_switch.configure(state="disabled")
+        self.reference_status.configure(
+            text="Neutral reference: RECOVERY REQUIRED\nNo hardware in preview",
+            text_color=AMBER,
+        )
         self._log(f"{APP_NAME} {APP_VERSION}")
         self._log("Preview reset.")
 
     def _mock_return_neutral(self) -> None:
         self.status.configure(text="NEUTRAL RETURN PREVIEW", text_color="#0f766e")
         self._log("Mock neutral return pressed.")
-        self._log("Real app should command the verified neutral/zeroed 90 deg position only after safety checks.")
+        self._log("Real app commands only the verified session mapping after safety checks.")
+
+    def _show_recovery_preview(self) -> None:
+        if not self.connected:
+            return
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("EAST Neutral Reference Recovery Preview")
+        dialog.geometry("610x470")
+        dialog.configure(fg_color=BG)
+        dialog.transient(self.root)
+        panel = ctk.CTkFrame(dialog, fg_color=PANEL, corner_radius=8)
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        ctk.CTkLabel(
+            panel,
+            text="Verify Physical 90 Degree Neutral",
+            font=("Arial", 20, "bold"),
+            text_color=TEXT,
+        ).pack(anchor="w", padx=16, pady=(14, 6))
+        ctk.CTkLabel(
+            panel,
+            text=(
+                "Preview of the restricted recovery workflow. Slow jog is bounded to "
+                "+/-5 degrees and setting neutral records the current physical 90 degree "
+                "position without moving the motor."
+            ),
+            wraplength=540,
+            justify="left",
+            text_color=TEXT,
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+        acknowledgement = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            panel,
+            text="Fixture is clear, E-stop is accessible, and I am observing the mechanism",
+            variable=acknowledgement,
+        ).pack(anchor="w", padx=16, pady=8)
+        jog = ctk.CTkFrame(panel, fg_color=PANEL_SOFT, corner_radius=6)
+        jog.pack(fill="x", padx=16, pady=6)
+        ctk.CTkButton(
+            jog, text="Jog -0.25 deg", command=lambda: self._log("Preview recovery jog -0.25 deg")
+        ).pack(side="left", fill="x", expand=True, padx=6, pady=8)
+        ctk.CTkButton(
+            jog, text="Jog +0.25 deg", command=lambda: self._log("Preview recovery jog +0.25 deg")
+        ).pack(side="left", fill="x", expand=True, padx=6, pady=8)
+
+        def set_neutral():
+            if not acknowledgement.get():
+                self._log("Preview neutral not set: acknowledgement is required.")
+                return
+            self.reference_verified = True
+            self.reference_status.configure(
+                text="Neutral reference: VERIFIED\n90 deg = 0.00000000 preview session turns",
+                text_color=GREEN,
+            )
+            self.status.configure(text="CONNECTED / REFERENCE VERIFIED (PREVIEW)", text_color=GREEN)
+            self.action_buttons[1].configure(state="normal")
+            self.preview_manual_switch.configure(state="normal")
+            self._log("Preview physical neutral verified. No hardware moved.")
+            dialog.destroy()
+
+        ctk.CTkButton(
+            panel,
+            text="Set Current Physical Position as 90 deg Neutral",
+            command=set_neutral,
+            fg_color="#0f766e",
+            hover_color="#115e59",
+            height=36,
+        ).pack(fill="x", padx=16, pady=(12, 6))
+        ctk.CTkButton(
+            panel,
+            text="Cancel / Keep Motion Blocked",
+            command=dialog.destroy,
+            fg_color="#94a3b8",
+            hover_color=MUTED,
+        ).pack(fill="x", padx=16, pady=(0, 14))
 
     def show_plot(self) -> None:
         if self.plot_window is None or not self.plot_window.winfo_exists():

@@ -44,12 +44,15 @@ This is a command-profile feasibility calculation, not an independent measuremen
 3. Review `tester_config.json`, especially serial/channel values and provisional limits.
 4. Run `python Ortho-Sim.py`.
 5. Enter the full commanded test configuration, including speed, acceleration, angle limits, cycles, operator, AFO ID, fixture ID, and calibration ID.
-6. Connect the ODrive. The application uses the configured fixed neutral target of `0.0` ODrive relative turns as 90 degrees.
-7. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless the fixture is at the fixed neutral reference.
+6. Connect the ODrive. On first launch or whenever controller-session continuity cannot be proven, the GUI shows `RECOVERY REQUIRED` and blocks normal motion.
+7. Enter Operator ID and Fixture ID, select `Verify / Recover`, use only the bounded slow jog if required, physically align the mounted fixture/AFO at 90 degrees, acknowledge the checks, and select `Set Current Physical Position as 90 deg Neutral`. Setting neutral records state and does not move the motor.
+8. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless the verified neutral is fresh and the mechanism is at neutral.
 
-After a successful test, the motor automatically returns to `0.0` turns. `Return to 90 deg (0 turns)` provides the same movement in manual mode after operator confirmation. `Reset Form` stops motion and clears the form; it does not move the mechanism. Because the ODrive exposes a relative rather than absolute position, the physical 90 degree alignment must still be verified whenever the encoder reference or mechanical setup can change.
+The application never assumes that `0.0` relative turns is physical neutral. A successful test returns to the verified session neutral using the dedicated return profile, confirms position and low velocity over a dwell, requests and confirms idle, and observes the neutral position after idle. `Return to Verified 90 deg Neutral` provides a deliberate manual return after confirmation. `Reset Form` and `Stop` stop motion and clear/abort as applicable; neither initiates a return.
 
-The Stop button and Escape key request an immediate software stop and set the axis idle. They are not substitutes for the physical E-stop.
+Stop, Escape, acquisition faults, feedback faults, and communication faults request idle immediately and never initiate automatic movement. An unconfirmed idle request is reported as a fault. These controls are not substitutes for the physical E-stop.
+
+The persistent reference record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Automatic cross-session continuity, phase recovery, measured-angle recovery, and the ODrive watchdog are implemented but disabled until their hardware assumptions are experimentally verified.
 
 ## Outputs
 
@@ -80,6 +83,20 @@ See `docs/VERIFICATION_PROTOCOL.md` for the pre-run checks, experimental design,
 
 Scripts under `Testing Scripts` are guarded bench diagnostics. They do nothing when imported and refuse to open or move hardware without `--confirm-hardware`. Use `--help` to see required parameters. The GUI remains the authoritative application for recorded strain tests.
 
+Motion diagnostics also require `--allow-unreferenced-diagnostic`, acquire the same exclusive hardware lock as the GUI, mark their output as unreferenced, and invalidate normal-test reference trust. Physical neutral recovery in the GUI is mandatory afterwards.
+
+Inspect persisted reference state and read-only ODrive capabilities with no hardware writes:
+
+```text
+python "Testing Scripts/inspect_reference.py"
+```
+
+Exercise the inspection path without importing hardware drivers:
+
+```text
+python "Testing Scripts/inspect_reference.py" --mock
+```
+
 For Mac-only GUI layout checks, use the preview script. It does not import ODrive, Phidget, PyQtGraph, pywinstyles, or the main hardware-control GUI:
 
 ```text
@@ -96,11 +113,16 @@ python -m pip install -r requirements-gui-preview.txt
 
 - `Ortho-Sim.py`: GUI and coordinated hardware workflow
 - `east_core.py`: hardware-independent validation, conversions, load/torque calculations, and metadata helpers
+- `east_reference.py`: persistent reference state, atomic checkpoints, process lock, motion ownership, and settle validation
+- `east_odrive.py`: serialized ODrive reads/writes and read-only capability inspection
 - `tester_config.json`: hardware assumptions, calibration values, limits, and sampling settings
 - `analysis/verify_speed.py`: angle-time speed verification
 - `Testing Scripts/gui-layout-preview.py`: Mac-safe GUI layout preview with no hardware imports
-- `tests/`: dependency-free offline tests
+- `Testing Scripts/inspect_reference.py`: read-only live/mock reference and capability inspection
+- `tests/`: hardware-independent offline safety, conversion, logging, and analysis tests
 - `docs/VERIFICATION_PROTOCOL.md`: laboratory verification procedure
+- `docs/NEUTRAL_REFERENCE_DESIGN.md`: reference state, persistence, motion lifecycle, and disabled-feature assumptions
+- `docs/NEUTRAL_RECOVERY_CHECKLIST.md`: first bench recovery and speed-test checklist
 - `Odrive Backup Config/`: stored ODrive hardware configuration backup
 
 ## Building the executable

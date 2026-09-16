@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 import time
 from collections import deque
@@ -39,6 +40,14 @@ from east_core import (
     odrive_turns_to_afo_degrees,
     write_json_atomic,
 )
+from east_odrive import ODriveAdapter
+from east_reference import (
+    AtomicStateStore,
+    MotionState,
+    ProcessLock,
+    ReferenceManager,
+    runtime_state_directory,
+)
 
 
 def parse_args():
@@ -57,6 +66,14 @@ def parse_args():
         "--confirm-hardware", action="store_true",
         help="Required acknowledgement that the fixture is clear and E-stop is accessible",
     )
+    parser.add_argument(
+        "--allow-unreferenced-diagnostic",
+        action="store_true",
+        help=(
+            "Explicitly allow current-position diagnostic zero. This invalidates normal-test "
+            "reference trust and requires physical recovery in the GUI afterwards."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -64,11 +81,29 @@ def wait_for_position(axis, target, distance_deg, speed_deg_s, acceleration_deg_
     tolerance = afo_degrees_to_odrive_turns(config["motion"]["position_tolerance_deg"], config)
     timeout = motion_timeout_seconds(distance_deg, speed_deg_s, acceleration_deg_s2, config)
     deadline = time.monotonic() + timeout
-    while abs(axis.pos_vel_mapper.pos_rel - target) > tolerance:
+    target = float(target)
+    if not math.isfinite(target):
+        raise RuntimeError("Target position is not finite")
+    settled_since = None
+    velocity_limit = afo_speed_to_odrive_turns_s(
+        config["reference"]["settle_velocity_limit_deg_s"], config
+    )
+    dwell_s = config["reference"]["settle_dwell_ms"] / 1000.0
+    while True:
+        position = float(axis.pos_vel_mapper.pos_rel)
+        velocity = float(axis.pos_vel_mapper.vel)
+        if not math.isfinite(position) or not math.isfinite(velocity):
+            raise RuntimeError("ODrive position/velocity feedback is not finite")
         if int(axis.active_errors):
             raise RuntimeError(f"ODrive active errors: {int(axis.active_errors)}")
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Motion timeout after {timeout:.1f} s")
+        if abs(position - target) <= tolerance and abs(velocity) <= velocity_limit:
+            settled_since = settled_since or time.monotonic()
+            if time.monotonic() - settled_since >= dwell_s:
+                return
+        else:
+            settled_since = None
         yield
 
 
@@ -76,8 +111,20 @@ def main():
     args = parse_args()
     if not args.confirm_hardware:
         raise SystemExit("Refusing to move hardware without --confirm-hardware")
+    if not args.allow_unreferenced_diagnostic:
+        raise SystemExit(
+            "This standalone diagnostic cannot prove the GUI neutral mapping. Re-run only with "
+            "--allow-unreferenced-diagnostic, then physically recover neutral in the GUI."
+        )
 
     config = load_tester_config(PROJECT_DIR / "tester_config.json")
+    state_store = AtomicStateStore(runtime_state_directory())
+    process_lock = ProcessLock(state_store.lock_path)
+    process_lock.acquire()
+    reference_manager = ReferenceManager(config, state_store)
+    reference_manager.invalidate(
+        "Standalone unreferenced strain diagnostic was authorized; GUI recovery is required"
+    )
     motion = config["motion"]
     if not 1 <= args.cycles <= motion["maximum_cycles"]:
         raise SystemExit("Cycles are outside configured limits")
@@ -116,6 +163,7 @@ def main():
     )
 
     device = None
+    adapter = None
     phidget = None
     metadata = None
     metadata_path = None
@@ -132,6 +180,15 @@ def main():
         if device is None:
             raise RuntimeError("ODrive not found")
         axis = getattr(device, f"axis{hardware['odrive_axis']}")
+        adapter = ODriveAdapter(
+            device, hardware["odrive_axis"], AXIS_STATE_IDLE, AXIS_STATE_CLOSED_LOOP_CONTROL
+        )
+        reference_manager.write_checkpoint(
+            MotionState.ARMING,
+            adapter.snapshot(),
+            clean_shutdown=False,
+            extra={"source": "afo-strain-test-script.py", "unreferenced": True},
+        )
         if int(axis.active_errors):
             raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
 
@@ -167,6 +224,10 @@ def main():
         }
         metadata = make_run_metadata(parameters, config, tare_offset, csv_path, odrive_snapshot)
         metadata["source"] = "Testing Scripts/afo-strain-test-script.py"
+        metadata["neutral_reference"] = {
+            "status": "UNREFERENCED DIAGNOSTIC - NOT VALID FOR FORMAL TESTING",
+            "reference_state": reference_manager.metadata_snapshot(),
+        }
         try:
             metadata["hardware"]["connected_phidget_serial_number"] = phidget.getDeviceSerialNumber()
         except Exception:
@@ -183,7 +244,7 @@ def main():
         with csv_path.open("x", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(CSV_COLUMNS)
-            axis.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+            adapter.enter_closed_loop_holding_current()
             for cycle in range(1, args.cycles + 1):
                 for target, phase in (
                     (maximum_turns, "moving_to_max"),
@@ -244,9 +305,18 @@ def main():
         error = str(exc)
         raise
     finally:
-        if device is not None:
+        if adapter is not None:
             try:
-                getattr(device, f"axis{config['hardware']['odrive_axis']}").requested_state = AXIS_STATE_IDLE
+                idle_result = adapter.request_idle(
+                    config["reference"]["idle_confirmation_timeout_s"]
+                )
+                snapshot = adapter.snapshot()
+                reference_manager.write_checkpoint(
+                    MotionState.IDLE if idle_result.confirmed else MotionState.FAULT,
+                    snapshot,
+                    clean_shutdown=False,
+                    extra={"source": "afo-strain-test-script.py", "idle": idle_result.__dict__},
+                )
             except Exception:
                 pass
         if phidget is not None:
@@ -261,6 +331,7 @@ def main():
             metadata["sample_count"] = sample_index
             metadata["error"] = error
             write_json_atomic(metadata_path, metadata)
+        process_lock.release()
 
 
 if __name__ == "__main__":

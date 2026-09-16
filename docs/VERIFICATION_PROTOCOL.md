@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Version 1.1.0 defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
+Version 1.2.0-neutral-recovery defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
 
 `ODrive turns/s = commanded AFO deg/s / afo_degrees_per_odrive_turn`
 
@@ -22,6 +22,10 @@ This check predicts the commanded trapezoidal profile only. It does not measure 
 - Review the provisional speed, acceleration, angle, cycle, and manual-travel limits in `tester_config.json`.
 - Confirm the load-cell calibration direction, coefficient, calibration certificate, tare stability, lever arm, and geometry polynomial.
 - Confirm ODrive reports no active errors before Start.
+- Confirm only one EAST GUI/diagnostic process is running; the application must hold the runtime hardware lock.
+- Confirm the GUI reports `Neutral reference: VERIFIED` and displays the current session neutral mapping. On first launch or after a controller/app restart, complete the physical 90 degree recovery workflow before normal motion.
+- Confirm `Set Current Physical Position as 90 deg Neutral` records the state without moving the mechanism.
+- Do not enable automatic continuity, phase recovery, measured-angle recovery, or the watchdog until the related hardware assumptions and units are independently verified and documented.
 - Use a non-clinical dummy specimen for initial verification.
 
 ## Speed verification design
@@ -57,5 +61,8 @@ Each run produces:
 
 - A CSV with wall-clock and monotonic elapsed time, command values, motion phase, raw and averaged angle/load/torque, raw ODrive position/velocity, converted AFO velocity, raw voltage ratio, tare offset, and ODrive error state.
 - A JSON sidecar with test parameters, operator/AFO/fixture/calibration identifiers, calibration and geometry constants, ODrive configuration snapshot, software version, Git commit, start/end time, run outcome, samples, and completed cycles.
+- The JSON sidecar also contains the initial and final reference record, verification method, session neutral mapping, reference confidence/reason, and runtime-state directory.
+
+For every successful run, verify that the session log reports neutral settling, confirmed ODrive idle, and a completed post-idle observation. A run must not be classified as completed if CSV/metadata writing, neutral return, idle confirmation, or post-idle observation fails.
 
 Formal AFO stiffness testing must not begin while the load-cell calibration, torque geometry, safety limits, or acceptance criteria remain unverified.

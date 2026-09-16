@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 import time
 from datetime import datetime
@@ -32,6 +33,14 @@ from east_core import (
     sanitise_identifier,
     write_json_atomic,
 )
+from east_odrive import ODriveAdapter
+from east_reference import (
+    AtomicStateStore,
+    MotionState,
+    ProcessLock,
+    ReferenceManager,
+    runtime_state_directory,
+)
 
 
 def wait_and_log(writer, axis, target, zero, cycle, phase, parameters, config, start_time):
@@ -43,13 +52,29 @@ def wait_and_log(writer, axis, target, zero, cycle, phase, parameters, config, s
         config,
     )
     deadline = time.monotonic() + timeout
-    while abs(axis.pos_vel_mapper.pos_rel - target) > tolerance:
+    target = float(target)
+    if not math.isfinite(target):
+        raise RuntimeError("Target position is not finite")
+    settled_since = None
+    velocity_limit = afo_speed_to_odrive_turns_s(
+        config["reference"]["settle_velocity_limit_deg_s"], config
+    )
+    dwell_s = config["reference"]["settle_dwell_ms"] / 1000.0
+    while True:
+        position = float(axis.pos_vel_mapper.pos_rel)
+        velocity = float(axis.pos_vel_mapper.vel)
+        if not math.isfinite(position) or not math.isfinite(velocity):
+            raise RuntimeError("ODrive position/velocity feedback is not finite")
         if int(axis.active_errors):
             raise RuntimeError(f"ODrive active errors: {int(axis.active_errors)}")
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Motion timed out during {phase} after {timeout:.1f} s")
-        position = axis.pos_vel_mapper.pos_rel
-        velocity = axis.pos_vel_mapper.vel
+        if abs(position - target) <= tolerance and abs(velocity) <= velocity_limit:
+            settled_since = settled_since or time.monotonic()
+            if time.monotonic() - settled_since >= dwell_s:
+                return
+        else:
+            settled_since = None
         writer.writerow([
             datetime.now().astimezone().isoformat(timespec="milliseconds"),
             f"{time.monotonic() - start_time:.6f}", cycle, phase,
@@ -69,11 +94,28 @@ def main():
     parser.add_argument("--angle-deg", type=float, required=True)
     parser.add_argument("--prefix", default="odrive_motion_check")
     parser.add_argument("--confirm-hardware", action="store_true")
+    parser.add_argument(
+        "--allow-unreferenced-diagnostic",
+        action="store_true",
+        help="Allow a current-position zero and invalidate GUI reference trust afterwards.",
+    )
     args = parser.parse_args()
     if not args.confirm_hardware:
         raise SystemExit("Refusing to move hardware without --confirm-hardware")
+    if not args.allow_unreferenced_diagnostic:
+        raise SystemExit(
+            "This diagnostic does not use a verified GUI neutral. Re-run only with "
+            "--allow-unreferenced-diagnostic, then physically recover neutral in the GUI."
+        )
 
     config = load_tester_config(PROJECT_DIR / "tester_config.json")
+    state_store = AtomicStateStore(runtime_state_directory())
+    process_lock = ProcessLock(state_store.lock_path)
+    process_lock.acquire()
+    reference_manager = ReferenceManager(config, state_store)
+    reference_manager.invalidate(
+        "Standalone unreferenced ODrive diagnostic was authorized; GUI recovery is required"
+    )
     motion = config["motion"]
     if not 1 <= args.cycles <= motion["maximum_cycles"]:
         raise SystemExit("Cycles are outside configured limits")
@@ -94,6 +136,7 @@ def main():
 
     hardware = config["hardware"]
     device = None
+    adapter = None
     output_dir = PROJECT_DIR / config["logging"]["output_directory"]
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S_%f%z")
@@ -111,6 +154,15 @@ def main():
         if device is None:
             raise RuntimeError("ODrive not found")
         axis = getattr(device, f"axis{hardware['odrive_axis']}")
+        adapter = ODriveAdapter(
+            device, hardware["odrive_axis"], AXIS_STATE_IDLE, AXIS_STATE_CLOSED_LOOP_CONTROL
+        )
+        reference_manager.write_checkpoint(
+            MotionState.ARMING,
+            adapter.snapshot(),
+            clean_shutdown=False,
+            extra={"source": "odrive_backup.py", "unreferenced": True},
+        )
         if int(axis.active_errors):
             raise RuntimeError(f"ODrive has active errors: {int(axis.active_errors)}")
 
@@ -124,7 +176,7 @@ def main():
         axis.trap_traj.config.accel_limit = acceleration
         axis.trap_traj.config.decel_limit = acceleration
         axis.controller.config.vel_limit = velocity * motion["controller_velocity_safety_multiplier"]
-        axis.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+        adapter.enter_closed_loop_holding_current()
 
         zero = axis.pos_vel_mapper.pos_rel
         excursion = afo_degrees_to_odrive_turns(args.angle_deg, config)
@@ -148,6 +200,10 @@ def main():
                 "angle_deg": args.angle_deg,
             },
             "motion_conversion": motion,
+            "neutral_reference": {
+                "status": "UNREFERENCED DIAGNOSTIC - NOT VALID FOR FORMAL TESTING",
+                "reference_state": reference_manager.metadata_snapshot(),
+            },
             "odrive_configuration": {
                 "trajectory_velocity_limit_turns_s": axis.trap_traj.config.vel_limit,
                 "trajectory_acceleration_limit_turns_s2": axis.trap_traj.config.accel_limit,
@@ -200,9 +256,17 @@ def main():
         error = str(exc)
         raise
     finally:
-        if device is not None:
+        if adapter is not None:
             try:
-                getattr(device, f"axis{hardware['odrive_axis']}").requested_state = AXIS_STATE_IDLE
+                idle_result = adapter.request_idle(
+                    config["reference"]["idle_confirmation_timeout_s"]
+                )
+                reference_manager.write_checkpoint(
+                    MotionState.IDLE if idle_result.confirmed else MotionState.FAULT,
+                    adapter.snapshot(),
+                    clean_shutdown=False,
+                    extra={"source": "odrive_backup.py", "idle": idle_result.__dict__},
+                )
             except Exception:
                 pass
         if metadata is not None:
@@ -211,6 +275,7 @@ def main():
             metadata["completed_cycles"] = completed_cycles
             metadata["error"] = error
             write_json_atomic(metadata_path, metadata)
+        process_lock.release()
 
 
 if __name__ == "__main__":

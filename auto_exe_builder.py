@@ -142,6 +142,9 @@ try:
         "--hidden-import", "odrive",
         "--hidden-import", "odrive.utils",
         "--hidden-import", "odrive.enums",
+        "--hidden-import", "east_core",
+        "--hidden-import", "east_odrive",
+        "--hidden-import", "east_reference",
         
         # Required imports for Phidget
         "--hidden-import", "Phidget22",
