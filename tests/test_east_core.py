@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from east_core import (
     make_run_metadata,
     motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
+    reconcile_run_outcome,
     sanitise_identifier,
     validate_test_parameters,
 )
@@ -173,6 +175,30 @@ class EastCoreTests(unittest.TestCase):
 
     def test_identifier_sanitisation(self):
         self.assertEqual(sanitise_identifier("AFO 01 / left"), "AFO_01_left")
+
+    def test_late_stop_or_acquisition_failure_cannot_complete_run(self):
+        status, error = reconcile_run_outcome(True, True, None, "aborted", None)
+        self.assertEqual(status, "aborted")
+        self.assertIn("stop requested", error)
+
+        status, error = reconcile_run_outcome(
+            True, False, "CSV flush error: disk full", "aborted", None
+        )
+        self.assertEqual(status, "error")
+        self.assertIn("disk full", error)
+
+        status, error = reconcile_run_outcome(True, False, None, "aborted", None)
+        self.assertEqual((status, error), ("completed", None))
+
+    def test_watchdog_cannot_be_enabled_without_verified_health_coupling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(json.dumps(self.config))
+            config["reference"]["watchdog_enabled"] = True
+            config["reference"]["watchdog_health_coupled_verified"] = False
+            path = Path(directory) / "tester_config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "health-coupled"):
+                load_tester_config(path)
 
 
 if __name__ == "__main__":

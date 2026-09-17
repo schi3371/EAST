@@ -28,30 +28,31 @@ JSON replacement uses a same-directory temporary file, flush, file `fsync`, atom
 - `VERIFIED`: physical reference and current-session mapping are both available and match the connected hardware fingerprint.
 - `FAULT`: feedback, persistence, configuration identity, or another safety condition failed.
 
-Start, ordinary manual movement, and automatic neutral return require `VERIFIED`. The recovery dialog is the only unreferenced movement path in the GUI. It uses 0.25 degree steps, 1 degree/s, 5 degree/s2, a +/-5 degree cumulative bound, a 120 second session timeout, a safety acknowledgement, settle validation, and confirmed idle after each step.
+Start, ordinary manual movement, and automatic neutral return require `VERIFIED`. The recovery dialog is the only unreferenced movement path in the GUI. It uses 0.25 degree steps, 1 degree/s, 5 degree/s2, a 5 degree cumulative path-length budget, a separate +/-5 degree displacement envelope, a 120 second session timeout, a safety acknowledgement, settle validation, and confirmed idle after each step. Reversing direction consumes more of the path budget; it does not restore it.
 
 `Set Current Physical Position as 90 deg Neutral` performs no motion. It requires fresh finite feedback, low velocity, confirmed idle, Operator ID, Fixture ID, and an explicit physical-alignment confirmation.
 
 ## Motion lifecycle
 
-Every GUI motion has one owner and cancellation generation. Before closed-loop enable, EAST:
+Every GUI motion has one owner token. Idle confirmation and worker completion are separate: physical idle can be confirmed while the owner remains reserved, and only that owner can release the motion slot after cleanup. Connection, new motion, and control re-enablement remain blocked until release. Before closed-loop enable, EAST:
 
 1. Confirms the required reference state.
 2. Confirms finite/fresh feedback and no active error.
 3. Persists an `arming` checkpoint.
-4. Loads the current position as the controller setpoint.
-5. Rechecks cancellation and requests closed loop.
+4. Confirms `absolute_setpoints == false`, `circular_setpoints == false`, the expected position/velocity mapper scale, and required feedback/setpoint fields.
+5. Loads the current position as the controller setpoint.
+6. Rechecks cancellation and requests closed loop.
 
-Before each target write, it persists a `moving` checkpoint and rechecks ownership. Target arrival requires finite/fresh feedback, no active errors, position tolerance, low velocity, and a continuous settle dwell.
+Before each target write, it persists a `moving` checkpoint. The final ownership check and target write share one command gate with Stop, so no queued target can be written after Stop is latched. Target arrival requires finite/fresh feedback, bounded snapshot acquisition time, no active errors, the expected closed-loop state, an unchanged disarm-reason baseline, position tolerance, low velocity, and a continuous settle dwell.
 
-Successful strain tests use a dedicated 2 degree/s, 5 degree/s2 neutral return. `completed` is assigned only after neutral settle, confirmed idle, and 500 ms post-idle neutral observation. Stop, Escape, acquisition/logging fault, ODrive fault, watchdog feed fault, and communication/monitor fault request idle immediately and never initiate return motion.
+Successful strain tests use a dedicated 2 degree/s, 5 degree/s2 neutral return. `completed` is assigned only after neutral settle, confirmed idle, 500 ms post-idle neutral observation, acquisition-thread exit, and final CSV flush. A late Stop or acquisition/flush error cannot be upgraded to completed. Stop, Escape (including the recovery and plot windows), acquisition/logging fault, ODrive fault, watchdog feed fault, and communication/monitor fault request idle immediately and never initiate return motion.
 
 ## Optional features disabled by default
 
-- **Controller-session continuity:** requires explicitly confirmed ODrive uptime units and matching clean-shutdown/wall-time/uptime evidence.
-- **Encoder phase recovery:** requires confirmed phase source, units, period, controller-turns-per-period, sign, uncertainty, matching hardware/configuration, and exactly one candidate inside the safety range.
-- **Measured-angle recovery:** requires the confirmed phase model plus bounded measurement uncertainty.
-- **ODrive watchdog:** lifecycle and mocks are implemented, but hardware timing/behavior must be verified before enabling.
+- **Controller-session continuity:** requires explicitly confirmed ODrive uptime units, matching clean-shutdown/wall-time/uptime evidence, the same reference ID/generation and conversion, and full serial/axis/firmware/configuration identity.
+- **Encoder phase recovery:** requires confirmed phase source, units, period, controller-turns-per-period, sign, uncertainty, matching full hardware/configuration identity, and exactly one candidate inside the safety range.
+- **Measured-angle recovery:** requires an existing physical reference, the confirmed phase model, matching fixture/hardware identity, bounded measurement uncertainty, and exactly one candidate. It restores a session mapping without replacing the physical reference record.
+- **ODrive watchdog:** remains disabled. Configuration rejects enabling it until health-coupled feeding has been explicitly verified on the bench.
 
 No recovery path clears ODrive errors, writes/saves encoder configuration, seeks current/load, performs blind homing, or moves automatically after reference restoration.
 

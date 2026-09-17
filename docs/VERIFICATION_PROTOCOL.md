@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Version 1.2.0-neutral-recovery defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
+Version 1.2.1-safety-hardening defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
 
 `ODrive turns/s = commanded AFO deg/s / afo_degrees_per_odrive_turn`
 

@@ -112,10 +112,18 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     reference = config["reference"]
     for key in (
         "feedback_poll_interval_ms", "feedback_stale_after_ms", "checkpoint_interval_ms",
-        "settle_dwell_ms", "post_idle_observation_ms",
+        "maximum_feedback_capture_ms", "settle_dwell_ms", "post_idle_observation_ms",
     ):
         if float(reference[key]) <= 0:
             raise ValueError(f"reference.{key} must be positive")
+    if not math.isfinite(float(reference["required_pos_vel_mapper_scale"])):
+        raise ValueError("reference.required_pos_vel_mapper_scale must be finite")
+    if float(reference["pos_vel_mapper_scale_tolerance"]) < 0:
+        raise ValueError("reference.pos_vel_mapper_scale_tolerance must not be negative")
+    if reference["watchdog_enabled"] and not reference["watchdog_health_coupled_verified"]:
+        raise ValueError(
+            "ODrive watchdog cannot be enabled until health-coupled feeding is verified"
+        )
     for key in (
         "stationary_velocity_limit_deg_s", "settle_velocity_limit_deg_s",
         "idle_confirmation_timeout_s", "recovery_jog_step_deg",
@@ -291,6 +299,25 @@ def motion_timeout_seconds(
         estimate = distance / speed + speed / acceleration
     estimate += float(motion["motion_timeout_margin_s"])
     return min(estimate, float(motion["maximum_motion_timeout_s"]))
+
+
+def reconcile_run_outcome(
+    candidate_completed: bool,
+    stop_requested: bool,
+    acquisition_error: Optional[str],
+    current_status: str,
+    current_error: Optional[str],
+) -> Tuple[str, Optional[str]]:
+    """Latch late stop/acquisition failures before a run is called completed."""
+    if acquisition_error:
+        if current_error and acquisition_error not in current_error:
+            return "error", f"{current_error}; {acquisition_error}"
+        return "error", acquisition_error
+    if candidate_completed and stop_requested:
+        return "aborted", current_error or "stop requested during final observation"
+    if candidate_completed:
+        return "completed", None
+    return current_status, current_error
 
 
 def sanitise_identifier(value: str, fallback: str = "run") -> str:

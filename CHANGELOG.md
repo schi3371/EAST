@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.2.1-safety-hardening
+
+- Serialized the final ownership check with every position/state command so a queued worker cannot write a target after Stop is latched.
+- Kept motion ownership until the owning worker finishes cleanup; idle confirmation no longer re-enables a replacement worker early.
+- Added fail-closed checks for relative, non-circular ODrive setpoints and the required position/velocity mapper scale at connection and arming.
+- Required the expected closed-loop state and unchanged disarm reason throughout powered settle dwell; feedback snapshots now record acquisition duration.
+- Reconciled Stop and acquisition/flush errors after the acquisition thread exits, and report idle as confirmed only when it was observed.
+- Hardened runtime-state schema validation and quarantine of structurally invalid JSON.
+- Bound optional recovery/continuity to the full controller identity, reference generation, conversion, and RS485 mode; measured-angle recovery now retains the original physical reference.
+- Changed recovery jog accounting from signed displacement to cumulative path length and added post-idle observation to manual neutral return.
+- Kept continuity, phase recovery, measured-angle recovery, and watchdog disabled pending bench verification.
+
 ## 1.2.0-neutral-recovery - 2026-09-18
 
 - Removed the unsafe assumption that ODrive relative position `0.0` is physical 90 degree neutral.

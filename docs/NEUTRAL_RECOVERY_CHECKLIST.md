@@ -1,6 +1,6 @@
 # EAST Neutral Recovery and Bench Test Checklist
 
-Use this checklist for the first non-clinical bench verification of version `1.2.0-neutral-recovery`. This software has not been validated on hardware by this code change.
+Use this checklist for the first non-clinical bench verification of version `1.2.1-safety-hardening`. This software has not been validated on hardware by this code change.
 
 ## Before launch
 
@@ -15,6 +15,7 @@ Use this checklist for the first non-clinical bench verification of version `1.2
 
 - [ ] Launch `Ortho-Sim.py` or the identified `EAST.exe`.
 - [ ] Press Connect and confirm the configured ODrive serial is reported.
+- [ ] Confirm Connect accepts the axis only with relative setpoints, circular setpoints disabled, and the expected mapper scale; do not bypass a coordinate-mode rejection.
 - [ ] Confirm no errors are automatically cleared and no configuration is saved.
 - [ ] If any ODrive error is reported, stop and resolve it outside the test workflow.
 - [ ] Confirm the GUI initially blocks Start and Manual Mode when reference recovery is required.
@@ -25,7 +26,7 @@ Use this checklist for the first non-clinical bench verification of version `1.2
 - [ ] Enter Operator ID and Fixture ID before setting neutral.
 - [ ] Open `Verify / Recover` and read the displayed reason.
 - [ ] Confirm the fixture is clear, the E-stop is accessible, and the mechanism is continuously observed.
-- [ ] If movement is required, use only the 0.25 degree recovery jog. Confirm each jog idles after settling and total recovery travel cannot exceed 5 degrees.
+- [ ] If movement is required, use only the 0.25 degree recovery jog. Confirm each jog idles after settling and total recovery path length cannot exceed 5 degrees, including reversals.
 - [ ] Independently establish the mounted fixture/AFO at physical 90 degrees.
 - [ ] Select `Set Current Physical Position as 90 deg Neutral` and confirm that this action itself causes no movement.
 - [ ] Confirm the GUI changes to `VERIFIED` and displays a session-turn value. It does not need to be zero.

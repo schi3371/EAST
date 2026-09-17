@@ -52,7 +52,9 @@ The application never assumes that `0.0` relative turns is physical neutral. A s
 
 Stop, Escape, acquisition faults, feedback faults, and communication faults request idle immediately and never initiate automatic movement. An unconfirmed idle request is reported as a fault. These controls are not substitutes for the physical E-stop.
 
-The persistent reference record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Automatic cross-session continuity, phase recovery, measured-angle recovery, and the ODrive watchdog are implemented but disabled until their hardware assumptions are experimentally verified.
+The application accepts motion only when the connected axis explicitly reports relative, non-circular setpoints and the configured position/velocity mapper scale. The final ownership check and each target write are serialized with Stop. Confirmed motor idle does not release the motion owner; controls remain blocked until the owning worker has finished data flush and cleanup.
+
+The persistent reference record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Invalid JSON or structurally invalid state is preserved with a `.corrupt-*` suffix and cannot enable motion. Automatic cross-session continuity, phase recovery, measured-angle recovery, and the ODrive watchdog are implemented but disabled until their hardware assumptions are experimentally verified.
 
 ## Outputs
 

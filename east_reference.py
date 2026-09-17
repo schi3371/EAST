@@ -104,8 +104,15 @@ class FeedbackSnapshot:
     disarm_reason: int = 0
     system_uptime: Optional[float] = None
     raw_phase: Optional[float] = None
+    capture_started_monotonic_s: Optional[float] = None
+    capture_duration_s: Optional[float] = None
 
-    def validate(self, now_monotonic_s: Optional[float] = None, max_age_s: Optional[float] = None) -> None:
+    def validate(
+        self,
+        now_monotonic_s: Optional[float] = None,
+        max_age_s: Optional[float] = None,
+        max_capture_duration_s: Optional[float] = None,
+    ) -> None:
         _finite(self.captured_monotonic_s, "feedback capture time")
         _finite(self.position_turns, "ODrive position")
         _finite(self.velocity_turns_s, "ODrive velocity")
@@ -113,6 +120,16 @@ class FeedbackSnapshot:
             _finite(self.system_uptime, "ODrive uptime")
         if self.raw_phase is not None:
             _finite(self.raw_phase, "encoder raw phase")
+        if self.capture_started_monotonic_s is not None:
+            _finite(self.capture_started_monotonic_s, "feedback capture start time")
+        if self.capture_duration_s is not None:
+            duration = _finite(self.capture_duration_s, "feedback capture duration")
+            if duration < 0:
+                raise FeedbackError("feedback capture duration is negative")
+            if max_capture_duration_s is not None and duration > max_capture_duration_s:
+                raise FeedbackError(
+                    f"ODrive feedback acquisition took too long ({duration:.3f} s)"
+                )
         if max_age_s is not None:
             now = time.monotonic() if now_monotonic_s is None else now_monotonic_s
             age = _finite(now, "current monotonic time") - self.captured_monotonic_s
@@ -147,15 +164,49 @@ class HardwareFingerprint:
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         return cls(str(odrive_serial), int(axis), str(firmware), digest, dict(details))
 
-    def stable_identity(self) -> Tuple[str, int, str]:
-        return self.odrive_serial, self.axis, self.configuration_digest
+    def stable_identity(self) -> Tuple[str, int, str, str]:
+        return self.odrive_serial, self.axis, self.firmware, self.configuration_digest
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "HardwareFingerprint":
-        return cls(**payload)
+        fingerprint = cls(**payload)
+        if not fingerprint.odrive_serial or not fingerprint.firmware:
+            raise ValueError("hardware fingerprint identity is incomplete")
+        if int(fingerprint.axis) < 0 or not fingerprint.configuration_digest:
+            raise ValueError("hardware fingerprint axis/configuration is invalid")
+        if not isinstance(fingerprint.details, dict):
+            raise ValueError("hardware fingerprint details must be an object")
+        rebuilt = cls.build(
+            fingerprint.odrive_serial,
+            fingerprint.axis,
+            fingerprint.firmware,
+            fingerprint.details,
+        )
+        if rebuilt.configuration_digest != fingerprint.configuration_digest:
+            raise ValueError("hardware fingerprint digest does not match its details")
+        return fingerprint
+
+
+def hardware_fingerprints_match(
+    saved: Dict[str, Any], current: HardwareFingerprint
+) -> Tuple[bool, str]:
+    """Compare every identity field that binds a reference to one controller frame."""
+    try:
+        prior = HardwareFingerprint.from_dict(saved)
+    except (KeyError, TypeError, ValueError) as exc:
+        return False, f"saved hardware fingerprint is invalid: {exc}"
+    if prior.odrive_serial != current.odrive_serial:
+        return False, "ODrive serial number changed"
+    if prior.axis != current.axis:
+        return False, "ODrive axis changed"
+    if prior.firmware != current.firmware:
+        return False, "ODrive firmware changed"
+    if prior.configuration_digest != current.configuration_digest:
+        return False, "frame-relevant ODrive configuration changed"
+    return True, "hardware identity and frame configuration match"
 
 
 @dataclass(frozen=True)
@@ -186,9 +237,14 @@ class ReferenceRecord:
         record = cls(**values)
         if not record.reference_id or record.generation < 1:
             raise ValueError("invalid reference identity or generation")
-        _finite(record.afo_degrees_per_odrive_turn, "reference conversion factor")
+        if _finite(record.afo_degrees_per_odrive_turn, "reference conversion factor") <= 0:
+            raise ValueError("reference conversion factor must be positive")
+        HardwareFingerprint.from_dict(record.hardware_fingerprint)
         if record.phase_at_neutral is not None:
             _finite(record.phase_at_neutral, "reference phase")
+        if record.phase_uncertainty_turns is not None:
+            if _finite(record.phase_uncertainty_turns, "reference phase uncertainty") < 0:
+                raise ValueError("reference phase uncertainty must not be negative")
         return record
 
 
@@ -203,6 +259,15 @@ class SessionMapping:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "SessionMapping":
+        mapping = cls(**payload)
+        if not mapping.reference_id or int(mapping.reference_generation) < 1:
+            raise ValueError("invalid session-mapping reference identity")
+        _finite(mapping.neutral_position_turns, "session neutral position")
+        HardwareFingerprint.from_dict(mapping.hardware_fingerprint)
+        return mapping
 
 
 @dataclass(frozen=True)
@@ -354,7 +419,16 @@ class AtomicStateStore:
         payload = self._read(self.reference_path)
         if payload is None:
             return None
-        record = ReferenceRecord.from_dict(payload)
+        try:
+            record = ReferenceRecord.from_dict(payload)
+        except (KeyError, TypeError, ValueError, FeedbackError) as exc:
+            try:
+                preserved = self._preserve_corrupt(self.reference_path)
+            except OSError:
+                preserved = self.reference_path
+            raise StateCorruptError(
+                f"Invalid neutral reference preserved at {preserved}: {exc}"
+            ) from exc
         self._last_generations[self.reference_path] = record.generation
         return record
 
@@ -363,8 +437,41 @@ class AtomicStateStore:
 
     def load_checkpoint(self) -> Optional[Dict[str, Any]]:
         payload = self._read(self.checkpoint_path)
-        if payload is not None:
-            self._last_generations[self.checkpoint_path] = int(payload.get("generation", 0))
+        if payload is None:
+            return None
+        try:
+            if int(payload.get("schema_version", -1)) != STATE_SCHEMA_VERSION:
+                raise ValueError("unsupported runtime-checkpoint schema")
+            generation = int(payload["generation"])
+            if generation < 1:
+                raise ValueError("checkpoint generation must be positive")
+            datetime.fromisoformat(str(payload["written_at"]))
+            MotionState(str(payload["motion_state"]))
+            if not isinstance(payload["clean_shutdown"], bool):
+                raise ValueError("clean_shutdown must be boolean")
+            ReferenceConfidence(str(payload["reference_confidence"]))
+            reference_id = payload.get("reference_id")
+            if reference_id is not None and not isinstance(reference_id, str):
+                raise ValueError("reference_id must be text or null")
+            mapping = payload.get("session_mapping")
+            if mapping is not None:
+                if not isinstance(mapping, dict):
+                    raise ValueError("session_mapping must be an object or null")
+                SessionMapping.from_dict(mapping)
+            feedback = payload.get("feedback")
+            if feedback is not None:
+                if not isinstance(feedback, dict):
+                    raise ValueError("feedback must be an object or null")
+                FeedbackSnapshot.from_dict(feedback).validate()
+        except (KeyError, TypeError, ValueError, FeedbackError) as exc:
+            try:
+                preserved = self._preserve_corrupt(self.checkpoint_path)
+            except OSError:
+                preserved = self.checkpoint_path
+            raise StateCorruptError(
+                f"Invalid runtime checkpoint preserved at {preserved}: {exc}"
+            ) from exc
+        self._last_generations[self.checkpoint_path] = generation
         return payload
 
     def save_checkpoint(self, payload: Dict[str, Any]) -> None:
@@ -386,53 +493,88 @@ class AtomicStateStore:
 
 
 class MotionCoordinator:
-    """Serializes motion owners and invalidates stale worker commands."""
+    """Serializes motion ownership, command submission, and stop ordering."""
 
     def __init__(self):
         self._lock = threading.RLock()
+        self._command_gate = threading.Lock()
         self._generation = 0
-        self._owner: Optional[str] = None
+        self._owner_token: Optional[MotionToken] = None
         self._stopping = False
+        self._motor_idle_confirmed = True
 
     @property
     def owner(self) -> Optional[str]:
         with self._lock:
-            return self._owner
+            return self._owner_token.owner if self._owner_token else None
+
+    @property
+    def motor_idle_confirmed(self) -> bool:
+        with self._lock:
+            return self._motor_idle_confirmed
+
+    @property
+    def active_token(self) -> Optional[MotionToken]:
+        with self._lock:
+            return self._owner_token
 
     def acquire(self, owner: str) -> MotionToken:
-        with self._lock:
-            if self._owner is not None:
-                raise MotionConflictError(f"Motion is already owned by {self._owner}")
-            if self._stopping:
-                raise MotionConflictError("Motion is stopping; wait for confirmed idle")
-            self._generation += 1
-            self._owner = owner
-            return MotionToken(owner, self._generation)
+        with self._command_gate:
+            with self._lock:
+                if self._owner_token is not None:
+                    raise MotionConflictError(
+                        f"Motion is already owned by {self._owner_token.owner}"
+                    )
+                if self._stopping or not self._motor_idle_confirmed:
+                    raise MotionConflictError(
+                        "Motion is stopping; wait for confirmed idle and worker exit"
+                    )
+                self._generation += 1
+                token = MotionToken(owner, self._generation)
+                self._owner_token = token
+                return token
 
     def request_stop(self) -> int:
+        # Taking the same gate as submit_command guarantees that every command
+        # already in progress completes before stop is latched, and no command
+        # can be submitted after the latch.
+        with self._command_gate:
+            with self._lock:
+                self._stopping = True
+                self._motor_idle_confirmed = False
+                return self._generation
+
+    def confirm_motor_idle(self) -> None:
         with self._lock:
-            self._generation += 1
-            self._stopping = True
-            return self._generation
+            self._motor_idle_confirmed = True
+            if self._owner_token is None:
+                self._stopping = False
 
     def confirm_idle(self) -> None:
-        with self._lock:
-            self._owner = None
-            self._stopping = False
+        """Compatibility alias; idle confirmation deliberately keeps ownership."""
+        self.confirm_motor_idle()
 
     def assert_active(self, token: MotionToken) -> None:
         with self._lock:
             if (
                 self._stopping
-                or self._owner != token.owner
-                or self._generation != token.generation
+                or self._owner_token != token
             ):
                 raise MotionConflictError(f"Stale or cancelled motion owner: {token.owner}")
 
+    def submit_command(self, token: MotionToken, command: Callable[[], Any]) -> Any:
+        """Run one target write only if ownership is still valid at submission."""
+        with self._command_gate:
+            self.assert_active(token)
+            return command()
+
     def release(self, token: MotionToken) -> None:
-        with self._lock:
-            if self._owner == token.owner and self._generation == token.generation:
-                self._owner = None
+        with self._command_gate:
+            with self._lock:
+                if self._owner_token == token:
+                    self._owner_token = None
+                    if self._motor_idle_confirmed:
+                        self._stopping = False
 
 
 class ReferenceManager:
@@ -490,6 +632,10 @@ class ReferenceManager:
         if not acknowledgement:
             raise ReferenceError("Physical-neutral acknowledgement is required")
         snapshot.validate()
+        if snapshot.active_errors:
+            raise ReferenceError(
+                f"ODrive has active errors ({snapshot.active_errors}); neutral cannot be set"
+            )
         reference_cfg = self.config["reference"]
         max_velocity = float(reference_cfg["stationary_velocity_limit_deg_s"])
         degrees_per_turn = float(self.config["motion"]["afo_degrees_per_odrive_turn"])
@@ -557,7 +703,22 @@ class ReferenceManager:
             raise ReferenceError(
                 "Measured-angle recovery requires both assisted and confirmed phase recovery settings"
             )
-        if snapshot.raw_phase is None:
+        record = self.record
+        if record is None:
+            raise ReferenceRequiredError(
+                "Measured-angle recovery requires an existing physical-neutral reference"
+            )
+        snapshot.validate()
+        if snapshot.active_errors:
+            raise ReferenceError(
+                f"ODrive has active errors ({snapshot.active_errors}); recovery is blocked"
+            )
+        matches, reason = hardware_fingerprints_match(
+            record.hardware_fingerprint, fingerprint
+        )
+        if not matches:
+            raise ReferenceError(reason)
+        if snapshot.raw_phase is None or record.phase_at_neutral is None:
             raise ReferenceError("Measured-angle recovery requires finite raw phase feedback")
         uncertainty = abs(_finite(uncertainty_deg, "angle uncertainty"))
         if uncertainty > float(cfg["maximum_assisted_uncertainty_deg"]):
@@ -573,32 +734,71 @@ class ReferenceManager:
         sign = int(cfg.get("phase_sign"))
         if period <= 0 or turns_per_period <= 0 or sign not in (-1, 1):
             raise ReferenceError("Confirmed phase recovery scale/sign is invalid")
-        turn_offset = angle / float(self.config["motion"]["afo_degrees_per_odrive_turn"])
-        neutral_phase = (
-            snapshot.raw_phase - sign * turn_offset / turns_per_period * period
-        ) % period
-        adjusted = FeedbackSnapshot(
-            captured_monotonic_s=snapshot.captured_monotonic_s,
-            captured_at=snapshot.captured_at,
-            position_turns=(
-                snapshot.position_turns
-                - angle / float(self.config["motion"]["afo_degrees_per_odrive_turn"])
-            ),
-            velocity_turns_s=snapshot.velocity_turns_s,
-            active_errors=snapshot.active_errors,
-            current_state=snapshot.current_state,
-            disarm_reason=snapshot.disarm_reason,
-            system_uptime=snapshot.system_uptime,
-            raw_phase=neutral_phase,
+        if not acknowledgement:
+            raise ReferenceError("Measured-angle recovery acknowledgement is required")
+        if not str(operator).strip():
+            raise ReferenceError("Operator ID is required for measured-angle recovery")
+        if str(fixture_id).strip() != record.fixture_id:
+            raise ReferenceError("Fixture ID does not match the saved neutral reference")
+
+        degrees_per_turn = float(self.config["motion"]["afo_degrees_per_odrive_turn"])
+        if abs(snapshot.velocity_turns_s * degrees_per_turn) > float(
+            cfg["stationary_velocity_limit_deg_s"]
+        ):
+            raise ReferenceError("Motor must be stationary for measured-angle recovery")
+        inferred_neutral = snapshot.position_turns - angle / degrees_per_turn
+        maximum_distance = maximum / degrees_per_turn
+        candidates = resolve_phase_candidates(
+            snapshot.raw_phase,
+            record.phase_at_neutral,
+            period,
+            turns_per_period,
+            snapshot.position_turns,
+            maximum_distance,
+            sign,
+            float(record.phase_uncertainty_turns or 0.0),
         )
-        return self.establish_at_physical_neutral(
-            adjusted,
-            fingerprint,
-            operator,
-            fixture_id,
-            acknowledgement,
-            method="operator_measured_angle_recovery",
+        allowed_error_turns = (
+            uncertainty / degrees_per_turn + float(record.phase_uncertainty_turns or 0.0)
         )
+        accepted = [
+            candidate
+            for candidate in candidates
+            if abs(candidate - inferred_neutral) <= allowed_error_turns
+        ]
+        if len(accepted) != 1:
+            raise ReferenceError(
+                "Measured angle and saved phase do not identify exactly one neutral "
+                f"candidate ({len(accepted)} matched)"
+            )
+        mapping = SessionMapping(
+            reference_id=record.reference_id,
+            reference_generation=record.generation,
+            neutral_position_turns=accepted[0],
+            verified_at=utc_now_iso(),
+            verification_method="operator_measured_angle_and_saved_phase_recovery",
+            hardware_fingerprint=fingerprint.to_dict(),
+        )
+        self.mapping = mapping
+        self.confidence = ReferenceConfidence.VERIFIED
+        self.reason = "Neutral mapping recovered from measured angle and saved phase"
+        try:
+            self.store.append_event(
+                "neutral_measured_angle_recovered",
+                {
+                    **self.metadata_snapshot(),
+                    "measured_angle_deg": angle,
+                    "uncertainty_deg": uncertainty,
+                    "operator": str(operator).strip(),
+                },
+            )
+            self.write_checkpoint(MotionState.IDLE, snapshot, clean_shutdown=False)
+        except Exception as exc:
+            self.mapping = None
+            self.confidence = ReferenceConfidence.FAULT
+            self.reason = f"Measured-angle recovery persistence failed: {exc}"
+            raise
+        return mapping
 
     def recover_from_phase(
         self,
@@ -611,8 +811,30 @@ class ReferenceManager:
             return False, "phase recovery is disabled"
         if record is None or record.phase_at_neutral is None or snapshot.raw_phase is None:
             return False, "saved and current phase evidence is incomplete"
-        if record.hardware_fingerprint.get("configuration_digest") != fingerprint.configuration_digest:
-            return False, "controller identity/configuration changed"
+        try:
+            snapshot.validate()
+        except FeedbackError as exc:
+            return False, f"phase-recovery feedback is invalid: {exc}"
+        if snapshot.active_errors:
+            return False, f"ODrive has active errors ({snapshot.active_errors})"
+        degrees_per_turn = float(self.config["motion"]["afo_degrees_per_odrive_turn"])
+        if abs(snapshot.velocity_turns_s * degrees_per_turn) > float(
+            cfg["stationary_velocity_limit_deg_s"]
+        ):
+            return False, "motor is not stationary enough for phase recovery"
+        matches, reason = hardware_fingerprints_match(
+            record.hardware_fingerprint, fingerprint
+        )
+        if not matches:
+            return False, reason
+        configured_conversion = degrees_per_turn
+        if not math.isclose(
+            record.afo_degrees_per_odrive_turn,
+            configured_conversion,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            return False, "motion conversion changed since neutral was established"
         period = cfg.get("phase_period")
         turns_per_period = cfg.get("controller_turns_per_phase_period")
         sign = cfg.get("phase_sign")
@@ -755,11 +977,16 @@ def evaluate_continuity(
     fingerprint: HardwareFingerprint,
     config: Dict[str, Any],
     now_wall_s: Optional[float] = None,
+    reference_record: Optional[ReferenceRecord] = None,
 ) -> Tuple[bool, str, Optional[SessionMapping]]:
     """Conservatively decide whether a prior relative-position frame still exists."""
     reference_cfg = config["reference"]
     if not reference_cfg["session_continuity_enabled"]:
         return False, "automatic controller-session continuity is disabled", None
+    try:
+        current_snapshot.validate()
+    except FeedbackError as exc:
+        return False, f"current feedback is invalid: {exc}", None
     units = reference_cfg.get("odrive_uptime_units")
     scale = {"seconds": 1.0, "milliseconds": 0.001}.get(units)
     if scale is None:
@@ -770,8 +997,38 @@ def evaluate_continuity(
     prior_feedback = checkpoint.get("feedback")
     if not prior_mapping or not prior_feedback:
         return False, "checkpoint has no prior session mapping or feedback", None
-    if prior_mapping.get("hardware_fingerprint", {}).get("configuration_digest") != fingerprint.configuration_digest:
-        return False, "controller identity/configuration changed", None
+    try:
+        FeedbackSnapshot.from_dict(prior_feedback).validate()
+    except (TypeError, ValueError, FeedbackError) as exc:
+        return False, f"checkpoint feedback is invalid: {exc}", None
+    if reference_record is None:
+        return False, "saved neutral-reference record is unavailable", None
+    if checkpoint.get("reference_id") != reference_record.reference_id:
+        return False, "checkpoint reference identity does not match saved reference", None
+    if prior_mapping.get("reference_id") != reference_record.reference_id:
+        return False, "session mapping reference identity changed", None
+    if int(prior_mapping.get("reference_generation", -1)) != reference_record.generation:
+        return False, "session mapping reference generation changed", None
+    matches, reason = hardware_fingerprints_match(
+        prior_mapping.get("hardware_fingerprint", {}), fingerprint
+    )
+    if not matches:
+        return False, reason, None
+    matches, reason = hardware_fingerprints_match(
+        reference_record.hardware_fingerprint, fingerprint
+    )
+    if not matches:
+        return False, reason, None
+    configured_conversion = _finite(
+        config["motion"]["afo_degrees_per_odrive_turn"], "configured conversion factor"
+    )
+    if not math.isclose(
+        reference_record.afo_degrees_per_odrive_turn,
+        configured_conversion,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        return False, "motion conversion changed since neutral was established", None
     prior_uptime = prior_feedback.get("system_uptime")
     if prior_uptime is None or current_snapshot.system_uptime is None:
         return False, "controller uptime evidence is unavailable", None
@@ -793,7 +1050,7 @@ def evaluate_continuity(
     if abs(wall_delta - uptime_delta) > tolerance:
         return False, "wall time and controller uptime do not prove one continuous session", None
     try:
-        mapping = SessionMapping(**prior_mapping)
+        mapping = SessionMapping.from_dict(prior_mapping)
     except (TypeError, ValueError) as exc:
         return False, f"saved session mapping is invalid: {exc}", None
     return True, "controller-session continuity verified", mapping
@@ -810,6 +1067,9 @@ def wait_for_settle(
     cancelled: Callable[[], bool],
     clock: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
+    expected_state: Optional[int] = None,
+    expected_disarm_reason: Optional[int] = None,
+    progress: Optional[Callable[[], None]] = None,
 ) -> FeedbackSnapshot:
     """Wait for finite, fresh position and low velocity throughout a dwell."""
     start = clock()
@@ -823,6 +1083,21 @@ def wait_for_settle(
         last.validate(now, stale_after_s)
         if last.active_errors:
             raise FeedbackError(f"ODrive active errors: {last.active_errors}")
+        if expected_state is not None and last.current_state != int(expected_state):
+            raise FeedbackError(
+                f"ODrive left expected state {int(expected_state)} "
+                f"(reported {last.current_state})"
+            )
+        if (
+            expected_disarm_reason is not None
+            and last.disarm_reason != int(expected_disarm_reason)
+        ):
+            raise FeedbackError(
+                "ODrive disarm reason changed during powered motion "
+                f"({expected_disarm_reason} -> {last.disarm_reason})"
+            )
+        if progress is not None:
+            progress()
         position_error = abs(last.position_turns - _finite(target_turns, "target position"))
         stationary = abs(last.velocity_turns_s) <= abs(velocity_limit_turns_s)
         if position_error <= abs(tolerance_turns) and stationary:

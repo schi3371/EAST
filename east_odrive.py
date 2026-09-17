@@ -11,6 +11,10 @@ from typing import Any, Dict, Optional
 from east_reference import FeedbackError, FeedbackSnapshot, HardwareFingerprint, utc_now_iso
 
 
+class UnsupportedCoordinateModeError(RuntimeError):
+    """Raised when the connected axis cannot safely use EAST relative setpoints."""
+
+
 def _read_path(root: Any, path: str, default: Any = None) -> Any:
     value = root
     try:
@@ -51,7 +55,12 @@ class ODriveAdapter:
         self.closed_loop_state = int(closed_loop_state)
         self.io_lock = threading.RLock()
 
-    def snapshot(self, include_phase: bool = False) -> FeedbackSnapshot:
+    def snapshot(
+        self,
+        include_phase: bool = False,
+        max_capture_duration_s: Optional[float] = None,
+    ) -> FeedbackSnapshot:
+        capture_started = time.monotonic()
         with self.io_lock:
             position = _finite_float(self.axis.pos_vel_mapper.pos_rel, "ODrive position")
             velocity = _finite_float(self.axis.pos_vel_mapper.vel, "ODrive velocity")
@@ -65,8 +74,9 @@ class ODriveAdapter:
                 value = _read_path(self.device, "rs485_encoder_group0.raw")
                 if value is not None:
                     raw_phase = _finite_float(value, "RS485 encoder raw phase")
+        capture_finished = time.monotonic()
         snapshot = FeedbackSnapshot(
-            captured_monotonic_s=time.monotonic(),
+            captured_monotonic_s=capture_finished,
             captured_at=utc_now_iso(),
             position_turns=position,
             velocity_turns_s=velocity,
@@ -75,9 +85,72 @@ class ODriveAdapter:
             disarm_reason=disarm_reason,
             system_uptime=uptime,
             raw_phase=raw_phase,
+            capture_started_monotonic_s=capture_started,
+            capture_duration_s=capture_finished - capture_started,
         )
-        snapshot.validate()
+        snapshot.validate(max_capture_duration_s=max_capture_duration_s)
         return snapshot
+
+    def validate_motion_capabilities(
+        self,
+        expected_mapper_scale: float,
+        scale_tolerance: float = 1e-9,
+    ) -> Dict[str, Any]:
+        """Fail closed unless the live axis matches EAST's relative-frame model."""
+        missing = object()
+        with self.io_lock:
+            absolute = _read_path(
+                self.axis, "controller.config.absolute_setpoints", missing
+            )
+            circular = _read_path(
+                self.axis, "controller.config.circular_setpoints", missing
+            )
+            mapper_scale = _read_path(
+                self.axis, "pos_vel_mapper.config.scale", missing
+            )
+            required = {
+                "pos_vel_mapper.pos_rel": _read_path(
+                    self.axis, "pos_vel_mapper.pos_rel", missing
+                ),
+                "pos_vel_mapper.vel": _read_path(
+                    self.axis, "pos_vel_mapper.vel", missing
+                ),
+                "controller.input_pos": _read_path(
+                    self.axis, "controller.input_pos", missing
+                ),
+                "requested_state": _read_path(self.axis, "requested_state", missing),
+                "current_state": _read_path(self.axis, "current_state", missing),
+                "active_errors": _read_path(self.axis, "active_errors", missing),
+            }
+        absent = [name for name, value in required.items() if value is missing]
+        if absent:
+            raise UnsupportedCoordinateModeError(
+                "ODrive is missing required motion capabilities: " + ", ".join(absent)
+            )
+        if absolute is not False:
+            raise UnsupportedCoordinateModeError(
+                "controller.config.absolute_setpoints must be explicitly false"
+            )
+        if circular is not False:
+            raise UnsupportedCoordinateModeError(
+                "controller.config.circular_setpoints must be explicitly false"
+            )
+        scale = _finite_float(mapper_scale, "position/velocity mapper scale")
+        expected = _finite_float(expected_mapper_scale, "required mapper scale")
+        tolerance = abs(_finite_float(scale_tolerance, "mapper scale tolerance"))
+        if not math.isclose(scale, expected, rel_tol=0.0, abs_tol=tolerance):
+            raise UnsupportedCoordinateModeError(
+                f"position/velocity mapper scale {scale:g} does not match "
+                f"required {expected:g}"
+            )
+        _finite_float(required["pos_vel_mapper.pos_rel"], "ODrive position")
+        _finite_float(required["pos_vel_mapper.vel"], "ODrive velocity")
+        return {
+            "absolute_setpoints": absolute,
+            "circular_setpoints": circular,
+            "pos_vel_mapper_scale": scale,
+            "required_pos_vel_mapper_scale": expected,
+        }
 
     def fingerprint(self) -> HardwareFingerprint:
         """Read identity and frame-relevant configuration without changing hardware."""
@@ -106,6 +179,10 @@ class ODriveAdapter:
                 "load_encoder": _read_path(self.axis, "config.load_encoder"),
                 "commutation_encoder": _read_path(self.axis, "config.commutation_encoder"),
                 "motor_type": _read_path(self.axis, "config.motor.motor_type"),
+                "rs485_encoder_protocol_mode": _read_path(
+                    self.device, "config.rs485_encoder_group0.mode",
+                    _read_path(self.device, "rs485_encoder_group0.config.mode"),
+                ),
             }
         return HardwareFingerprint.build(serial, self.axis_number, firmware, details)
 
@@ -113,11 +190,13 @@ class ODriveAdapter:
         snapshot = self.snapshot(include_phase=include_phase)
         fingerprint = self.fingerprint()
         with self.io_lock:
+            pos_abs = _read_path(self.axis, "pos_vel_mapper.pos_abs")
             report = {
                 "snapshot": snapshot.to_dict(),
                 "fingerprint": fingerprint.to_dict(),
                 "capabilities": {
-                    "pos_abs_available": _read_path(self.axis, "pos_vel_mapper.pos_abs") is not None,
+                    "pos_abs_available": pos_abs is not None,
+                    "pos_abs": pos_abs,
                     "raw_phase_available": snapshot.raw_phase is not None,
                     "watchdog_feed_available": callable(_read_path(self.axis, "watchdog_feed")),
                 },
@@ -138,6 +217,24 @@ class ODriveAdapter:
                     "deceleration_limit_turns_s2": _read_path(
                         self.axis, "trap_traj.config.decel_limit"
                     ),
+                },
+                "health": {
+                    "pos_vel_mapper_status": _read_path(
+                        self.axis, "pos_vel_mapper.status"
+                    ),
+                    "pos_vel_mapper_active_errors": _read_path(
+                        self.axis, "pos_vel_mapper.active_errors"
+                    ),
+                    "rs485_encoder_status": _read_path(
+                        self.device, "rs485_encoder_group0.status"
+                    ),
+                    "rs485_encoder_active_errors": _read_path(
+                        self.device, "rs485_encoder_group0.active_errors"
+                    ),
+                },
+                "watchdog": {
+                    "enabled": _read_path(self.axis, "config.enable_watchdog"),
+                    "timeout_s": _read_path(self.axis, "config.watchdog_timeout"),
                 },
             }
         return report
@@ -170,7 +267,28 @@ class ODriveAdapter:
         with self.io_lock:
             self.axis.controller.input_pos = target
 
-    def enter_closed_loop_holding_current(self, cancelled=lambda: False, timeout_s: float = 2.0) -> None:
+    def enter_closed_loop_holding_current(
+        self,
+        cancelled=lambda: False,
+        timeout_s: float = 2.0,
+        expected_mapper_scale: float = 1.0,
+        mapper_scale_tolerance: float = 1e-9,
+    ) -> FeedbackSnapshot:
+        self.request_closed_loop_holding_current(
+            cancelled=cancelled,
+            expected_mapper_scale=expected_mapper_scale,
+            mapper_scale_tolerance=mapper_scale_tolerance,
+        )
+        return self.wait_for_state(self.closed_loop_state, cancelled, timeout_s)
+
+    def request_closed_loop_holding_current(
+        self,
+        cancelled=lambda: False,
+        expected_mapper_scale: float = 1.0,
+        mapper_scale_tolerance: float = 1e-9,
+    ) -> None:
+        """Load the live position and issue one closed-loop state request."""
+        self.validate_motion_capabilities(expected_mapper_scale, mapper_scale_tolerance)
         if cancelled():
             raise RuntimeError("Motion was cancelled before arming")
         with self.io_lock:
@@ -180,6 +298,14 @@ class ODriveAdapter:
             if cancelled():
                 raise RuntimeError("Motion was cancelled before closed-loop request")
             self.axis.requested_state = self.closed_loop_state
+
+    def wait_for_state(
+        self,
+        expected_state: int,
+        cancelled=lambda: False,
+        timeout_s: float = 2.0,
+        progress=None,
+    ) -> FeedbackSnapshot:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if cancelled():
@@ -189,10 +315,14 @@ class ODriveAdapter:
                 raise RuntimeError(
                     f"ODrive active errors entering closed loop: {snapshot.active_errors}"
                 )
-            if snapshot.current_state == self.closed_loop_state:
-                return
+            if progress is not None:
+                progress()
+            if snapshot.current_state == int(expected_state):
+                return snapshot
             time.sleep(0.02)
-        raise TimeoutError(f"ODrive did not enter closed loop within {timeout_s:g} seconds")
+        raise TimeoutError(
+            f"ODrive did not enter state {int(expected_state)} within {timeout_s:g} seconds"
+        )
 
     def request_idle(self, timeout_s: float = 1.0) -> IdleResult:
         try:

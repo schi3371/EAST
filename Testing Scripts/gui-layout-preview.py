@@ -17,7 +17,7 @@ from PIL import Image
 
 
 APP_NAME = "EAST"
-APP_VERSION = "1.2.0-neutral-recovery-preview"
+APP_VERSION = "1.2.1-safety-hardening-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 

@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from east_odrive import ODriveAdapter
+from east_odrive import ODriveAdapter, UnsupportedCoordinateModeError
 
 
 class Axis:
@@ -63,7 +63,12 @@ class Device:
         self.fw_version_minor = 6
         self.fw_version_revision = 10
         self.system_stats = SimpleNamespace(uptime=100)
-        self.rs485_encoder_group0 = SimpleNamespace(raw=0.2)
+        self.rs485_encoder_group0 = SimpleNamespace(
+            raw=0.2,
+            status=0,
+            active_errors=0,
+            config=SimpleNamespace(mode=3),
+        )
 
 
 class ODriveAdapterTests(unittest.TestCase):
@@ -75,6 +80,9 @@ class ODriveAdapterTests(unittest.TestCase):
         report = self.adapter.read_only_report(include_phase=True)
         self.assertEqual(self.device.axis0.request_count, 0)
         self.assertEqual(report["snapshot"]["raw_phase"], 0.2)
+        self.assertEqual(report["fingerprint"]["details"]["rs485_encoder_protocol_mode"], 3)
+        self.assertIn("pos_abs", report["capabilities"])
+        self.assertIn("watchdog", report)
 
     def test_closed_loop_loads_current_position_before_enable(self):
         self.adapter.enter_closed_loop_holding_current()
@@ -85,6 +93,29 @@ class ODriveAdapterTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.adapter.enter_closed_loop_holding_current(cancelled=lambda: True)
         self.assertEqual(self.device.axis0.request_count, 0)
+
+    def test_supported_relative_coordinate_mode_is_required(self):
+        report = self.adapter.validate_motion_capabilities(1.0)
+        self.assertFalse(report["absolute_setpoints"])
+
+        self.device.axis0.controller.config.absolute_setpoints = True
+        with self.assertRaises(UnsupportedCoordinateModeError):
+            self.adapter.validate_motion_capabilities(1.0)
+        self.device.axis0.controller.config.absolute_setpoints = False
+
+        self.device.axis0.controller.config.circular_setpoints = True
+        with self.assertRaises(UnsupportedCoordinateModeError):
+            self.adapter.validate_motion_capabilities(1.0)
+        self.device.axis0.controller.config.circular_setpoints = False
+
+        self.device.axis0.pos_vel_mapper.config.scale = 2.0
+        with self.assertRaises(UnsupportedCoordinateModeError):
+            self.adapter.validate_motion_capabilities(1.0)
+
+    def test_unknown_coordinate_mode_is_rejected(self):
+        del self.device.axis0.controller.config.absolute_setpoints
+        with self.assertRaises(UnsupportedCoordinateModeError):
+            self.adapter.validate_motion_capabilities(1.0)
 
     def test_idle_is_confirmed(self):
         self.device.axis0.current_state = 8

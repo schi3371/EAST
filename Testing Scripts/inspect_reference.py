@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,8 +36,9 @@ class MockODrive:
         self.axis0 = SimpleNamespace(
             active_errors=0,
             current_state=1,
+            requested_state=1,
             disarm_reason=0,
-            controller=SimpleNamespace(config=controller_config),
+            controller=SimpleNamespace(input_pos=0.0, config=controller_config),
             trap_traj=SimpleNamespace(
                 config=SimpleNamespace(vel_limit=9.73, accel_limit=24.33, decel_limit=24.33)
             ),
@@ -44,6 +46,8 @@ class MockODrive:
                 pos_rel=0.0,
                 vel=0.0,
                 pos_abs=None,
+                status=0,
+                active_errors=0,
                 config=SimpleNamespace(scale=1.0, offset_valid=False),
             ),
             commutation_mapper=SimpleNamespace(
@@ -53,6 +57,8 @@ class MockODrive:
                 load_encoder=0,
                 commutation_encoder=0,
                 motor=SimpleNamespace(motor_type=0),
+                watchdog_timeout=0.0,
+                enable_watchdog=False,
             ),
             watchdog_feed=lambda: None,
         )
@@ -61,7 +67,12 @@ class MockODrive:
         self.fw_version_minor = 6
         self.fw_version_revision = 10
         self.system_stats = SimpleNamespace(uptime=123456)
-        self.rs485_encoder_group0 = SimpleNamespace(raw=0.25)
+        self.rs485_encoder_group0 = SimpleNamespace(
+            raw=0.25,
+            status=0,
+            active_errors=0,
+            config=SimpleNamespace(mode="mock-rs485-mode"),
+        )
 
 
 def parse_args():
@@ -102,6 +113,16 @@ def read_persisted_state(store):
     return result
 
 
+def json_safe(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+
 def main():
     args = parse_args()
     config = load_tester_config(args.config)
@@ -129,15 +150,37 @@ def main():
             idle_state=1,
             closed_loop_state=8,
         )
+        try:
+            motion_compatibility = {
+                "accepted": True,
+                "details": adapter.validate_motion_capabilities(
+                    config["reference"]["required_pos_vel_mapper_scale"],
+                    config["reference"]["pos_vel_mapper_scale_tolerance"],
+                ),
+            }
+        except Exception as exc:
+            motion_compatibility = {"accepted": False, "error": str(exc)}
         report = {
             "mode": mode,
             "hardware_writes_performed": False,
-            "warning": "No errors cleared, state requested, setpoint written, or configuration saved.",
+            "warning": (
+                "Read-only code path: no errors cleared, state requested, setpoint written, "
+                "or configuration saved. Run with the GUI and other hardware clients closed."
+            ),
             "runtime_state": read_persisted_state(store),
             "odrive": adapter.read_only_report(include_phase=True),
+            "motion_compatibility": motion_compatibility,
             "reference_features": config["reference"],
         }
-        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+        print(
+            json.dumps(
+                json_safe(report),
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+                default=str,
+            )
+        )
     finally:
         lock.release()
 

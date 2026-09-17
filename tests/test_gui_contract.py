@@ -105,6 +105,20 @@ class GuiContractTests(unittest.TestCase):
         }
         self.assertIn("safe_idle_motor", calls)
         self.assertNotIn("return_to_neutral", calls)
+        assignments = {
+            target.attr
+            for node in ast.walk(stop_function)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Attribute)
+        }
+        self.assertNotIn("strain_test_active", assignments)
+
+    def test_position_writes_use_the_coordinator_submission_gate(self):
+        source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count(".command_position("), 1)
+        self.assertIn("motion_coordinator.submit_command", source)
+        self.assertIn('QKeySequence("Escape")', source)
 
 
 if __name__ == "__main__":
