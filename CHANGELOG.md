@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Increased the maximum permitted ODrive feedback-capture time from 50 ms to 100 ms.
+
 ## 1.2.1-safety-hardening
 
 - Serialized the final ownership check with every position/state command so a queued worker cannot write a target after Stop is latched.
