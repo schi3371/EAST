@@ -92,6 +92,14 @@ class GuiContractTests(unittest.TestCase):
         self.assertIn("Set Current Physical Position as 90 deg Neutral", source)
         self.assertIn("reference_manager.target_for_angle", source)
 
+    def test_main_uses_one_gui_event_system(self):
+        source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        self.assertNotIn("PyQt5", source)
+        self.assertNotIn("pyqtgraph", source)
+        self.assertNotIn("QApplication", source)
+        self.assertNotIn("_process_qt_events", source)
+        self.assertIn("tk.Canvas", source)
+
     def test_stop_path_does_not_call_neutral_return(self):
         tree = ast.parse((PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8"))
         stop_function = next(
@@ -118,7 +126,7 @@ class GuiContractTests(unittest.TestCase):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
         self.assertEqual(source.count(".command_position("), 1)
         self.assertIn("motion_coordinator.submit_command", source)
-        self.assertIn('QKeySequence("Escape")', source)
+        self.assertIn('self.plot_container.bind("<Escape>"', source)
 
 
 if __name__ == "__main__":

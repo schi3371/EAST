@@ -1,3 +1,5 @@
+import json
+import math
 import unittest
 from types import SimpleNamespace
 
@@ -83,6 +85,12 @@ class ODriveAdapterTests(unittest.TestCase):
         self.assertEqual(report["fingerprint"]["details"]["rs485_encoder_protocol_mode"], 3)
         self.assertIn("pos_abs", report["capabilities"])
         self.assertIn("watchdog", report)
+
+    def test_read_only_report_converts_unavailable_absolute_position_to_json_null(self):
+        self.device.axis0.pos_vel_mapper.pos_abs = math.nan
+        report = self.adapter.read_only_report(include_phase=False)
+        self.assertIsNone(report["capabilities"]["pos_abs"])
+        json.dumps(report, allow_nan=False)
 
     def test_closed_loop_loads_current_position_before_enable(self):
         self.adapter.enter_closed_loop_holding_current()

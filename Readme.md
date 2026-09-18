@@ -99,7 +99,7 @@ Exercise the inspection path without importing hardware drivers:
 python "Testing Scripts/inspect_reference.py" --mock
 ```
 
-For Mac-only GUI layout checks, use the preview script. It does not import ODrive, Phidget, PyQtGraph, pywinstyles, or the main hardware-control GUI:
+For Mac-only GUI layout checks, use the preview script. It does not import ODrive, Phidget, pywinstyles, or the main hardware-control GUI:
 
 ```text
 python "Testing Scripts/gui-layout-preview.py"

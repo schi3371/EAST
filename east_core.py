@@ -116,6 +116,12 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     ):
         if float(reference[key]) <= 0:
             raise ValueError(f"reference.{key} must be positive")
+    if float(reference["feedback_stale_after_ms"]) <= float(
+        reference["maximum_feedback_capture_ms"]
+    ):
+        raise ValueError(
+            "reference.feedback_stale_after_ms must exceed maximum_feedback_capture_ms"
+        )
     if not math.isfinite(float(reference["required_pos_vel_mapper_scale"])):
         raise ValueError("reference.required_pos_vel_mapper_scale must be finite")
     if float(reference["pos_vel_mapper_scale_tolerance"]) < 0:

@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Increased the maximum permitted ODrive feedback-capture time from 50 ms to 100 ms.
+- Increased the maximum permitted ODrive feedback-capture time to 150 ms after observed 109 ms hardware reads.
+- Converted unavailable non-finite ODrive diagnostics to JSON `null` so metadata creation cannot fail on `pos_abs = NaN`.
+- Increased the feedback freshness window to 250 ms and require it to exceed the capture-duration limit.
+- Replaced the mixed PyQtGraph/Tk live plot with a Tk-native canvas after `QApplication.processEvents()` caused a fatal GIL crash during motion.
 
 ## 1.2.1-safety-hardening
 

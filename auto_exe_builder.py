@@ -131,11 +131,6 @@ try:
         f"--add-data", f"{cur_dir}/images/*;images/",
         f"--add-data", f"{cur_dir}/tester_config.json;.",
         
-        # Required hidden imports for PyQtGraph
-        "--hidden-import", "pyqtgraph.graphicsItems.ViewBox.axisCtrlTemplate_pyqt5",
-        "--hidden-import", "pyqtgraph.graphicsItems.PlotItem.plotConfigTemplate_pyqt5",
-        "--hidden-import", "pyqtgraph.imageview.ImageViewTemplate_pyqt5",
-        
         # Required imports for ODrive
         "--hidden-import", "fibre",
         "--hidden-import", "fibre.utils",
@@ -151,11 +146,6 @@ try:
         "--hidden-import", "Phidget22.PhidgetException",
         "--hidden-import", "Phidget22.Devices.VoltageRatioInput",
         
-        # Additional PyQt5 imports that might be needed
-        "--hidden-import", "PyQt5.QtCore",
-        "--hidden-import", "PyQt5.QtGui",
-        "--hidden-import", "PyQt5.QtWidgets",
-        
         # NumPy related imports and configurations
         "--hidden-import", "numpy",
         "--hidden-import", "numpy.core",
@@ -170,7 +160,6 @@ try:
         "--additional-hooks-dir", ".",
         
         # Collect all required packages
-        "--collect-all", "pyqtgraph",
         "--collect-all", "odrive",
         "--collect-all", "Phidget22",
         
@@ -182,7 +171,6 @@ try:
         
         # Additional PyInstaller options for better NumPy handling
         "--copy-metadata", "numpy",
-        "--copy-metadata", "pyqtgraph",
         "--copy-metadata", "odrive",
         "--copy-metadata", "Phidget22"
     ]

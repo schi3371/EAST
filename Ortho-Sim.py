@@ -29,12 +29,6 @@ from odrive.enums import (
     INPUT_MODE_TRAP_TRAJ,
 )
 
-# Import PyQtGraph for plotting
-import pyqtgraph as pg
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QShortcut
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QFont, QKeySequence
-
 from east_core import (
     CSV_COLUMNS,
     afo_acceleration_to_odrive_turns_s2,
@@ -81,7 +75,6 @@ angle_data = []
 torque_data = []
 plot_window = None
 plot_curve = None
-plot_timer = None
 
 APP_NAME = "EAST"
 APP_VERSION = "1.2.1-safety-hardening"
@@ -209,7 +202,6 @@ class MyInterface:
             self.update_terminal(f"HARDWARE CONTROLS BLOCKED: {self.startup_block_reason}\n")
             self.buttons[0].configure(state="disabled")
         self.master.after(50, self._drain_ui_queues)
-        self.master.after(20, self._process_qt_events)
         self.master.after(350, self.create_plot_window)
 
         # Bind window events
@@ -225,26 +217,21 @@ class MyInterface:
 
     def on_window_minimize(self, event):
         """Hide plot window when main window is minimized"""
-        if hasattr(self, 'plot_container'):
-            self.plot_container.hide()
+        if hasattr(self, 'plot_container') and self.plot_container is not None:
+            if self.plot_container.winfo_exists():
+                self.plot_container.withdraw()
 
     def on_window_restore(self, event):
         """Show plot window when main window is restored"""
-        if hasattr(self, 'plot_container'):
-            self.plot_container.show()
+        if (
+            hasattr(self, 'plot_container')
+            and self.plot_container is not None
+            and self.plot_container.winfo_exists()
+        ):
+            self.plot_container.deiconify()
         elif plot_window_open:
             # If plot window was open but container was lost, recreate it
             self.create_plot_window()
-
-    def _process_qt_events(self):
-        """Keep the independent PyQtGraph window responsive beside Tk."""
-        qt_app = QApplication.instance()
-        if qt_app is not None:
-            qt_app.processEvents()
-        try:
-            self.master.after(20, self._process_qt_events)
-        except tk.TclError:
-            pass
 
     def create_header_logo(self, parent, candidate_names, fallback_text, column, width):
         """Place a transparent logo directly on the application background."""
@@ -1766,16 +1753,11 @@ class MyInterface:
     def start_strain_test(self):
         """Start the strain test with the current motor settings"""
         # Clear plot data if plot window is open
-        global angle_data, torque_data, plot_curve, plot_window
+        global angle_data, torque_data
         if plot_window_open:
             angle_data = []
             torque_data = []
-            if plot_curve is not None:
-                plot_curve.setData(angle_data, torque_data)
-                # Reset plot axes
-                plot_window.setXRange(0, 1)  # Reset x-axis
-                plot_window.setYRange(0, 1)  # Reset y-axis
-                plot_window.enableAutoRange()  # Enable auto-ranging for both axes
+            self.update_plot()
         self.create_plot_window()
 
         if self.odrive_controller is None:
@@ -2390,214 +2372,166 @@ class MyInterface:
             self.update_terminal("No strain test active\n")
 
     def create_plot_window(self):
-        """Create the independent torque-angle plot window."""
-        global plot_window_open, plot_window, plot_curve, angle_data, torque_data
-        
+        """Create a Tk-native torque-angle plot window."""
+        global plot_window_open, plot_window, plot_curve
+
         try:
-            # Reset data arrays
-            angle_data = []
-            torque_data = []
-            
-            # Get title from file name prefix field
-            plot_title = self.file_name_input.get() or "AFO Strain Test"
-            
-            # Create plot window if not already open
-            if not plot_window_open:
-                # Match the light EAST interface while retaining a separate OS window.
-                pg.setConfigOption('background', '#ffffff')
-                pg.setConfigOption('foreground', TEXT)
-                pg.setConfigOptions(antialias=True)  # Enable antialiasing globally
-                
-                # Create a normal QWidget container first
-                self.plot_container = QWidget()
-                self.plot_container.setWindowTitle("Torque vs AFO Angle")
-                self.plot_escape_shortcut = QShortcut(
-                    QKeySequence("Escape"), self.plot_container
-                )
-                self.plot_escape_shortcut.activated.connect(
-                    lambda: self.master.after(0, self.stop_logging)
-                )
-                
-                # Use a large default graph window for easier live-data viewing.
-                self.plot_container.resize(1280, 840)
-                self.plot_container.setMinimumSize(1040, 680)
-                
-                self.plot_container.setStyleSheet("""
-                    QWidget {
-                        background-color: #f8fafc;
-                        border: 0px;
-                    }
-                """)
-                
-                # Create the plot widget with no navigation bar
-                plot_window = pg.PlotWidget()
-                plot_window.setBackground('#ffffff')
-                
-                # Enable antialiasing for the plot
-                plot_window.setAntialiasing(True)
-                
-                # Set title with larger font
-                title_style = {'color': TEXT, 'size': '18pt'}
-                plot_window.setTitle(plot_title, **title_style)
-                
-                # Set axis labels with larger font and white color
-                label_style = {'color': TEXT, 'font-size': '12pt'}
-                plot_window.setLabel('left', 'Torque (Nm)', **label_style)
-                plot_window.setLabel(
-                    'bottom', 'ODrive-Derived AFO Angle (degrees)', **label_style
-                )
-                
-                # Hide the navigation bar
-                plot_window.hideButtons()
-                
-                # Set grid style
-                plot_window.showGrid(x=True, y=True, alpha=0.3)
-                
-                # Customize axes with larger text
-                for axis in [plot_window.getAxis('left'), plot_window.getAxis('bottom')]:
-                    axis.setPen(color=TEXT, width=2)
-                    axis.setTextPen(color=TEXT)
-                    axis.setStyle(tickFont=QFont('Arial', 12))
-                    axis.setTextPen(TEXT)
-                
-                # Add a legend with custom styling and larger text
-                legend = plot_window.addLegend(
-                    pen='#cbd5e1', brush=(248, 250, 252, 235), labelTextColor=TEXT
-                )
-                legend.setLabelTextSize('12pt')  # Increased legend text size
-                
-                # Create the data curve with line only (no symbols)
-                plot_curve = plot_window.plot(
-                    angle_data, 
-                    torque_data, 
-                    pen=pg.mkPen(
-                        color=(37, 99, 235),
-                        width=2,  # Maintain line width for clarity
-                        cosmetic=True,  # Ensures consistent width during scaling
-                        style=Qt.SolidLine  # Ensure solid line style
-                    ),
-                    name='Torque vs Angle',
-                    antialias=True,  # Enable antialiasing for the curve
-                    connect='all',  # Connect all points for smoother line
-                    skipFiniteCheck=True  # Skip finite check for better performance
-                )
-                
-                # Create layout and add plot widget to container
-                layout = QVBoxLayout(self.plot_container)
-                layout.setContentsMargins(15, 15, 15, 15)  # Add more padding around the plot
-                layout.addWidget(plot_window)
-                
-                # Make the plot a normal window so it can be moved, minimized,
-                # or placed behind the main GUI by the operator.
-                self.plot_container.setWindowFlags(Qt.Window)
-                
-                # Show the container
-                self.plot_container.show()
-                self.plot_container.raise_()
-                
-                # Set up a timer for plot updates
-                self.setup_plot_timer()
-                
-                plot_window_open = True
-                self.update_terminal("Plot window created successfully\n")
-            
-            # Update title if plot already exists
-            else:
-                plot_window.setTitle(plot_title)
-                self.plot_container.show()
-                self.plot_container.raise_()
+            self.plot_title = self.file_name_input.get() or "AFO Strain Test"
+            existing = (
+                plot_window_open
+                and getattr(self, "plot_container", None) is not None
+                and self.plot_container.winfo_exists()
+            )
+            if existing:
+                self.plot_container.deiconify()
+                self.plot_container.lift()
+                self.update_plot()
                 self.update_terminal("Plot updated\n")
-                
+                return
+
+            self.plot_container = ctk.CTkToplevel(self.master)
+            self.plot_container.title("Torque vs AFO Angle")
+            self.plot_container.geometry("1100x720")
+            self.plot_container.minsize(760, 480)
+            self.plot_container.configure(fg_color=BG)
+            self.plot_container.protocol("WM_DELETE_WINDOW", self.close_plot_window)
+            self.plot_container.bind("<Escape>", lambda _event: self.stop_logging())
+
+            frame = ctk.CTkFrame(self.plot_container, fg_color=PANEL, corner_radius=10)
+            frame.pack(fill="both", expand=True, padx=15, pady=15)
+            self.plot_canvas = tk.Canvas(
+                frame, background=PANEL, highlightthickness=0
+            )
+            self.plot_canvas.pack(fill="both", expand=True, padx=8, pady=8)
+            self.plot_canvas.bind("<Configure>", lambda _event: self.update_plot())
+            plot_window = self.plot_canvas
+            plot_curve = None
+            plot_window_open = True
+            self.plot_container.lift()
+            self.plot_container.after_idle(self.update_plot)
+            self.update_terminal("Tk plot window created successfully\n")
         except Exception as e:
             self.update_terminal(f"Error creating plot window: {str(e)}\n")
             plot_window_open = False
 
-    def setup_plot_timer(self):
-        """Set up a timer to update the plot periodically"""
-        global plot_timer
-        
-        # Create a timer for updating the plot
-        plot_timer = QTimer()
-        plot_timer.timeout.connect(self.update_plot)
-        plot_timer.start(8)  # Update plot every 8ms (125Hz) to match data collection rate
-    
     def update_plot(self):
-        """Update the plot with new data"""
-        global plot_curve, angle_data, torque_data, plot_window_open
-        
-        # Check if plot window is still open
-        if not plot_window_open:
+        """Render the live plot on the Tk main thread."""
+        global plot_curve, angle_data, torque_data
+
+        canvas = getattr(self, "plot_canvas", None)
+        if not plot_window_open or canvas is None or not canvas.winfo_exists():
             return
-        
-        # Update plot with new data if available
+
+        canvas.delete("plot")
+        width = max(canvas.winfo_width(), 300)
+        height = max(canvas.winfo_height(), 240)
+        left, right, top, bottom = 82, 28, 55, 68
+        x0, x1 = left, width - right
+        y0, y1 = top, height - bottom
+
+        canvas.create_text(
+            width / 2, 24, text=self.plot_title, fill=TEXT,
+            font=("Arial", 16, "bold"), tags="plot",
+        )
+        canvas.create_text(
+            width / 2, height - 22,
+            text="ODrive-Derived AFO Angle (degrees)", fill=TEXT,
+            font=("Arial", 11, "bold"), tags="plot",
+        )
+        canvas.create_text(
+            22, height / 2, text="Torque (Nm)", fill=TEXT,
+            font=("Arial", 11, "bold"), angle=90, tags="plot",
+        )
+
         if angle_data and torque_data:
-            plot_curve.setData(angle_data, torque_data)
-    
+            x_min, x_max = min(angle_data), max(angle_data)
+            y_min, y_max = min(torque_data), max(torque_data)
+        else:
+            x_min, x_max, y_min, y_max = 0.0, 1.0, 0.0, 1.0
+        if x_min == x_max:
+            x_min -= 0.5
+            x_max += 0.5
+        if y_min == y_max:
+            y_min -= 0.5
+            y_max += 0.5
+        x_pad = (x_max - x_min) * 0.05
+        y_pad = (y_max - y_min) * 0.08
+        x_min, x_max = x_min - x_pad, x_max + x_pad
+        y_min, y_max = y_min - y_pad, y_max + y_pad
+
+        for index in range(6):
+            fraction = index / 5.0
+            x = x0 + fraction * (x1 - x0)
+            y = y1 - fraction * (y1 - y0)
+            canvas.create_line(x, y0, x, y1, fill="#e2e8f0", tags="plot")
+            canvas.create_line(x0, y, x1, y, fill="#e2e8f0", tags="plot")
+            canvas.create_text(
+                x, y1 + 18,
+                text=f"{x_min + fraction * (x_max - x_min):.2f}",
+                fill=MUTED, font=("Arial", 9), tags="plot",
+            )
+            canvas.create_text(
+                x0 - 10, y,
+                text=f"{y_min + fraction * (y_max - y_min):.2f}",
+                fill=MUTED, font=("Arial", 9), anchor="e", tags="plot",
+            )
+        canvas.create_rectangle(x0, y0, x1, y1, outline=TEXT, width=2, tags="plot")
+        canvas.create_line(
+            x1 - 145, y0 + 18, x1 - 105, y0 + 18,
+            fill=BLUE, width=2, tags="plot",
+        )
+        canvas.create_text(
+            x1 - 98, y0 + 18, text="Torque vs Angle", anchor="w",
+            fill=TEXT, font=("Arial", 9, "bold"), tags="plot",
+        )
+
+        if len(angle_data) >= 2:
+            max_render_points = 2500
+            step = max(1, len(angle_data) // max_render_points)
+            samples = list(zip(angle_data[::step], torque_data[::step]))
+            if samples[-1] != (angle_data[-1], torque_data[-1]):
+                samples.append((angle_data[-1], torque_data[-1]))
+            coordinates = []
+            for angle, torque in samples:
+                x = x0 + (angle - x_min) / (x_max - x_min) * (x1 - x0)
+                y = y1 - (torque - y_min) / (y_max - y_min) * (y1 - y0)
+                coordinates.extend((x, y))
+            plot_curve = canvas.create_line(
+                *coordinates, fill=BLUE, width=2, tags="plot"
+            )
+
     def close_plot_window(self):
-        """Close the plot window safely"""
+        """Close the Tk plot window safely."""
         global plot_window_open, plot_window, plot_curve, angle_data, torque_data
-        
+
         try:
-            if hasattr(self, 'plot_container') and self.plot_container is not None:
-                # Hide the container first
-                self.plot_container.hide()
-                
-                # Clear the plot data
-                if plot_curve is not None:
-                    plot_curve.clear()
-                angle_data = []
-                torque_data = []
-                
-                # Delete the plot curve reference
-                plot_curve = None
-                
-                # Close and delete the plot window
-                if plot_window is not None:
-                    plot_window.setParent(None)
-                    plot_window = None
-                
-                # Close and delete the container
-                self.plot_container.setParent(None)
-                self.plot_container.deleteLater()
-                self.plot_container = None
-                
-                plot_window_open = False
+            container = getattr(self, "plot_container", None)
+            if container is not None and container.winfo_exists():
+                container.destroy()
         except Exception as e:
             print(f"Error closing plot window: {e}")
-            # Ensure flags are reset even if there's an error
+        finally:
             plot_window_open = False
             plot_window = None
             plot_curve = None
+            angle_data = []
+            torque_data = []
             self.plot_container = None
+            self.plot_canvas = None
 
     def update_plot_data(self, angle, torque):
-        """Add new data points to the plot"""
-        global angle_data, torque_data, plot_window_open, plot_curve
-        
+        """Add a data point and redraw from the Tk main thread."""
+        global angle_data, torque_data
+
         try:
-            # Only update if plot window is open
-            if plot_window_open and plot_curve is not None:
-                # Add new data points
-                angle_data.append(angle)  # Use the moving average values directly
-                torque_data.append(torque)  # Use the moving average values directly
-                
-                # Keep a maximum number of points for performance
-                max_points = 10000  # Keep high number of points for resolution
+            if plot_window_open:
+                angle_data.append(angle)
+                torque_data.append(torque)
+                max_points = 10000
                 if len(angle_data) > max_points:
-                    # Keep more recent points for better resolution
                     angle_data = angle_data[-max_points:]
                     torque_data = torque_data[-max_points:]
-                
-                # Update the plot with the data
-                plot_curve.setData(
-                    angle_data, 
-                    torque_data,
-                    connect='all',  # Connect all points for smoother line
-                    skipFiniteCheck=True  # Skip finite check for better performance
-                )
-                
-                # Auto-scale the plot to show all data points
-                plot_window.enableAutoRange()
+                self.update_plot()
         except Exception as e:
             self.update_terminal(f"Error updating plot: {str(e)}\n")
 
@@ -3035,12 +2969,6 @@ def create_about_dialog(root):
 def main():
     print(f"Starting {APP_NAME} {APP_VERSION} from {Path(__file__).resolve()}")
 
-    # Ensure there's only one QApplication instance
-    if not QApplication.instance():
-        app = QApplication(sys.argv)
-    else:
-        app = QApplication.instance()
-    
     root = ctk.CTk()
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
@@ -3073,10 +3001,6 @@ def main():
     root.update_idletasks()
     
     root.mainloop()
-    
-    # Cleanup Qt application
-    if QApplication.instance():
-        QApplication.instance().quit()
 
 if __name__ == "__main__":
     main()

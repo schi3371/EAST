@@ -35,6 +35,17 @@ def _finite_float(value: Any, label: str) -> float:
     return number
 
 
+def _json_safe_diagnostic(value: Any) -> Any:
+    """Replace non-finite values in optional diagnostics with JSON null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe_diagnostic(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_diagnostic(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True)
 class IdleResult:
     requested: bool
@@ -237,7 +248,7 @@ class ODriveAdapter:
                     "timeout_s": _read_path(self.axis, "config.watchdog_timeout"),
                 },
             }
-        return report
+        return _json_safe_diagnostic(report)
 
     def configure_trajectory(
         self,

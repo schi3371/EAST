@@ -200,6 +200,16 @@ class EastCoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "health-coupled"):
                 load_tester_config(path)
 
+    def test_feedback_stale_limit_must_exceed_capture_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(json.dumps(self.config))
+            config["reference"]["feedback_stale_after_ms"] = 100
+            config["reference"]["maximum_feedback_capture_ms"] = 100
+            path = Path(directory) / "tester_config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must exceed"):
+                load_tester_config(path)
+
 
 if __name__ == "__main__":
     unittest.main()
