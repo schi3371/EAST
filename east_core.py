@@ -226,6 +226,17 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
             f"{minimum_traverse:.2f}\N{DEGREE SIGN} or adjust speed/acceleration."
         )
 
+    for phase, distance, move_speed, move_acceleration in (
+        ("startup to positive endpoint", max_angle, speed, acceleration),
+        ("endpoint-to-endpoint sweep", total_traverse, speed, acceleration),
+        ("return to verified neutral", max_angle,
+         motion["neutral_return_speed_deg_s"], motion["neutral_return_acceleration_deg_s2"]),
+    ):
+        try:
+            motion_timeout_seconds(distance, move_speed, move_acceleration, config)
+        except ValueError as exc:
+            raise ValueError(f"{phase}: {exc}") from exc
+
     return TestParameters(
         file_prefix=cleaned["file_prefix"],
         operator=cleaned["operator"],
@@ -304,7 +315,15 @@ def motion_timeout_seconds(
     else:
         estimate = distance / speed + speed / acceleration
     estimate += float(motion["motion_timeout_margin_s"])
-    return min(estimate, float(motion["maximum_motion_timeout_s"]))
+    maximum = float(motion["maximum_motion_timeout_s"])
+    if not math.isfinite(estimate) or estimate > maximum:
+        raise ValueError(
+            f"Movement of {distance:g} deg at {speed:g} deg/s and "
+            f"{acceleration:g} deg/s^2 requires {estimate:.2f} s including margin, "
+            f"exceeding the {maximum:g} s maximum motion timeout. "
+            "Reduce the angle range or increase speed/acceleration within validated limits."
+        )
+    return min(estimate, maximum)
 
 
 def reconcile_run_outcome(

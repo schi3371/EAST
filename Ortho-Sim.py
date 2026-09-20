@@ -1873,6 +1873,15 @@ class MyInterface:
                 self.odrive_configuration_snapshot(),
             )
             self.run_metadata["software"]["gui_version"] = APP_VERSION
+            self.run_metadata["cycle_definition"] = (
+                "Cycle 0: startup to positive endpoint. Each numbered cycle: "
+                "positive to negative to positive endpoint, with both sweeps settled. "
+                "Final neutral return is excluded from analysis sweeps."
+            )
+            self.run_metadata["move_distance_definition"] = (
+                "Nominal Move Distance (deg) stores absolute target minus validated "
+                "pre-command feedback position, converted to AFO degrees."
+            )
             self.run_metadata["neutral_reference"] = self.reference_manager.metadata_snapshot()
             try:
                 self.run_metadata["hardware"]["connected_phidget_serial_number"] = (
@@ -2103,17 +2112,20 @@ class MyInterface:
                 f"Commanded AFO acceleration: {parameters.commanded_afo_acceleration_deg_s2:g}"
                 f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
+            self.current_cycle = 0
+            self.command_position_and_wait(
+                absolute_max, "moving_to_initial_max", token
+            )
             for cycle in range(1, parameters.cycles + 1):
                 self.current_cycle = cycle
                 self.command_position_and_wait(
-                    absolute_max, "moving_to_max", parameters.max_angle_deg, token
-                )
-                self.command_position_and_wait(
                     absolute_min,
                     "moving_to_min",
-                    parameters.max_angle_deg + parameters.min_angle_deg,
                     token,
                 )
+                self.command_position_and_wait(absolute_max, "moving_to_max", token)
+                if self.test_stop_event.is_set() or self.acquisition_error:
+                    raise TestStopped()
                 self.completed_cycles = cycle
                 self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
 
@@ -2124,13 +2136,9 @@ class MyInterface:
                 motion["neutral_return_acceleration_deg_s2"],
             )
             neutral_target = mapping.neutral_position_turns
-            current_angle = self.reference_manager.angle_from_position(
-                self.get_feedback().position_turns
-            )
             self.command_position_and_wait(
                 neutral_target,
                 "returning_to_verified_neutral",
-                abs(current_angle),
                 token,
                 speed_deg_s=motion["neutral_return_speed_deg_s"],
                 acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
@@ -2205,7 +2213,6 @@ class MyInterface:
         self,
         target_turns,
         phase,
-        nominal_distance_deg,
         token,
         speed_deg_s=None,
         acceleration_deg_s2=None,
@@ -2216,7 +2223,12 @@ class MyInterface:
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive disconnected during motion")
         self.motion_phase = phase
-        self.current_nominal_distance_deg = float(nominal_distance_deg)
+        snapshot = self.get_feedback()
+        actual_distance_deg = abs(odrive_turns_to_afo_degrees(
+            float(target_turns) - snapshot.position_turns, self.system_config
+        ))
+        # Retain the legacy CSV column name; its value is feedback-derived.
+        self.current_nominal_distance_deg = actual_distance_deg
         effective_speed = (
             self.run_parameters.commanded_afo_speed_deg_s
             if speed_deg_s is None else float(speed_deg_s)
@@ -2226,12 +2238,12 @@ class MyInterface:
             if acceleration_deg_s2 is None else float(acceleration_deg_s2)
         )
         self.current_expected_constant_speed_span_deg = constant_speed_span_deg(
-            nominal_distance_deg,
+            actual_distance_deg,
             effective_speed,
             effective_acceleration,
         )
         timeout_s = motion_timeout_seconds(
-            nominal_distance_deg,
+            actual_distance_deg,
             effective_speed,
             effective_acceleration,
             self.system_config,
@@ -2243,12 +2255,12 @@ class MyInterface:
             self.system_config["reference"]["settle_velocity_limit_deg_s"],
             self.system_config,
         )
-        snapshot = self.get_feedback()
         self.reference_manager.write_checkpoint(
             MotionState.MOVING,
             snapshot,
             clean_shutdown=False,
-            extra={"phase": phase, "target_turns": float(target_turns)},
+            extra={"phase": phase, "target_turns": float(target_turns),
+                   "actual_distance_deg": actual_distance_deg, "timeout_s": timeout_s},
         )
         self._submit_position(token, target_turns)
         try:
@@ -2265,6 +2277,18 @@ class MyInterface:
             )
         except MotionConflictError as exc:
             raise TestStopped() from exc
+        except TimeoutError as exc:
+            latest = self.latest_feedback
+            position = getattr(latest, "position_turns", None)
+            remaining = None if position is None else odrive_turns_to_afo_degrees(
+                float(target_turns) - position, self.system_config
+            )
+            raise TimeoutError(
+                f"{phase}: target={float(target_turns):.6f} turns, "
+                f"distance={actual_distance_deg:.6f} deg, speed={effective_speed:g} deg/s, "
+                f"acceleration={effective_acceleration:g} deg/s^2, timeout={timeout_s:.2f} s; "
+                f"latest position={position} turns, remaining error={remaining} deg. {exc}"
+            ) from exc
 
     def observe_post_idle_neutral(self, neutral_target):
         self.observe_idle_neutral(
