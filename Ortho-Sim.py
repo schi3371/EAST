@@ -1747,6 +1747,77 @@ class MyInterface:
         self.terminal.insert(ctk.END, message)
         self.terminal.see(ctk.END)  # Scroll to the end of the text
 
+    def show_resizable_confirmation(self, title, message, confirm_text="Start"):
+        """Show a modal confirmation whose actions remain visible on small screens."""
+        result = {"confirmed": False}
+        dialog = ctk.CTkToplevel(self.master)
+        dialog.title(title)
+        dialog.configure(fg_color=BG)
+        dialog.transient(self.master)
+        dialog.resizable(True, True)
+
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+        width = min(560, max(380, screen_width - 80))
+        height = min(390, max(280, screen_height - 120))
+        x = max(20, (screen_width - width) // 2)
+        y = max(20, (screen_height - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.minsize(min(420, width), min(280, height))
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(0, weight=1)
+
+        summary = ctk.CTkTextbox(
+            dialog,
+            wrap="word",
+            font=("Arial", 14),
+            fg_color=PANEL,
+            text_color=TEXT,
+            corner_radius=8,
+        )
+        summary.grid(row=0, column=0, sticky="nsew", padx=14, pady=(14, 8))
+        summary.insert("1.0", message)
+        summary.configure(state="disabled")
+
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 14))
+        actions.grid_columnconfigure((0, 1), weight=1)
+
+        def finish(confirmed):
+            result["confirmed"] = confirmed
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        ctk.CTkButton(
+            actions,
+            text="Cancel",
+            command=lambda: finish(False),
+            fg_color=MUTED,
+            hover_color="#475569",
+            height=38,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        start_button = ctk.CTkButton(
+            actions,
+            text=confirm_text,
+            command=lambda: finish(True),
+            fg_color=GREEN,
+            hover_color="#15803d",
+            height=38,
+        )
+        start_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda _event: finish(False))
+        dialog.bind("<Return>", lambda _event: finish(True))
+        dialog.update_idletasks()
+        dialog.grab_set()
+        start_button.focus_set()
+        self.master.wait_window(dialog)
+        return result["confirmed"]
+
     def _drain_ui_queues(self):
         try:
             while True:
@@ -2320,36 +2391,30 @@ class MyInterface:
             "custom": "CUSTOM",
         }[parameters.test_type]
         active_protocol = self.active_protocol_name()
-        baseline_warning = (
-            "EMPTY-MACHINE BASELINE: Confirm the AFO and all removable loads are "
-            "removed. This is a complete unloaded torque-angle movement, not a "
-            "stationary tare.\n\n"
+        safety_line = (
+            "Remove the AFO and all removable loads before starting."
             if baseline_test
-            else ""
+            else "Confirm the correct AFO is installed."
         )
-        confirmation = CTkMessagebox(
+        afo_line = "" if baseline_test else f"AFO: {parameters.afo_id}\n"
+        confirmation_message = (
+            f"{test_type_label}  |  {active_protocol}\n\n"
+            f"{safety_line}\n\n"
+            f"{afo_line}"
+            f"Motion: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
+            f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}  |  "
+            f"{parameters.commanded_afo_speed_deg_s:g}\N{DEGREE SIGN}/s  |  "
+            f"{parameters.commanded_afo_acceleration_deg_s2:g}"
+            f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
+            f"Cycles: {parameters.cycles}  |  Constant-speed span: "
+            f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n\n"
+            "Fixture clear  |  Physical E-stop accessible"
+        )
+        if not self.show_resizable_confirmation(
             title=("Confirm Empty-Machine Baseline" if baseline_test else "Confirm Test"),
-            message=(
-                f"Test type: {test_type_label}\n"
-                f"Protocol: {active_protocol}\n\n"
-                f"{baseline_warning}"
-                f"AFO: {parameters.afo_id}\n"
-                f"Commanded range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
-                f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}\n"
-                f"Commanded speed: {parameters.commanded_afo_speed_deg_s:g}\N{DEGREE SIGN}/s\n"
-                f"Commanded acceleration: {parameters.commanded_afo_acceleration_deg_s2:g}"
-                f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
-                f"Expected constant-speed span: "
-                f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n"
-                f"Commanded cycles: {parameters.cycles}\n\n"
-                "Confirm the fixture is clear and the physical E-stop is accessible."
-            ),
-            icon="question",
-            option_1="Cancel",
-            option_2=("Start Baseline" if baseline_test else "Start"),
-        )
-        expected_confirmation = "Start Baseline" if baseline_test else "Start"
-        if confirmation.get() != expected_confirmation:
+            message=confirmation_message,
+            confirm_text=("Start Baseline" if baseline_test else "Start"),
+        ):
             return
 
         self.test_stop_event.clear()

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replaced the fixed-size test-start confirmation with a shorter, resizable, scrollable dialog whose action buttons stay visible on small screens.
+- Added the collected EAST and legacy OrthoSim run logs to version control.
 - Increased the maximum permitted ODrive feedback-capture time to 150 ms after observed 109 ms hardware reads.
 - Converted unavailable non-finite ODrive diagnostics to JSON `null` so metadata creation cannot fail on `pos_abs = NaN`.
 - Increased the feedback freshness window to 250 ms and require it to exceed the capture-duration limit.

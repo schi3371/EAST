@@ -221,13 +221,28 @@ class GuiContractTests(unittest.TestCase):
         self.assertIn(
             '"empty_machine_baseline": "EMPTY-MACHINE BASELINE"', start_source
         )
-        self.assertIn('f"Test type: {test_type_label}', start_source)
-        self.assertIn('f"Protocol: {active_protocol}', start_source)
+        self.assertIn('f"{test_type_label}  |  {active_protocol}', start_source)
+        self.assertIn("self.show_resizable_confirmation", start_source)
+
+    def test_start_confirmation_is_resizable_and_scrollable(self):
+        source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "show_resizable_confirmation"
+        )
+        dialog_source = ast.get_source_segment(source, function)
+        self.assertIn("dialog.resizable(True, True)", dialog_source)
+        self.assertIn("ctk.CTkTextbox", dialog_source)
+        self.assertIn('text="Cancel"', dialog_source)
+        self.assertIn("text=confirm_text", dialog_source)
+        self.assertIn("self.master.wait_window(dialog)", dialog_source)
 
     def test_baseline_and_protocol_provenance_are_logged(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
         self.assertIn('parameters.test_type == "empty_machine_baseline"', source)
-        self.assertIn("Confirm the AFO and all removable loads are removed", source)
+        self.assertIn("Remove the AFO and all removable loads before starting", source)
         self.assertIn('self.run_metadata["baseline_matching"]', source)
         self.assertIn("automatic_subtraction_applied", source)
         self.assertIn("preset_metadata=preset_metadata", source)
