@@ -2,7 +2,7 @@
 
 ## What this setup measures
 
-The four **ArUco markers (IDs 0–3)** are mounted separately around the visible movement area on the stationary EAST frame. Together they define a stable measurement plane. The **yellow and magenta targets** are attached to the same rigid moving component. The script measures the orientation of the line from the yellow centre to the magenta centre, subtracts the initial machine-zero orientation, and reports angle against time. It then fits angular speed through the central **−8° to +8°** window.
+The four **ArUco markers (IDs 0–3)** are mounted separately around the visible movement area on the stationary EAST frame. Together they define a stable measurement plane. The **yellow and magenta targets** are attached to the same rigid moving component. By default, the hybrid detector locates each large coloured circle and then tracks its small black centre dot. It records both locations and falls back to the colour centroid only when the dot is unavailable. The script measures the orientation of the line from the selected yellow point to the selected magenta point, subtracts the initial machine-zero orientation, and reports angle against time. It then fits angular speed through the central **−8° to +8°** window.
 
 This is an independent optical check. It does not replace machine zero, load-cell tare, the physical E-stop, or the EAST operating procedure.
 
@@ -79,10 +79,33 @@ python east_aruco_video_analysis.py \
   "/path/to/Speed_05deg_s_Trial_01.MOV" \
   --output "/path/to/results/Speed_05deg_s_Trial_01" \
   --reference-layout "/path/to/reference_layout.json" \
+  --reference-mode aruco \
+  --point-source hybrid \
+  --require-black-dots \
   --neutral-seconds 2 \
   --fit-limit-deg 8 \
   --overlay
 ```
+
+This formal path requires all four ArUcos by default. The layout JSON must contain the measured marker-centre positions from the installed machine; do not substitute dimensions from the printable sheet.
+
+If one fixed ArUco is temporarily unusable, a measured three-marker affine correction can be explored with `--minimum-aruco-markers 3`. It is classified as exploratory and should not replace a successful four-marker validation.
+
+To run the requested yellow/magenta-only exploratory analysis, with no ArUco detection or plane correction, use:
+
+```bash
+python east_aruco_video_analysis.py \
+  "/path/to/video.mp4" \
+  --output "/path/to/results/marker_only" \
+  --reference-mode marker-only \
+  --point-source hybrid \
+  --require-black-dots \
+  --neutral-seconds 2 \
+  --fit-limit-deg 8 \
+  --overlay
+```
+
+Marker-only angles come directly from image pixels. They can be useful for comparison when the camera is fixed and nearly perpendicular, but they do not correct camera movement or perspective and are always labelled exploratory.
 
 If dorsiflexion appears negative when it should be positive, repeat with:
 
@@ -92,7 +115,7 @@ If dorsiflexion appears negative when it should be positive, repeat with:
 
 The results folder contains:
 
-- `frame_data.csv`: time, marker coordinates, raw orientation, neutral-relative angle, and frame validity;
+- `frame_data.csv`: time, colour centroids, black-dot centres, selected point source, ArUco transform, orientation, neutral-relative angle, and frame validity;
 - `sweep_summary.csv`: central-window fitted speed and R² for each detected sweep;
 - `analysis_summary.json`: overall speed, detection rate, thresholds, and QC result;
 - `detection_overlay.mp4`: visual evidence showing detected ArUcos and coloured targets.
@@ -100,7 +123,7 @@ The results folder contains:
 ## 8. Review before accepting a result
 
 1. Watch the complete overlay video.
-2. Confirm the box/circle indicators stay on the correct targets.
+2. Confirm the colour-circle indicators and centre-dot crosses stay on the correct targets. For final analysis, use `--require-black-dots` so a fallback cannot pass unnoticed.
 3. Confirm all four ArUco IDs are detected for nearly every frame.
 4. Require at least **95% valid frames** and a valid speed fit. The script reports this as `qc_pass`.
 5. Review each sweep’s R². For formal speed verification, investigate any fit below **0.995**.
