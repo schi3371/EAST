@@ -20,7 +20,7 @@ from typing import Iterable, Sequence
 DEFAULT_NEUTRAL_DEG = 90.0
 DEFAULT_ENDPOINT_THRESHOLD_DEG = 9.0
 DEFAULT_FIT_LIMIT_DEG = 8.0
-DEFAULT_EXPECTED_CYCLES = 3
+DEFAULT_EXPECTED_CYCLES = 2
 DEFAULT_MIN_FIT_POINTS = 30
 DEFAULT_MIN_R2 = 0.995
 
@@ -68,6 +68,16 @@ class Segment:
     commanded_speed_deg_s: float | None = None
     absolute_error_deg_s: float | None = None
     percentage_error: float | None = None
+
+
+def validate_trial_spec(spec: TrialSpec) -> None:
+    """Reject invalid trial values before fitting or percentage calculations."""
+    if not math.isfinite(spec.commanded_speed_deg_s) or spec.commanded_speed_deg_s <= 0:
+        raise ValueError("commanded speed must be a positive finite value")
+    if spec.expected_cycles < 1:
+        raise ValueError("expected cycles must be at least 1")
+    if not math.isfinite(spec.neutral_position_angle_deg):
+        raise ValueError("neutral position angle must be finite")
 
 
 def _normalise_header(value: str) -> str:
@@ -425,6 +435,7 @@ def write_svg_plot(
 
 
 def analyse_trial(spec: TrialSpec, output_root: Path, args) -> tuple[list[dict], dict]:
+    validate_trial_spec(spec)
     samples, import_qc = read_tracker_export(spec.file)
     angle_qc = prepare_angles(samples, spec)
     segments, completed_cycles, warnings = detect_segments(
@@ -569,6 +580,12 @@ def parse_args(argv=None):
         parser.error("--input requires --video-id and --commanded-speed")
     if not 0 < args.fit_limit < args.endpoint_threshold:
         parser.error("fit limit must be positive and smaller than endpoint threshold")
+    if args.expected_cycles < 1:
+        parser.error("expected cycles must be at least 1")
+    if args.min_fit_points < 2:
+        parser.error("minimum fit points must be at least 2")
+    if not 0 <= args.min_r_squared <= 1:
+        parser.error("minimum R-squared must be between 0 and 1")
     return args
 
 

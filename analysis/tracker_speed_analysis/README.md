@@ -2,7 +2,7 @@
 
 This tool converts Tracker Point Mass exports into neutral-relative AFO angles,
 detects complete cycles, fits angular speed over the central −8° to +8° region
-of every complete endpoint-to-endpoint sweep, and produces combined results.
+of every selected endpoint-to-endpoint sweep, and produces combined results.
 
 It uses only the Python standard library.
 
@@ -32,6 +32,27 @@ camera/axes setup makes position angle increase during dorsiflexion, record
 
 ## Batch use
 
+The balanced speed-verification dataset uses two complete cycles from two
+trials at each commanded speed. This gives every speed eight fitted sweeps:
+two trials × two cycles × two directions. If a recording contains more than
+two complete cycles, only the first two are analysed. Additional trials remain
+available as reserve data but are omitted from `speed_verification_manifest.csv`.
+
+Trials 2 and 3 are selected at every speed. They are the two complete,
+consistently recorded trials available across all four commanded speeds.
+
+For exploratory review of every recording, including third trials and
+diagnostic fits from incomplete trials, run:
+
+```bash
+python analyze_tracker_speed.py \
+  --manifest all_trials_manifest.csv \
+  --output All_Trial_Results
+```
+
+Use `Results` for the balanced final comparison and `All_Trial_Results` for
+visual review and investigation. Do not combine the two summaries.
+
 Copy `manifest_template.csv`, add one row per video, and keep each `video_id`
 unique. Relative file paths are resolved from the manifest's directory.
 
@@ -39,7 +60,7 @@ Run:
 
 ```bash
 python analyze_tracker_speed.py \
-  --manifest my_manifest.csv \
+  --manifest speed_verification_manifest.csv \
   --output Results
 ```
 
@@ -51,7 +72,7 @@ python analyze_tracker_speed.py \
   --video-id EXP03_S01_R01 \
   --commanded-speed 1 \
   --trial 1 \
-  --expected-cycles 3 \
+  --expected-cycles 2 \
   --dorsiflexion-direction decreasing \
   --output Results
 ```
@@ -64,6 +85,7 @@ python analyze_tracker_speed.py \
 - Speed is fitted to the raw AFO angle data between −8° and +8°.
 - Startup neutral-to-dorsiflexion motion is identified as cycle 0 and excluded.
 - A numbered cycle is complete only after DF→PF and PF→DF sweeps both finish.
+- The balanced protocol requires two complete cycles from each selected trial.
 - A trial is included in the primary results only when all expected cycles were
   detected and the segment regression has R² ≥ 0.995.
 - Incomplete trials and segments remain in the outputs with exclusion reasons.

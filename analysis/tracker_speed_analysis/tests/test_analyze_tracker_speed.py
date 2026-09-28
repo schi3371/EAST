@@ -8,11 +8,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from analyze_tracker_speed import (  # noqa: E402
+    DEFAULT_EXPECTED_CYCLES,
     TrialSpec,
     detect_segments,
     fit_segments,
     prepare_angles,
     read_tracker_export,
+    validate_trial_spec,
 )
 
 
@@ -45,6 +47,17 @@ def synthetic_samples(path: Path, complete_cycles: int, partial_return=False):
 
 
 class TrackerAnalysisTests(unittest.TestCase):
+    def test_balanced_protocol_defaults_to_two_cycles(self):
+        self.assertEqual(DEFAULT_EXPECTED_CYCLES, 2)
+
+    def test_trial_spec_rejects_nonpositive_commanded_speed_and_cycles(self):
+        with self.assertRaisesRegex(ValueError, "commanded speed"):
+            validate_trial_spec(TrialSpec(Path("trial.txt"), "trial", 0.0, "1"))
+        with self.assertRaisesRegex(ValueError, "expected cycles"):
+            validate_trial_spec(
+                TrialSpec(Path("trial.txt"), "trial", 5.0, "1", expected_cycles=0)
+            )
+
     def test_tracker_two_row_header_and_angle_conversion(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trial.txt"
