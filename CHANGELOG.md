@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Increased the maximum motion timeout from 30 to 60 seconds so 0.5 deg/s quasi-static sweeps over -10 deg to +10 deg are supported; retained the 5-second margin and rejection of moves requiring more than 60 seconds.
 - Replaced the fixed-size test-start confirmation with a shorter, resizable, scrollable dialog whose action buttons stay visible on small screens.
 - Added the collected EAST and legacy OrthoSim run logs to version control.
 - Increased the maximum permitted ODrive feedback-capture time to 150 ms after observed 109 ms hardware reads.

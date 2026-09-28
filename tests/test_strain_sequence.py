@@ -33,7 +33,7 @@ class StrainSequenceTests(unittest.TestCase):
         self.assertAlmostEqual(east_core.motion_timeout_seconds(10, 1, 100, self.config), 15.01)
         self.assertAlmostEqual(east_core.motion_timeout_seconds(20, 1, 100, self.config), 25.01)
         with self.assertRaisesRegex(ValueError, "exceeding"):
-            east_core.motion_timeout_seconds(40, 1, 100, self.config)
+            east_core.motion_timeout_seconds(60, 1, 100, self.config)
 
     def test_feedback_distance_and_timeout_diagnostic(self):
         wait = Mock()

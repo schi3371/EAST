@@ -72,6 +72,36 @@ class EastCoreTests(unittest.TestCase):
             expected_motion_time + self.config["motion"]["motion_timeout_margin_s"],
         )
 
+    def test_quasi_static_sweep_uses_bounded_60_second_timeout(self):
+        motion = self.config["motion"]
+        self.assertEqual(motion["motion_timeout_margin_s"], 5.0)
+        self.assertEqual(motion["maximum_motion_timeout_s"], 60.0)
+
+        timeout = motion_timeout_seconds(20.0, 0.5, 100.0, self.config)
+        self.assertAlmostEqual(timeout, 45.005)
+        self.assertEqual(round(timeout, 2), 45.01)
+        self.assertLessEqual(timeout, motion["maximum_motion_timeout_s"])
+
+        values = valid_values()
+        values.update(
+            speed_deg_s="0.5",
+            acceleration_deg_s2="100",
+            min_angle_deg="10",
+            max_angle_deg="10",
+        )
+        parameters = validate_test_parameters(values, self.config)
+        self.assertEqual(parameters.commanded_afo_speed_deg_s, 0.5)
+
+        with self.assertRaisesRegex(ValueError, "exceeding the 60 s maximum"):
+            motion_timeout_seconds(30.0, 0.5, 100.0, self.config)
+
+        self.assertAlmostEqual(
+            motion_timeout_seconds(20.0, 1.0, 100.0, self.config), 25.01
+        )
+        self.assertAlmostEqual(
+            motion_timeout_seconds(20.0, 5.0, 100.0, self.config), 9.05
+        )
+
     def test_validate_test_parameters(self):
         parameters = validate_test_parameters(valid_values(), self.config)
         self.assertEqual(parameters.cycles, 3)

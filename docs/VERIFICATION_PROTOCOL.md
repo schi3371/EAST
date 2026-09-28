@@ -14,6 +14,8 @@ The current provisional command limits are 0.1-20 deg/s for speed, 0.1-100 deg/s
 
 This check predicts the commanded trapezoidal profile only. It does not measure physical acceleration, speed, or ROM.
 
+The maximum motion timeout is 60 seconds and the existing 5-second timeout margin remains enabled. This supports quasi-static testing at 0.5 deg/s over a -10 deg to +10 deg sweep: the calculated trapezoidal move timeout is 45.005 seconds (reported as approximately 45.01 seconds). A movement whose calculated duration plus margin exceeds 60 seconds is still rejected before motion begins; the timeout is not disabled or bypassed.
+
 ## Mandatory pre-run checks
 
 - Confirm the physical E-stop resets the ODrive and is reachable throughout the run.

@@ -37,6 +37,8 @@ calculated constant-speed span = total ROM - speed^2 / acceleration
 
 This is a command-profile feasibility calculation, not an independent measurement of physical motion.
 
+The configured motion-timeout ceiling is 60 seconds with a 5-second safety margin. This permits a 0.5 deg/s quasi-static endpoint-to-endpoint sweep over -10 deg to +10 deg, which requires approximately 45.01 seconds including the margin. Commands calculated to require more than 60 seconds remain blocked before motion starts.
+
 ## Running the GUI
 
 1. Install the Windows ODrive and Phidget drivers.
