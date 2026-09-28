@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Version 1.2.1-safety-hardening defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
+Version 1.4.0-protocol-presets defines the GUI speed field as commanded mounted-AFO angular speed in degrees per second. The software converts it to ODrive turns per second using the accepted conversion in `tester_config.json`:
 
 `ODrive turns/s = commanded AFO deg/s / afo_degrees_per_odrive_turn`
 
@@ -23,8 +23,12 @@ This check predicts the commanded trapezoidal profile only. It does not measure 
 - Confirm the load-cell calibration direction, coefficient, calibration certificate, tare stability, lever arm, and geometry polynomial.
 - Confirm ODrive reports no active errors before Start.
 - Confirm only one EAST GUI/diagnostic process is running; the application must hold the runtime hardware lock.
-- Confirm the GUI reports `Neutral reference: VERIFIED` and displays the current session neutral mapping. On first launch or after a controller/app restart, complete the physical 90 degree recovery workflow before normal motion.
-- Confirm `Set Current Physical Position as 90 deg Neutral` records the state without moving the mechanism.
+- With the AFO removed, use the supplied square and bounded setup jog to align the fixture at physical 90 degrees. Confirm the GUI reports `Machine zero: VERIFIED`; this physical position is software machine angle 0 degrees.
+- Confirm `Set Machine Zero - Fixture at 90 deg` records the encoder state without commanding position movement.
+- At verified machine zero and before mounting the AFO, select `Tare Empty Machine` and acknowledge that the machine is unloaded. Confirm the displayed tare is valid for the current fixture, calibration, Phidget serial, and channel.
+- Before mounting the AFO, load `Standard Empty-Machine Baseline` and run the unloaded fixture through the intended ROM/cycles. Confirm the result metadata reports `test_type = empty_machine_baseline`; do not identify baselines from file names.
+- Mount the AFO after the empty-machine tare. Do not tare again: Start must use the stored offset so initial AFO preload is preserved.
+- Treat an AFO's zero-torque neutral angle as a later analysis result, not as machine zero.
 - Do not enable automatic continuity, phase recovery, measured-angle recovery, or the watchdog until the related hardware assumptions and units are independently verified and documented.
 - Use a non-clinical dummy specimen for initial verification.
 
@@ -39,7 +43,13 @@ This check predicts the commanded trapezoidal profile only. It does not measure 
 7. From the video/ImageJ angle-time trace, calculate independently measured speed in the constant-speed region and independently measured minimum/maximum angle at the movement reversals.
 8. Compare both internal ODrive-derived and independently measured speed with the command. Compare independently measured angular limits and total ROM with the commanded range. Report direction-specific mean, standard deviation, and percentage error.
 
-The CSV `ODrive-Derived AFO Angle (deg)` and `ODrive-Derived AFO Velocity (deg/s)` columns both use the same accepted 2.055 degree/turn conversion as the command. Command-versus-CSV analysis checks trajectory execution within the ODrive-derived coordinate system. The independent angular reference provides end-to-end verification of physical speed and ROM rather than re-validating the accepted conversion. The analysis tool continues to accept the legacy `Raw AFO Angle (deg)` heading for older files.
+## Tare and moving baseline
+
+The empty-machine tare is a stationary unloaded load-cell offset measured at machine zero. The empty-machine baseline is a complete unloaded torque-angle movement that captures angle- and direction-dependent machine response. They are not interchangeable.
+
+For later correction, use `AFO torque = loaded-machine torque - matched empty-machine torque`. Match baseline and loaded runs by Fixture ID, Calibration ID, machine-zero reference identity/generation, ROM, speed, acceleration, movement direction, and applicable session information. EAST records the matching fields but does not automatically perform the subtraction.
+
+The CSV `ODrive-Derived AFO Angle (deg)` and `ODrive-Derived AFO Velocity (deg/s)` columns both use the same accepted 2.055 degree/turn conversion as the command. Angle is relative to verified machine zero. Command-versus-CSV analysis checks trajectory execution within the ODrive-derived coordinate system. The independent angular reference provides end-to-end verification of physical speed and ROM rather than re-validating the accepted conversion. The analysis tool continues to accept the legacy `Raw AFO Angle (deg)` heading for older files.
 
 Run the supplied analysis with:
 
@@ -59,10 +69,12 @@ Stop and set the system idle if motion is in the wrong direction, an angle appro
 
 Each run produces:
 
-- A CSV with wall-clock and monotonic elapsed time, command values, motion phase, raw and averaged angle/load/torque, raw ODrive position/velocity, converted AFO velocity, raw voltage ratio, tare offset, and ODrive error state.
-- A JSON sidecar with test parameters, operator/AFO/fixture/calibration identifiers, calibration and geometry constants, ODrive configuration snapshot, software version, Git commit, start/end time, run outcome, samples, and completed cycles.
-- The JSON sidecar also contains the initial and final reference record, verification method, session neutral mapping, reference confidence/reason, and runtime-state directory.
+- A CSV with wall-clock and monotonic elapsed time, command values, test type, preset name/version/modified state, motion phase and direction, machine-zero-relative raw/averaged angle, raw/averaged load/torque, raw ODrive position/velocity, converted AFO velocity, raw voltage ratio, stored tare offset, and ODrive error state.
+- A JSON sidecar with test parameters, operator/AFO/fixture/calibration identifiers, complete preset provenance, empty-machine tare metadata, baseline-matching metadata, calibration and geometry constants, ODrive configuration snapshot, software version, Git commit, start/end time, run outcome, samples, and completed cycles.
+- The JSON sidecar also contains the initial and final machine-zero record, verification method, session mapping, reference confidence/reason, and runtime-state directory.
 
-For every successful run, verify that the session log reports neutral settling, confirmed ODrive idle, and a completed post-idle observation. A run must not be classified as completed if CSV/metadata writing, neutral return, idle confirmation, or post-idle observation fails.
+For every successful run, verify that the session log reports machine-zero settling, confirmed ODrive idle, and a completed post-idle observation. A run must not be classified as completed if CSV/metadata writing, machine-zero return, idle confirmation, or post-idle observation fails.
+
+Automatic mapping restoration after clean app restart/manual disconnect remains disabled until the units and reset behavior of the EAST ODrive's `system_stats.uptime` field are verified on hardware. The continuity code and tests must not be treated as bench validation.
 
 Formal AFO stiffness testing must not begin while the load-cell calibration, torque geometry, safety limits, or acceptance criteria remain unverified.

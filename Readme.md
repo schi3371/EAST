@@ -43,25 +43,31 @@ This is a command-profile feasibility calculation, not an independent measuremen
 2. Create a Python environment and install `requirements.txt`.
 3. Review `tester_config.json`, especially serial/channel values and provisional limits.
 4. Run `python Ortho-Sim.py`.
-5. Enter the full commanded test configuration, including speed, acceleration, angle limits, cycles, operator, AFO ID, fixture ID, and calibration ID.
-6. Connect the ODrive. On first launch or whenever controller-session continuity cannot be proven, the GUI shows `RECOVERY REQUIRED` and blocks normal motion.
-7. Enter Operator ID and Fixture ID, select `Verify / Recover`, use only the bounded slow jog if required, physically align the mounted fixture/AFO at 90 degrees, acknowledge the checks, and select `Set Current Physical Position as 90 deg Neutral`. Setting neutral records state and does not move the motor.
-8. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless the verified neutral is fresh and the mechanism is at neutral.
+5. Enter the full commanded test configuration, or select `Standard AFO Test` / `Standard Empty-Machine Baseline` and press `Load Preset`. Selecting a dropdown item alone does not change any fields. The provisional standard values are versioned in `tester_config.json`; loaded motion values remain editable and modifications are recorded.
+6. Connect the ODrive. On first launch or whenever controller-session continuity cannot be proven, the GUI shows `Machine zero: SETUP REQUIRED` and blocks normal motion.
+7. With the AFO removed, enter Operator ID and Fixture ID and open `Set Machine Zero - Fixture at 90 deg`. Use the supplied square and only the bounded `Jog Left`/`Jog Right` controls to align the moving fixture at physical 90 degrees to the fixed machine reference. Acknowledge the checks and select `Set Machine Zero - Fixture at 90 deg`. This records the current encoder position as machine angle 0 degrees and causes no position movement.
+8. Enter Calibration ID and select `Tare Empty Machine` while the AFO and removable loads are still absent. The tare is valid only for the current application measurement session, fixture/calibration identity, Phidget device, and channel.
+9. Before mounting an AFO, load `Standard Empty-Machine Baseline` (or use a validated custom baseline protocol) and run the unloaded fixture through the intended ROM/cycles. EAST assigns the reserved result AFO identifier `EMPTY_MACHINE_BASELINE` and records `test_type = empty_machine_baseline`.
+10. Mount the AFO without taring again. Complete physical clearance and E-stop checks, then press Start and confirm the run summary. The test cannot start unless machine zero is verified, the fixture is at machine zero, and a matching empty-machine tare exists.
 
-The application never assumes that `0.0` relative turns is physical neutral. A successful test returns to the verified session neutral using the dedicated return profile, confirms position and low velocity over a dwell, requests and confirms idle, and observes the neutral position after idle. `Return to Verified 90 deg Neutral` provides a deliberate manual return after confirmation. `Reset Form` and `Stop` stop motion and clear/abort as applicable; neither initiates a return.
+Machine zero is a control reference: the fixture is physically at 90 degrees and the software angle is 0 degrees. It is not the mounted AFO's zero-torque neutral angle. Any AFO neutral-angle estimate must be derived later from the recorded torque-angle data.
+
+The application never assumes that `0.0` ODrive relative turns is machine zero. A successful test returns to the saved session machine zero using the dedicated return profile, confirms position and low velocity over a dwell, requests and confirms idle, and observes the zero position after idle. `Return to Machine Zero - 90 deg` provides a deliberate return after confirmation and does not require Manual Mode. `Reset Test Fields` clears only file name, AFO ID, motion inputs, and preset selection; it preserves the connection, operator/fixture/calibration IDs, machine zero, and valid tare. `Clear Session Tare` is the separate confirmed action that discards only the stored tare. `Stop` idles and aborts as applicable; none of these actions initiates a return.
+
+A stationary empty-machine tare and a moving empty-machine baseline are different measurements. Tare records the unloaded load-cell offset at machine zero. The baseline records angle- and direction-dependent unloaded machine response over the full movement. Later corrected torque must use `AFO torque = loaded-machine torque - matched empty-machine torque`, matching fixture, calibration, machine-zero reference identity/generation, ROM, speed, acceleration, direction, and session information. EAST records those fields but does not automatically subtract a baseline.
 
 Stop, Escape, acquisition faults, feedback faults, and communication faults request idle immediately and never initiate automatic movement. An unconfirmed idle request is reported as a fault. These controls are not substitutes for the physical E-stop.
 
 The application accepts motion only when the connected axis explicitly reports relative, non-circular setpoints and the configured position/velocity mapper scale. The final ownership check and each target write are serialized with Stop. Confirmed motor idle does not release the motion owner; controls remain blocked until the owning worker has finished data flush and cleanup.
 
-The persistent reference record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Invalid JSON or structurally invalid state is preserved with a `.corrupt-*` suffix and cannot enable motion. Automatic cross-session continuity, phase recovery, measured-angle recovery, and the ODrive watchdog are implemented but disabled until their hardware assumptions are experimentally verified.
+The persistent machine-zero record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Invalid JSON or structurally invalid state is preserved with a `.corrupt-*` suffix and cannot enable motion. Clean shutdown/disconnect continuity logic is implemented, but automatic restoration remains disabled until the units and behavior of ODrive `system_stats.uptime` are verified on the lab hardware. Phase recovery, measured-angle recovery, and the ODrive watchdog also remain disabled.
 
 ## Outputs
 
 Each run creates a uniquely named pair in `EAST Logs`:
 
-- `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase, commanded speed/acceleration/range/cycles, sensor values, converted units, and ODrive errors.
-- `*_metadata.json`: operator/specimen/fixture/calibration identifiers, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
+- `*_strain_data.csv`: raw samples, filtered values, elapsed time, motion phase and direction, machine-zero-relative angle, commanded speed/acceleration/range/cycles, test type and preset provenance, raw voltage ratio, stored tare, force/torque, raw ODrive position/velocity, converted units, and ODrive errors.
+- `*_metadata.json`: operator/specimen/fixture/calibration identifiers, preset key/name/version/load time/original and actual values, the empty-machine tare record, baseline-matching fields, machine-zero record/mapping, all conversion and calibration constants, active ODrive trajectory settings, software version/Git revision, timestamps, outcome, and completion counts.
 
 Raw sensor and ODrive columns are preserved for reprocessing. Columns labelled `ODrive-Derived` use the accepted motion conversion but are not independent measurements. Moving-average columns are derived outputs and should not replace unfiltered data in verification analyses.
 
@@ -85,7 +91,7 @@ See `docs/VERIFICATION_PROTOCOL.md` for the pre-run checks, experimental design,
 
 Scripts under `Testing Scripts` are guarded bench diagnostics. They do nothing when imported and refuse to open or move hardware without `--confirm-hardware`. Use `--help` to see required parameters. The GUI remains the authoritative application for recorded strain tests.
 
-Motion diagnostics also require `--allow-unreferenced-diagnostic`, acquire the same exclusive hardware lock as the GUI, mark their output as unreferenced, and invalidate normal-test reference trust. Physical neutral recovery in the GUI is mandatory afterwards.
+Motion diagnostics also require `--allow-unreferenced-diagnostic`, acquire the same exclusive hardware lock as the GUI, mark their output as unreferenced, and invalidate normal-test reference trust. Machine-zero setup in the GUI is mandatory afterwards.
 
 Inspect persisted reference state and read-only ODrive capabilities with no hardware writes:
 
