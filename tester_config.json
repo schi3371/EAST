@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.2.1-safety-hardening",
+  "software_version": "1.4.0-protocol-presets",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -55,7 +55,6 @@
     "maximum_assisted_uncertainty_deg": 0.25,
     "recovery_jog_step_deg": 0.25,
     "recovery_jog_maximum_cumulative_deg": 5.0,
-    "recovery_timeout_s": 120.0,
     "recovery_speed_deg_s": 1.0,
     "recovery_acceleration_deg_s2": 5.0,
     "watchdog_enabled": false,
@@ -86,5 +85,27 @@
   },
   "logging": {
     "output_directory": "EAST Logs"
+  },
+  "test_presets": {
+    "standard_afo_test": {
+      "display_name": "Standard AFO Test",
+      "version": "1.0",
+      "test_type": "afo_test",
+      "cycles": 3,
+      "minimum_angle_deg": 10.0,
+      "maximum_angle_deg": 10.0,
+      "speed_deg_s": 5.0,
+      "acceleration_deg_s2": 100.0
+    },
+    "standard_empty_machine_baseline": {
+      "display_name": "Standard Empty-Machine Baseline",
+      "version": "1.0",
+      "test_type": "empty_machine_baseline",
+      "cycles": 3,
+      "minimum_angle_deg": 10.0,
+      "maximum_angle_deg": 10.0,
+      "speed_deg_s": 5.0,
+      "acceleration_deg_s2": 100.0
+    }
   }
 }

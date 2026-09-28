@@ -155,6 +155,7 @@ def main():
         afo_id=args.afo_id,
         fixture_id=args.fixture_id,
         calibration_id=args.calibration_id,
+        test_type="custom",
         cycles=args.cycles,
         commanded_afo_speed_deg_s=args.speed_deg_s,
         commanded_afo_acceleration_deg_s2=args.acceleration_deg_s2,
@@ -222,9 +223,39 @@ def main():
             "trajectory_acceleration_limit_turns_s2": axis.trap_traj.config.accel_limit,
             "controller_velocity_limit_turns_s": axis.controller.config.vel_limit,
         }
-        metadata = make_run_metadata(parameters, config, tare_offset, csv_path, odrive_snapshot)
+        metadata = make_run_metadata(
+            parameters,
+            config,
+            tare_offset,
+            csv_path,
+            odrive_snapshot,
+            tare_metadata={
+                "status": "diagnostic automatic tare",
+                "captured_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                "sample_count": len(tare_values),
+                "phidget_channel": hardware["phidget_channel"],
+            },
+            preset_metadata={
+                "preset_key": "custom",
+                "preset_display_name": "Custom",
+                "preset_version": None,
+                "test_type": "custom",
+                "original_preset_values": {},
+                "actual_commanded_values": {
+                    "cycles": args.cycles,
+                    "minimum_angle_deg": args.min_angle_deg,
+                    "maximum_angle_deg": args.max_angle_deg,
+                    "speed_deg_s": args.speed_deg_s,
+                    "acceleration_deg_s2": args.acceleration_deg_s2,
+                },
+                "preset_modified": False,
+                "loaded_at": datetime.now().astimezone().isoformat(
+                    timespec="milliseconds"
+                ),
+            },
+        )
         metadata["source"] = "Testing Scripts/afo-strain-test-script.py"
-        metadata["neutral_reference"] = {
+        metadata["machine_zero_reference"] = {
             "status": "UNREFERENCED DIAGNOSTIC - NOT VALID FOR FORMAL TESTING",
             "reference_state": reference_manager.metadata_snapshot(),
         }
@@ -273,10 +304,16 @@ def main():
                         writer.writerow([
                             datetime.now().astimezone().isoformat(timespec="milliseconds"),
                             f"{time.monotonic() - start_time:.6f}", sample_index, cycle, phase,
+                            (
+                                "increasing_machine_angle" if raw_velocity > 0
+                                else "decreasing_machine_angle" if raw_velocity < 0
+                                else "stationary"
+                            ),
                             args.speed_deg_s, args.acceleration_deg_s2,
                             -args.min_angle_deg, args.max_angle_deg, args.cycles,
                             args.prefix, args.operator, args.afo_id,
                             args.fixture_id, args.calibration_id,
+                            "custom", "Custom", "", False,
                             velocity_turns_s,
                             distance, expected_constant_span, position_turns, angle_deg,
                             sum(angle_window) / len(angle_window), ratio, tare_offset, mass_kg,

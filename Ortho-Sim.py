@@ -13,6 +13,7 @@ from CTkMessagebox import CTkMessagebox
 from customtkinter import set_default_color_theme
 
 import csv
+import math
 import threading
 import time
 import ctypes
@@ -31,6 +32,7 @@ from odrive.enums import (
 
 from east_core import (
     CSV_COLUMNS,
+    EmptyMachineTare,
     afo_acceleration_to_odrive_turns_s2,
     afo_degrees_to_odrive_turns,
     afo_speed_to_odrive_turns_s,
@@ -39,10 +41,14 @@ from east_core import (
     constant_speed_span_deg,
     create_run_paths,
     load_tester_config,
+    make_preset_metadata,
     make_run_metadata,
     motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
     reconcile_run_outcome,
+    empty_machine_tare_identity_mismatches,
+    preset_values_modified,
+    validate_empty_machine_tare,
     validate_test_parameters,
     write_json_atomic,
 )
@@ -60,13 +66,10 @@ from east_reference import (
     ReferenceRequiredError,
     evaluate_continuity,
     hardware_fingerprints_match,
+    persist_idle_continuity_checkpoint,
     runtime_state_directory,
     wait_for_settle,
 )
-
-# Runtime tare state. Fixed calibration values are stored in tester_config.json.
-offset = 0
-calibrated = False
 
 # Variable to track if plot window is open
 plot_window_open = False
@@ -77,7 +80,7 @@ plot_window = None
 plot_curve = None
 
 APP_NAME = "EAST"
-APP_VERSION = "1.2.1-safety-hardening"
+APP_VERSION = "1.4.0-protocol-presets"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -124,6 +127,19 @@ class MyInterface:
         self.odrive_adapter = None
         self.hardware_fingerprint = None
         self.voltage_ratio_input = None
+        self.empty_machine_tare = None
+        self.protocol_display_to_key = {
+            "Custom": "custom",
+            **{
+                preset["display_name"]: key
+                for key, preset in self.system_config["test_presets"].items()
+            },
+        }
+        self.protocol_var = ctk.StringVar(value="Custom")
+        self.loaded_preset_key = "custom"
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
+        )
         self.run_parameters = None
         self.run_metadata = None
         self.metadata_file_name = None
@@ -167,10 +183,16 @@ class MyInterface:
         self.run_motion_token = None
         self.neutral_motion_token = None
         self.continuous_motion_token = None
+        self.strain_thread = None
+        self.data_collection_thread = None
+        self.neutral_thread = None
+        self.manual_step_thread = None
+        self.continuous_thread = None
+        self.recovery_thread = None
         self.recovery_window = None
         self.recovery_origin_turns = None
         self.recovery_cumulative_deg = 0.0
-        self.recovery_started_monotonic = None
+        self.recovery_session_acknowledged = False
 
         self.strain_test_active = False
         self.strain_data_buffer = []
@@ -328,33 +350,8 @@ class MyInterface:
         )
         self.status_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
 
-        reference_frame = ctk.CTkFrame(controls, fg_color="#fff7ed", corner_radius=8)
-        reference_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-        reference_frame.grid_columnconfigure(0, weight=1)
-        self.reference_status_label = ctk.CTkLabel(
-            reference_frame,
-            text="Neutral reference: checking",
-            font=("Arial", 11, "bold"),
-            text_color=AMBER,
-            anchor="w",
-            justify="left",
-            wraplength=310,
-        )
-        self.reference_status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=7)
-        self.reference_action_button = ctk.CTkButton(
-            reference_frame,
-            text="Verify / Recover",
-            width=118,
-            height=28,
-            command=self.open_reference_recovery,
-            fg_color=AMBER,
-            hover_color="#b45309",
-            state="disabled",
-        )
-        self.reference_action_button.grid(row=0, column=1, padx=8, pady=6)
-
         inputs_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        inputs_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
+        inputs_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         inputs_frame.grid_columnconfigure((0, 1), weight=1)
 
         ctk.CTkLabel(
@@ -399,6 +396,8 @@ class MyInterface:
             setattr(self, attribute, entry)
         self.min_angle_input.bind("<KeyRelease>", self.validate_angle_input)
         self.max_angle_input.bind("<KeyRelease>", self.validate_angle_input)
+        self.fixture_id_input.bind("<KeyRelease>", self._on_tare_identity_edit, add="+")
+        self.calibration_id_input.bind("<KeyRelease>", self._on_tare_identity_edit, add="+")
         for entry in (
             self.cycles_input,
             self.speed_input,
@@ -408,8 +407,67 @@ class MyInterface:
         ):
             entry.bind("<KeyRelease>", self.update_parameter_summary, add="+")
 
+        protocol_frame = ctk.CTkFrame(inputs_frame, fg_color="transparent")
+        protocol_frame.grid(
+            row=6, column=0, columnspan=2, padx=6, pady=(6, 4), sticky="ew"
+        )
+        protocol_frame.grid_columnconfigure((1, 2, 3), weight=1)
+        ctk.CTkLabel(
+            protocol_frame,
+            text="Protocol:",
+            font=("Arial", 11, "bold"),
+            text_color=TEXT,
+        ).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        self.protocol_menu = ctk.CTkOptionMenu(
+            protocol_frame,
+            variable=self.protocol_var,
+            values=list(self.protocol_display_to_key),
+            command=lambda _selection: self.update_protocol_status(),
+            width=205,
+            height=30,
+        )
+        self.protocol_menu.grid(
+            row=0, column=1, columnspan=3, padx=(0, 0), sticky="ew"
+        )
+        self.load_preset_button = ctk.CTkButton(
+            protocol_frame,
+            text="Load Preset",
+            command=self.load_selected_preset,
+            width=105,
+            height=30,
+            fg_color=BLUE,
+            hover_color="#1d4ed8",
+        )
+        self.load_preset_button.grid(
+            row=1, column=0, columnspan=2, padx=(0, 3), pady=(5, 0), sticky="ew"
+        )
+        self.reset_fields_button = ctk.CTkButton(
+            protocol_frame,
+            text="Reset Test Fields",
+            command=self.reset_test_fields,
+            width=130,
+            height=30,
+            fg_color=AMBER,
+            hover_color="#b45309",
+        )
+        self.reset_fields_button.grid(
+            row=1, column=2, columnspan=2, padx=(3, 0), pady=(5, 0), sticky="ew"
+        )
+        self.protocol_status_label = ctk.CTkLabel(
+            inputs_frame,
+            text="Active protocol: Custom",
+            text_color=MUTED,
+            font=("Arial", 10, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.protocol_status_label.grid(
+            row=7, column=0, columnspan=2, padx=8, pady=(0, 7), sticky="ew"
+        )
+
         button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
-        button_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 6))
+        button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         button_frame.grid_columnconfigure((0, 1), weight=1)
         self.parameter_summary_label = ctk.CTkLabel(
             button_frame,
@@ -427,7 +485,6 @@ class MyInterface:
             ("Connect", GREEN, "#15803d", self.connect_system),
             ("Start", BLUE, "#1d4ed8", self.start_strain_test),
             ("Stop", RED, "#b91c1c", self.stop_logging),
-            ("Reset Form", AMBER, "#b45309", self.reset_display),
         )
         self.buttons = []
         for index, (label, colour, hover, command) in enumerate(button_defs):
@@ -441,12 +498,15 @@ class MyInterface:
                 height=34,
                 font=("Arial", 13, "bold"),
             )
-            button.grid(row=1 + index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
+            if index == 2:
+                button.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+            else:
+                button.grid(row=1, column=index, padx=5, pady=3, sticky="ew")
             self.buttons.append(button)
         self.update_parameter_summary()
 
         manual_control_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
-        manual_control_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 8))
+        manual_control_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual_control_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.step_angle_input = ctk.CTkEntry(
@@ -514,18 +574,108 @@ class MyInterface:
         )
         self.mode_toggle.grid(row=1, column=2, padx=6, pady=(0, 4))
 
+        machine_zero_frame = ctk.CTkFrame(
+            manual_control_frame, fg_color="#fff7ed", corner_radius=8
+        )
+        machine_zero_frame.grid(
+            row=2, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew"
+        )
+        machine_zero_frame.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(
+            machine_zero_frame,
+            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
+            font=("Arial", 14, "bold"),
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 2), sticky="ew")
+        ctk.CTkLabel(
+            machine_zero_frame,
+            text=(
+                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
+                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
+                "to make small adjustments until the fixture is aligned with the square. Then "
+                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
+                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
+            ),
+            font=("Arial", 10),
+            text_color=TEXT,
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        ).grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
+        self.reference_status_label = ctk.CTkLabel(
+            machine_zero_frame,
+            text="Machine zero: SETUP REQUIRED",
+            font=("Arial", 11, "bold"),
+            text_color=AMBER,
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.reference_status_label.grid(
+            row=2, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew"
+        )
+        self.reference_action_button = ctk.CTkButton(
+            machine_zero_frame,
+            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
+            command=self.open_reference_recovery,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+            height=34,
+        )
+        self.reference_action_button.grid(row=3, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
+
         self.neutral_button = ctk.CTkButton(
-            manual_control_frame,
-            text="Return to Verified 90 deg Neutral",
-            command=self.return_to_neutral,
+            machine_zero_frame,
+            text="Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}",
+            command=self.return_to_machine_zero,
             fg_color="#0f766e",
             hover_color="#115e59",
             corner_radius=8,
             height=34,
-            font=("Arial", 13, "bold"),
+            font=("Arial", 12, "bold"),
         )
         self.neutral_button.grid(
-            row=2, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew"
+            row=3, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
+        )
+
+        tare_frame = ctk.CTkFrame(manual_control_frame, fg_color="#ecfdf5", corner_radius=8)
+        tare_frame.grid(row=3, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
+        tare_frame.grid_columnconfigure((0, 1), weight=1)
+        self.tare_status_label = ctk.CTkLabel(
+            tare_frame,
+            text="Empty-machine tare: REQUIRED",
+            font=("Arial", 11, "bold"),
+            text_color=AMBER,
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.tare_status_label.grid(
+            row=0, column=0, columnspan=2, padx=8, pady=(7, 3), sticky="ew"
+        )
+        self.tare_button = ctk.CTkButton(
+            tare_frame,
+            text="Tare Empty Machine",
+            command=self.tare_empty_machine,
+            fg_color=GREEN,
+            hover_color="#15803d",
+            state="disabled",
+            height=34,
+        )
+        self.tare_button.grid(row=1, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
+        self.clear_session_tare_button = ctk.CTkButton(
+            tare_frame,
+            text="Clear Session Tare",
+            command=self.clear_session_tare,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+            height=34,
+        )
+        self.clear_session_tare_button.grid(
+            row=1, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
         )
 
         for widget in (
@@ -534,6 +684,7 @@ class MyInterface:
             self.step_angle_input,
             self.mode_toggle,
             self.neutral_button,
+            self.tare_button,
         ):
             widget.configure(state="disabled")
         self.buttons[1].configure(state="disabled")
@@ -606,14 +757,164 @@ class MyInterface:
                 f"-{minimum}\N{DEGREE SIGN} to +{maximum}\N{DEGREE SIGN}"
             )
         )
+        self.update_protocol_status()
+
+    @staticmethod
+    def _replace_entry_value(entry, value):
+        entry.delete(0, ctk.END)
+        entry.insert(0, str(value))
+
+    def _motion_field_values(self):
+        return {
+            "cycles": self.cycles_input.get(),
+            "minimum_angle_deg": self.min_angle_input.get(),
+            "maximum_angle_deg": self.max_angle_input.get(),
+            "speed_deg_s": self.speed_input.get(),
+            "acceleration_deg_s2": self.acceleration_input.get(),
+        }
+
+    def _loaded_preset(self):
+        if self.loaded_preset_key == "custom":
+            return None
+        return self.system_config["test_presets"][self.loaded_preset_key]
+
+    def active_protocol_name(self):
+        preset = self._loaded_preset()
+        if preset is None:
+            return "Custom"
+        name = f"{preset['display_name']} v{preset['version']}"
+        if preset_values_modified(self._motion_field_values(), preset):
+            name += " \N{EM DASH} MODIFIED"
+        return name
+
+    def update_protocol_status(self):
+        if not hasattr(self, "protocol_status_label"):
+            return
+        active_name = self.active_protocol_name()
+        selected_display = self.protocol_var.get()
+        selected_key = self.protocol_display_to_key[selected_display]
+        text = f"Active protocol: {active_name}"
+        if selected_key != self.loaded_preset_key:
+            text += (
+                f"\nSelected: {selected_display} \N{EM DASH} press Load Preset to apply. "
+                f"Active protocol remains: {active_name}."
+            )
+            colour = AMBER
+        elif active_name.endswith("MODIFIED"):
+            colour = AMBER
+        elif self.loaded_preset_key == "custom":
+            colour = MUTED
+        else:
+            colour = GREEN
+        self.protocol_status_label.configure(text=text, text_color=colour)
+
+    def load_selected_preset(self):
+        selected_display = self.protocol_var.get()
+        selected_key = self.protocol_display_to_key[selected_display]
+        preset = (
+            None
+            if selected_key == "custom"
+            else self.system_config["test_presets"][selected_key]
+        )
+        entered_values = self._motion_field_values()
+        has_entered_values = any(str(value).strip() for value in entered_values.values())
+        replacing_values = has_entered_values and (
+            preset is None or preset_values_modified(entered_values, preset)
+        )
+
+        messages = []
+        if replacing_values:
+            messages.append("This will replace the motion values currently entered.")
+        if preset and preset["test_type"] == "empty_machine_baseline":
+            messages.append(
+                "Confirm the AFO and all removable loads are removed before running "
+                "this empty-machine baseline."
+            )
+        if messages:
+            confirmation = CTkMessagebox(
+                title="Load Protocol Preset",
+                message="\n\n".join(messages),
+                icon="question",
+                option_1="Cancel",
+                option_2="Load Preset",
+            )
+            if confirmation.get() != "Load Preset":
+                return
+
+        motion_entries = {
+            "cycles": self.cycles_input,
+            "minimum_angle_deg": self.min_angle_input,
+            "maximum_angle_deg": self.max_angle_input,
+            "speed_deg_s": self.speed_input,
+            "acceleration_deg_s2": self.acceleration_input,
+        }
+        if preset is None:
+            for entry in motion_entries.values():
+                entry.delete(0, ctk.END)
+        else:
+            for key, entry in motion_entries.items():
+                self._replace_entry_value(entry, preset[key])
+        self.loaded_preset_key = selected_key
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
+        )
+        self.update_parameter_summary()
+
+    def current_preset_metadata(self, parameters):
+        preset = self._loaded_preset()
+        modified = bool(
+            preset and preset_values_modified(self._motion_field_values(), preset)
+        )
+        return make_preset_metadata(
+            self.loaded_preset_key,
+            preset,
+            parameters,
+            self.preset_loaded_at,
+            modified,
+        )
+
+    def baseline_matching_metadata(self, parameters):
+        record = self.reference_manager.record
+        mapping = self.reference_manager.require_verified()
+        return {
+            "purpose": (
+                "Preserves the dimensions required to pair loaded-machine and unloaded "
+                "empty-machine torque-angle sweeps during later analysis."
+            ),
+            "automatic_subtraction_applied": False,
+            "correction_equation": (
+                "AFO torque = loaded-machine torque - matched empty-machine torque"
+            ),
+            "test_type": parameters.test_type,
+            "fixture_id": parameters.fixture_id,
+            "calibration_id": parameters.calibration_id,
+            "machine_zero_reference_id": record.reference_id,
+            "machine_zero_reference_generation": record.generation,
+            "session_mapping_verified_at": mapping.verified_at,
+            "session_mapping_verification_method": mapping.verification_method,
+            "minimum_angle_deg": parameters.min_angle_deg,
+            "maximum_angle_deg": parameters.max_angle_deg,
+            "total_rom_deg": parameters.min_angle_deg + parameters.max_angle_deg,
+            "speed_deg_s": parameters.commanded_afo_speed_deg_s,
+            "acceleration_deg_s2": parameters.commanded_afo_acceleration_deg_s2,
+            "movement_direction_source": (
+                "Match increasing_machine_angle and decreasing_machine_angle CSV rows "
+                "separately."
+            ),
+            "tare_captured_at": self.empty_machine_tare.captured_at,
+            "tare_phidget_serial_number": self.empty_machine_tare.phidget_serial_number,
+            "tare_phidget_channel": self.empty_machine_tare.phidget_channel,
+        }
 
     def collect_test_parameters(self):
+        preset = self._loaded_preset()
         return validate_test_parameters({
             "file_prefix": self.file_name_input.get(),
             "operator": self.operator_input.get(),
             "afo_id": self.afo_id_input.get(),
             "fixture_id": self.fixture_id_input.get(),
             "calibration_id": self.calibration_id_input.get(),
+            "test_type": preset["test_type"] if preset else "custom",
             "cycles": self.cycles_input.get(),
             "speed_deg_s": self.speed_input.get(),
             "acceleration_deg_s2": self.acceleration_input.get(),
@@ -629,6 +930,11 @@ class MyInterface:
             self.calibration_id_input,
         ):
             entry.configure(state=state)
+        self.protocol_menu.configure(state=state)
+        self.load_preset_button.configure(state=state)
+        self.reset_fields_button.configure(state=state)
+        if state == "disabled":
+            self.clear_session_tare_button.configure(state="disabled")
 
     def get_feedback(self, require_fresh=True):
         with self.feedback_lock:
@@ -663,18 +969,64 @@ class MyInterface:
         if manager.verified:
             mapping = manager.require_verified()
             text = (
-                "Neutral reference: VERIFIED\n"
-                f"90 deg = {mapping.neutral_position_turns:.8f} session turns"
+                "Machine zero: VERIFIED\n"
+                f"Physical 90\N{DEGREE SIGN} = machine 0\N{DEGREE SIGN} "
+                f"({mapping.neutral_position_turns:.8f} session turns)"
             )
             colour = GREEN
         elif manager.confidence == ReferenceConfidence.FAULT:
-            text = f"Neutral reference: FAULT\n{manager.reason}"
+            text = f"Machine zero: FAULT\n{manager.reason}"
             colour = RED
         else:
-            text = f"Neutral reference: RECOVERY REQUIRED\n{manager.reason}"
+            text = f"Machine zero: SETUP REQUIRED\n{manager.reason}"
             colour = AMBER
         if hasattr(self, "reference_status_label"):
             self.reference_status_label.configure(text=text, text_color=colour)
+        self.update_tare_display()
+        self._refresh_motion_controls()
+
+    def update_tare_display(self):
+        if not hasattr(self, "tare_status_label"):
+            return
+        tare = self.empty_machine_tare
+        if tare is None:
+            self.tare_status_label.configure(
+                text="Empty-machine tare: REQUIRED", text_color=AMBER
+            )
+            return
+        mismatches = empty_machine_tare_identity_mismatches(
+            tare,
+            self.fixture_id_input.get(),
+            self.calibration_id_input.get(),
+            self.system_config,
+        )
+        if mismatches:
+            self.tare_status_label.configure(
+                text=(
+                    "Empty-machine tare: IDENTITY MISMATCH\n"
+                    + "\n".join(f"- {reason}" for reason in mismatches)
+                ),
+                text_color=RED,
+            )
+            return
+        self.tare_status_label.configure(
+            text=(
+                "Empty-machine tare: VALID\n"
+                f"{tare.captured_at} | offset {tare.offset_v_per_v:.12g} V/V"
+            ),
+            text_color=GREEN,
+        )
+
+    def _on_tare_identity_edit(self, _event=None):
+        self.update_tare_display()
+        self._refresh_motion_controls()
+
+    def invalidate_empty_machine_tare(self, reason):
+        if self.empty_machine_tare is None:
+            return
+        self.empty_machine_tare = None
+        self.update_terminal(f"Empty-machine tare invalidated: {reason}.\n")
+        self.update_tare_display()
         self._refresh_motion_controls()
 
     def _refresh_motion_controls(self):
@@ -682,6 +1034,14 @@ class MyInterface:
             return
         connected = self.odrive_adapter is not None
         verified = self.reference_manager.verified
+        tare_ready = self.empty_machine_tare is not None and not (
+            empty_machine_tare_identity_mismatches(
+                self.empty_machine_tare,
+                self.fixture_id_input.get(),
+                self.calibration_id_input.get(),
+                self.system_config,
+            )
+        )
         idle_ui = (
             not self.strain_test_active
             and self.motion_coordinator.owner is None
@@ -691,7 +1051,11 @@ class MyInterface:
             state="normal" if connected and idle_ui else "disabled"
         )
         self.buttons[1].configure(
-            state="normal" if connected and verified and idle_ui and not self.manual_mode.get() else "disabled"
+            state=(
+                "normal"
+                if connected and verified and tare_ready and idle_ui and not self.manual_mode.get()
+                else "disabled"
+            )
         )
         self.manual_mode_toggle.configure(state="normal" if connected and verified and idle_ui else "disabled")
         manual_enabled = connected and verified and idle_ui and self.manual_mode.get()
@@ -701,9 +1065,23 @@ class MyInterface:
             self.right_arrow,
             self.step_angle_input,
             self.mode_toggle,
-            self.neutral_button,
         ):
             widget.configure(state=manual_state)
+        self.neutral_button.configure(
+            state="normal" if connected and verified and idle_ui else "disabled"
+        )
+        self.tare_button.configure(
+            state="normal" if connected and verified and idle_ui else "disabled"
+        )
+        self.clear_session_tare_button.configure(
+            state=(
+                "normal"
+                if self.empty_machine_tare is not None
+                and not self.strain_test_active
+                and self.motion_coordinator.owner is None
+                else "disabled"
+            )
+        )
 
     def _start_feedback_monitor(self):
         self.monitor_stop_event.set()
@@ -900,12 +1278,12 @@ class MyInterface:
             record = self.reference_manager.record
             mapping = self.reference_manager.require_verified()
             if record is None:
-                raise ReferenceRequiredError("Saved neutral reference is unavailable")
+                raise ReferenceRequiredError("Saved machine-zero record is unavailable")
             configured_conversion = float(
                 self.system_config["motion"]["afo_degrees_per_odrive_turn"]
             )
             if abs(record.afo_degrees_per_odrive_turn - configured_conversion) > 1e-12:
-                reason = "Motion conversion changed since neutral was established"
+                reason = "Motion conversion changed since machine zero was established"
                 self.reference_manager.invalidate(reason, fault=True)
                 raise ReferenceRequiredError(reason)
             for saved in (
@@ -917,6 +1295,14 @@ class MyInterface:
                     self.reference_manager.invalidate(reason, fault=True)
                     raise ReferenceRequiredError(reason)
         return live
+
+    def _require_matching_reference_fixture(self, fixture_id):
+        record = self.reference_manager.record
+        if record is None:
+            raise ReferenceRequiredError("Saved machine-zero record is unavailable")
+        if str(fixture_id).strip() != record.fixture_id:
+            reason = "Fixture ID does not match the saved machine-zero record"
+            raise ReferenceRequiredError(reason)
 
     def configure_trajectory(self, speed_deg_s, acceleration_deg_s2):
         if self.odrive_adapter is None:
@@ -995,7 +1381,10 @@ class MyInterface:
                 self.update_terminal(
                     f"Motor idle {'confirmed' if result.confirmed else 'NOT CONFIRMED'}: {reason}\n"
                 )
-            self.update_reference_display()
+            if threading.current_thread() is threading.main_thread():
+                self.update_reference_display()
+            else:
+                self.ui_message_queue.put(("reference",))
             return result
         except Exception as exc:
             self.update_terminal(f"Unable to confirm ODrive idle state: {exc}\n")
@@ -1005,7 +1394,10 @@ class MyInterface:
                 )
             except Exception:
                 pass
-            self.update_reference_display()
+            if threading.current_thread() is threading.main_thread():
+                self.update_reference_display()
+            else:
+                self.ui_message_queue.put(("reference",))
             return None
 
     def enter_closed_loop(self, token, allow_unreferenced=False):
@@ -1075,7 +1467,7 @@ class MyInterface:
             getattr(self, name, None)
             for name in (
                 "strain_thread", "data_collection_thread", "neutral_thread",
-                "continuous_thread", "recovery_thread",
+                "manual_step_thread", "continuous_thread", "recovery_thread",
             )
         ]
         if (
@@ -1118,7 +1510,7 @@ class MyInterface:
             self._validate_live_motion_config()
             if self.system_config["controller"]["apply_controller_gains"]:
                 raise RuntimeError(
-                    "Runtime controller-gain writes are disabled in the neutral-recovery build"
+                    "Runtime controller-gain writes are disabled in the machine-zero build"
                 )
             self.hardware_fingerprint = self.odrive_adapter.fingerprint()
             idle_result = self.odrive_adapter.request_idle(
@@ -1188,11 +1580,11 @@ class MyInterface:
                 f"Runtime state: {self.state_store.directory}\n"
             )
             if self.reference_manager.verified:
-                self.set_status("CONNECTED / REFERENCE VERIFIED", GREEN)
+                self.set_status("CONNECTED / MACHINE ZERO VERIFIED", GREEN)
             else:
-                self.set_status("CONNECTED / RECOVERY REQUIRED", AMBER)
+                self.set_status("CONNECTED / MACHINE-ZERO SETUP REQUIRED", AMBER)
                 self.update_terminal(
-                    "Normal tests and manual motion are blocked until physical neutral is verified.\n"
+                    "Normal tests and manual motion are blocked until machine zero is verified.\n"
                 )
             self.update_reference_display()
         except (concurrent.futures.TimeoutError, TimeoutError) as exc:
@@ -1226,9 +1618,25 @@ class MyInterface:
             if self.odrive_controller:
                 self.neutral_stop_event.set()
                 self.continuous_stop_event.set()
-                self.safe_idle_motor("disconnect")
+                idle_result = self.safe_idle_motor("manual disconnect")
                 self._stop_watchdog(disable=True)
                 self._stop_feedback_monitor()
+                continuity_saved = False
+                checkpoint_snapshot = None
+                try:
+                    if idle_result and idle_result.confirmed:
+                        checkpoint_snapshot = self._read_adapter_feedback()
+                    continuity_saved = persist_idle_continuity_checkpoint(
+                        self.reference_manager,
+                        checkpoint_snapshot,
+                        bool(idle_result and idle_result.confirmed),
+                        "manual disconnect",
+                        expected_idle_state=int(AXIS_STATE_IDLE),
+                    )
+                except Exception as exc:
+                    self.update_terminal(
+                        f"Unable to save manual-disconnect continuity evidence: {exc}\n"
+                    )
                 self.odrive_controller = None
                 self.odrive_adapter = None
                 self.hardware_fingerprint = None
@@ -1236,11 +1644,16 @@ class MyInterface:
                     self.latest_feedback = None
                 self.reference_manager.mapping = None
                 self.reference_manager.confidence = ReferenceConfidence.RECOVERY_REQUIRED
-                self.reference_manager.reason = "ODrive disconnected; session mapping cleared"
+                self.reference_manager.reason = (
+                    "ODrive disconnected; continuity must be proven on reconnect"
+                )
                 self.buttons[1].configure(state="disabled")
                 self.neutral_button.configure(state="disabled")
                 self.set_status("DISCONNECTED", RED)
-                self.update_terminal("ODrive disconnected and set to idle state\n")
+                self.update_terminal(
+                    "ODrive disconnected and set to idle state. "
+                    f"Clean continuity checkpoint: {'saved' if continuity_saved else 'not saved'}.\n"
+                )
                 self.update_reference_display()
         except Exception as e:
             self.update_terminal(f"Error disconnecting ODrive: {e}\n")
@@ -1268,30 +1681,58 @@ class MyInterface:
             
 
 
-    def reset_display(self):
-        # Stop logging
-        self.stop_logging()
-        
-        # Stop strain test if active
-        if self.strain_test_active:
-            self.stop_strain_test()
-        
-        # Clear terminal
-        self.clear_terminal()
-
+    def reset_test_fields(self):
+        """Clear run-specific inputs without changing session safety state."""
+        if self.strain_test_active or self.motion_coordinator.owner is not None:
+            CTkMessagebox(
+                title="Reset Blocked",
+                message="Stop the active movement before resetting test fields.",
+            )
+            return
         for entry in (
             self.file_name_input, self.cycles_input, self.speed_input,
             self.acceleration_input, self.min_angle_input, self.max_angle_input,
-            self.operator_input, self.afo_id_input, self.fixture_id_input,
-            self.calibration_id_input,
+            self.afo_id_input,
         ):
             entry.delete(0, ctk.END)
+        self.protocol_var.set("Custom")
+        self.loaded_preset_key = "custom"
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
+        )
         self.update_parameter_summary()
+        self.update_tare_display()
+        self._refresh_motion_controls()
+        self.update_terminal(
+            "Run-specific test fields reset. Machine zero and session tare were preserved.\n"
+        )
 
-        self.safe_idle_motor("reset")
-        if self.odrive_controller and not self.manual_mode.get():
-            self._refresh_motion_controls()
-            self.set_status("CONNECTED / IDLE", GREEN)
+    def clear_session_tare(self):
+        """Explicitly discard only the current session tare after confirmation."""
+        if self.empty_machine_tare is None:
+            return
+        if self.strain_test_active or self.motion_coordinator.owner is not None:
+            CTkMessagebox(
+                title="Clear Session Tare Blocked",
+                message="Stop the active movement before clearing the session tare.",
+            )
+            return
+        confirmation = CTkMessagebox(
+            title="Clear Session Tare",
+            message=(
+                "This will discard only the stored empty-machine tare. Machine zero, "
+                "connection, operator, fixture, calibration, and all test fields will remain "
+                "unchanged.\n\n"
+                "Before the next run, confirm/return to verified machine zero and capture a "
+                "new empty-machine tare with the AFO and removable loads removed."
+            ),
+            icon="warning",
+            option_1="Cancel",
+            option_2="Clear Session Tare",
+        )
+        if confirmation.get() != "Clear Session Tare":
+            return
+        self.invalidate_empty_machine_tare("session tare cleared by operator")
 
 
     def clear_terminal(self):
@@ -1326,6 +1767,7 @@ class MyInterface:
                 elif item[0] == "reference":
                     self.update_reference_display()
                 elif item[0] == "recovery_motion_finished":
+                    self.update_reference_display()
                     if self.recovery_window is not None and self.recovery_window.winfo_exists():
                         for button in self.recovery_jog_buttons:
                             button.configure(state="normal")
@@ -1360,10 +1802,10 @@ class MyInterface:
 
     def open_reference_recovery(self):
         if self.odrive_adapter is None:
-            self.update_terminal("Connect the ODrive before reference recovery.\n")
+            self.update_terminal("Connect the ODrive before machine-zero setup.\n")
             return
         if self.motion_coordinator.owner is not None or self.strain_test_active:
-            self.update_terminal("Reference recovery is blocked while motion is active.\n")
+            self.update_terminal("Machine-zero setup is blocked while motion is active.\n")
             return
         if self.recovery_window is not None and self.recovery_window.winfo_exists():
             self.recovery_window.lift()
@@ -1373,17 +1815,17 @@ class MyInterface:
             self._revalidate_hardware_identity()
             snapshot = self.get_feedback()
         except Exception as exc:
-            self.update_terminal(f"Cannot start recovery: {exc}\n")
+            self.update_terminal(f"Cannot start machine-zero setup: {exc}\n")
             return
         self.recovery_origin_turns = snapshot.position_turns
         self.recovery_cumulative_deg = 0.0
-        self.recovery_started_monotonic = time.monotonic()
+        self.recovery_session_acknowledged = False
 
         window = ctk.CTkToplevel(self.master)
         self.recovery_window = window
-        window.title("EAST Neutral Reference Recovery")
-        window.geometry("610x500")
-        window.minsize(560, 460)
+        window.title("EAST Machine Zero Setup")
+        window.geometry("650x540")
+        window.minsize(590, 500)
         window.configure(fg_color=BG)
         window.transient(self.master)
         window.protocol("WM_DELETE_WINDOW", self.close_reference_recovery)
@@ -1393,16 +1835,18 @@ class MyInterface:
         panel.pack(fill="both", expand=True, padx=18, pady=18)
         ctk.CTkLabel(
             panel,
-            text="Verify Physical 90 Degree Neutral",
+            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
             font=("Arial", 20, "bold"),
             text_color=TEXT,
         ).pack(anchor="w", padx=16, pady=(14, 5))
         ctk.CTkLabel(
             panel,
             text=(
-                "Normal tests and manual controls remain disabled until neutral is verified. "
-                "Use only the slow bounded jog below, physically align the mounted fixture/AFO "
-                "at 90 degrees, then set neutral. Nothing moves when neutral is set."
+                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
+                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
+                "to make small adjustments until the fixture is aligned with the square. Then "
+                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
+                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
             ),
             font=("Arial", 12),
             text_color=TEXT,
@@ -1418,25 +1862,29 @@ class MyInterface:
         self.recovery_position_label.pack(anchor="w", padx=16, pady=5)
 
         self.recovery_acknowledgement = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
+        self.recovery_ack_checkbox = ctk.CTkCheckBox(
             panel,
-            text="Fixture is clear, E-stop is accessible, and I am observing the mechanism",
+            text=(
+                "For this setup session: fixture is clear, E-stop is accessible, "
+                "and I am observing the mechanism"
+            ),
             variable=self.recovery_acknowledgement,
-        ).pack(anchor="w", padx=16, pady=8)
+        )
+        self.recovery_ack_checkbox.pack(anchor="w", padx=16, pady=8)
 
         jog_frame = ctk.CTkFrame(panel, fg_color=PANEL_SOFT, corner_radius=6)
         jog_frame.pack(fill="x", padx=16, pady=6)
         step = self.system_config["reference"]["recovery_jog_step_deg"]
         left = ctk.CTkButton(
             jog_frame,
-            text=f"Jog -{step:g} deg",
+            text=f"Jog Left ({step:g}\N{DEGREE SIGN})",
             command=lambda: self.recovery_jog(-1),
             fg_color=MUTED,
             hover_color="#475569",
         )
         right = ctk.CTkButton(
             jog_frame,
-            text=f"Jog +{step:g} deg",
+            text=f"Jog Right ({step:g}\N{DEGREE SIGN})",
             command=lambda: self.recovery_jog(1),
             fg_color=MUTED,
             hover_color="#475569",
@@ -1447,8 +1895,8 @@ class MyInterface:
 
         self.recovery_set_button = ctk.CTkButton(
             panel,
-            text="Set Current Physical Position as 90 deg Neutral",
-            command=self.set_physical_neutral,
+            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
+            command=self.set_machine_zero,
             fg_color="#0f766e",
             hover_color="#115e59",
             height=36,
@@ -1459,7 +1907,7 @@ class MyInterface:
             measured = ctk.CTkFrame(panel, fg_color="transparent")
             measured.pack(fill="x", padx=16, pady=5)
             self.recovery_angle_entry = ctk.CTkEntry(
-                measured, placeholder_text="Measured angle from neutral (deg)"
+                measured, placeholder_text="Measured displacement from machine zero (deg)"
             )
             self.recovery_uncertainty_entry = ctk.CTkEntry(
                 measured, placeholder_text="Uncertainty (deg)"
@@ -1484,33 +1932,44 @@ class MyInterface:
     def close_reference_recovery(self):
         self.neutral_stop_event.set()
         if self.motion_coordinator.owner == "reference-recovery-jog":
-            self.safe_idle_motor("reference recovery closed")
+            self.safe_idle_motor("machine-zero setup closed")
         if self.recovery_window is not None:
             try:
                 self.recovery_window.destroy()
             except tk.TclError:
                 pass
         self.recovery_window = None
+        self.recovery_session_acknowledged = False
+
+    def _accept_recovery_session_acknowledgement(self):
+        if self.recovery_session_acknowledged:
+            return True
+        if not self.recovery_acknowledgement.get():
+            return False
+        self.recovery_session_acknowledged = True
+        self.recovery_ack_checkbox.configure(state="disabled")
+        return True
 
     def recovery_jog(self, direction):
-        if not self.recovery_acknowledgement.get():
+        if not self._accept_recovery_session_acknowledgement():
             CTkMessagebox(
                 title="Acknowledgement Required",
                 message="Confirm the recovery safety acknowledgement before jogging.",
             )
             return
         cfg = self.system_config["reference"]
-        if time.monotonic() - self.recovery_started_monotonic > cfg["recovery_timeout_s"]:
-            self.update_terminal("Recovery jog window expired; close and reopen recovery.\n")
-            return
         next_total = self.recovery_cumulative_deg + abs(cfg["recovery_jog_step_deg"])
         if next_total > cfg["recovery_jog_maximum_cumulative_deg"] + 1e-9:
             self.update_terminal("Recovery jog blocked at its cumulative travel limit.\n")
             return
+        token = None
         try:
             token = self.motion_coordinator.acquire("reference-recovery-jog")
+            self.invalidate_empty_machine_tare("machine-zero fixture adjustment")
             self.reference_manager.invalidate("Unreferenced recovery jog performed")
         except Exception as exc:
+            if token is not None:
+                self.motion_coordinator.release(token)
             self.update_terminal(f"Recovery jog blocked: {exc}\n")
             return
         for button in self.recovery_jog_buttons:
@@ -1579,24 +2038,26 @@ class MyInterface:
             self.motion_coordinator.release(token)
             self.ui_message_queue.put(("recovery_motion_finished",))
 
-    def set_physical_neutral(self):
-        if not self.recovery_acknowledgement.get():
+    def set_machine_zero(self):
+        if not self._accept_recovery_session_acknowledgement():
             CTkMessagebox(
                 title="Acknowledgement Required",
-                message="Confirm the safety acknowledgement before setting neutral.",
+                message="Confirm the safety acknowledgement before setting machine zero.",
             )
             return
         confirmation = CTkMessagebox(
-            title="Set Physical Neutral",
+            title="Set Machine Zero",
             message=(
-                "Confirm the mounted fixture/AFO is physically aligned at exactly 90 degrees.\n\n"
-                "This records a reference only; the motor will not move."
+                "Confirm the empty moving fixture is mechanically aligned at physical "
+                "90\N{DEGREE SIGN} using the supplied square.\n\n"
+                "This records the current encoder position as machine angle 0\N{DEGREE SIGN}. "
+                "The motor will not move."
             ),
             icon="question",
             option_1="Cancel",
-            option_2="Set Neutral",
+            option_2="Set Machine Zero",
         )
-        if confirmation.get() != "Set Neutral":
+        if confirmation.get() != "Set Machine Zero":
             return
         try:
             if self.motion_coordinator.owner is not None:
@@ -1621,18 +2082,22 @@ class MyInterface:
                 self.fixture_id_input.get(),
                 acknowledgement=True,
             )
+            self.invalidate_empty_machine_tare("machine zero was re-established")
             self.update_terminal(
-                "Physical 90 degree neutral persisted and verified for this controller session.\n"
+                "Machine zero saved: fixture mechanically aligned at physical 90 degrees; "
+                "machine angle defined as 0 degrees.\n"
             )
-            self.set_status("CONNECTED / REFERENCE VERIFIED", GREEN)
+            self.set_status("CONNECTED / MACHINE ZERO VERIFIED", GREEN)
             self.update_reference_display()
             self.close_reference_recovery()
         except Exception as exc:
-            self.update_terminal(f"Unable to set neutral: {exc}\n")
-            CTkMessagebox(title="Neutral Not Set", message=str(exc))
+            self.update_terminal(f"Unable to set machine zero: {exc}\n")
+            CTkMessagebox(title="Machine Zero Not Set", message=str(exc))
 
     def set_neutral_from_measurement(self):
         try:
+            if not self._accept_recovery_session_acknowledgement():
+                raise ReferenceError("Machine-zero setup acknowledgement is required")
             if self.motion_coordinator.owner is not None:
                 raise MotionConflictError("Wait for all motion workers to finish")
             self._validate_live_motion_config()
@@ -1653,9 +2118,12 @@ class MyInterface:
                 float(self.recovery_uncertainty_entry.get()),
                 self.operator_input.get(),
                 self.fixture_id_input.get(),
-                self.recovery_acknowledgement.get(),
+                True,
             )
-            self.update_terminal("Measured-angle neutral recovery completed; no motor motion was commanded.\n")
+            self.update_terminal(
+                "Measured-displacement machine-zero recovery completed; "
+                "no motor motion was commanded.\n"
+            )
             self.update_reference_display()
             self.close_reference_recovery()
         except Exception as exc:
@@ -1700,34 +2168,68 @@ class MyInterface:
         
         if response == "Yes":
             try:
-                # Stop any active processes first
+                # Latch cancellation before stopping the motor. Every worker must
+                # exit before clean continuity evidence can be written.
                 if self.strain_test_active:
-                    self.stop_logging()
-
+                    self.operator_stop_requested = True
+                self.test_stop_event.set()
                 self.neutral_stop_event.set()
                 self.continuous_stop_event.set()
-                for thread_name in ("strain_thread", "data_collection_thread", "neutral_thread"):
+
+                idle_result = None
+                if self.odrive_adapter is not None:
+                    idle_result = self.safe_idle_motor("application shutdown")
+                    self._stop_watchdog(disable=True)
+
+                deadline = time.monotonic() + 3.0
+                worker_names = (
+                    "strain_thread",
+                    "data_collection_thread",
+                    "neutral_thread",
+                    "manual_step_thread",
+                    "continuous_thread",
+                    "recovery_thread",
+                )
+                for thread_name in worker_names:
                     thread = getattr(self, thread_name, None)
                     if thread and thread.is_alive() and thread is not threading.current_thread():
-                        thread.join(timeout=2.0)
+                        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                live_workers = [
+                    name
+                    for name in worker_names
+                    if (thread := getattr(self, name, None)) is not None and thread.is_alive()
+                ]
+                if live_workers:
+                    print(
+                        "Shutdown continued with worker(s) still active: "
+                        + ", ".join(live_workers)
+                    )
                 
                 # Close the plot window safely
                 self.close_plot_window()
                 
-                # Confirm idle before recording a clean shutdown. This checkpoint is
-                # evidence only; automatic continuity remains disabled by default.
+                # Confirm idle and capture fresh feedback before writing clean continuity evidence.
                 if self.odrive_adapter is not None:
-                    idle_result = self.safe_idle_motor("application shutdown")
-                    self._stop_watchdog(disable=True)
                     self._stop_feedback_monitor()
-                    if idle_result and idle_result.confirmed:
-                        snapshot = self._read_adapter_feedback()
-                        self.reference_manager.write_checkpoint(
-                            MotionState.IDLE,
+                    snapshot = None
+                    continuity_ready = bool(
+                        idle_result
+                        and idle_result.confirmed
+                        and not live_workers
+                        and self.motion_coordinator.owner is None
+                    )
+                    try:
+                        if continuity_ready:
+                            snapshot = self._read_adapter_feedback()
+                        persist_idle_continuity_checkpoint(
+                            self.reference_manager,
                             snapshot,
-                            clean_shutdown=True,
-                            extra={"reason": "application shutdown"},
+                            continuity_ready,
+                            "application shutdown",
+                            expected_idle_state=int(AXIS_STATE_IDLE),
                         )
+                    except Exception as checkpoint_exc:
+                        print(f"Unable to save shutdown continuity evidence: {checkpoint_exc}")
                     self.odrive_controller = None
                     self.odrive_adapter = None
                 
@@ -1766,7 +2268,8 @@ class MyInterface:
 
         if not self.reference_manager.verified:
             self.update_terminal(
-                f"Neutral reference is not verified: {self.reference_manager.reason}\n"
+                f"Machine zero is not verified: {self.reference_manager.reason}\n"
+                "Open Machine Zero setup and align the fixture at physical 90 degrees.\n"
             )
             return
 
@@ -1774,12 +2277,13 @@ class MyInterface:
             snapshot = self.get_feedback()
             current_angle = self.reference_manager.angle_from_position(snapshot.position_turns)
         except ReferenceError as exc:
-            self.update_terminal(f"Cannot verify neutral before test: {exc}\n")
+            self.update_terminal(f"Cannot verify machine zero before test: {exc}\n")
             return
         if abs(current_angle) > self.system_config["motion"]["position_tolerance_deg"]:
             self.update_terminal(
-                "Fixture is not at the verified physical 90 degree neutral. Enable manual mode "
-                "and press 'Return to Verified 90 deg Neutral' before starting.\n"
+                "Fixture is away from verified machine zero. Press "
+                "'Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}' before starting. "
+                "Do not redefine machine zero.\n"
             )
             return
 
@@ -1796,10 +2300,39 @@ class MyInterface:
         except ValueError as exc:
             CTkMessagebox(title="Input Error", message=str(exc))
             return
+        try:
+            self._require_matching_reference_fixture(parameters.fixture_id)
+        except ReferenceError as exc:
+            self.update_terminal(f"Test blocked: {exc}\n")
+            return
+        tare_valid, tare_reason = validate_empty_machine_tare(
+            self.empty_machine_tare, parameters, self.system_config
+        )
+        if not tare_valid:
+            self.update_terminal(f"Test blocked: {tare_reason}\n")
+            CTkMessagebox(title="Empty-Machine Tare Required", message=tare_reason)
+            return
 
+        baseline_test = parameters.test_type == "empty_machine_baseline"
+        test_type_label = {
+            "afo_test": "AFO TEST",
+            "empty_machine_baseline": "EMPTY-MACHINE BASELINE",
+            "custom": "CUSTOM",
+        }[parameters.test_type]
+        active_protocol = self.active_protocol_name()
+        baseline_warning = (
+            "EMPTY-MACHINE BASELINE: Confirm the AFO and all removable loads are "
+            "removed. This is a complete unloaded torque-angle movement, not a "
+            "stationary tare.\n\n"
+            if baseline_test
+            else ""
+        )
         confirmation = CTkMessagebox(
-            title="Confirm Test",
+            title=("Confirm Empty-Machine Baseline" if baseline_test else "Confirm Test"),
             message=(
+                f"Test type: {test_type_label}\n"
+                f"Protocol: {active_protocol}\n\n"
+                f"{baseline_warning}"
                 f"AFO: {parameters.afo_id}\n"
                 f"Commanded range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
                 f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}\n"
@@ -1811,9 +2344,12 @@ class MyInterface:
                 f"Commanded cycles: {parameters.cycles}\n\n"
                 "Confirm the fixture is clear and the physical E-stop is accessible."
             ),
-            icon="question", option_1="Cancel", option_2="Start"
+            icon="question",
+            option_1="Cancel",
+            option_2=("Start Baseline" if baseline_test else "Start"),
         )
-        if confirmation.get() != "Start":
+        expected_confirmation = "Start Baseline" if baseline_test else "Start"
+        if confirmation.get() != expected_confirmation:
             return
 
         self.test_stop_event.clear()
@@ -1840,22 +2376,24 @@ class MyInterface:
             if snapshot.active_errors:
                 raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
-            self.voltage_ratio_input = VoltageRatioInput()
-            hardware = self.system_config["hardware"]
-            if hardware["phidget_serial_number"] is not None:
-                self.voltage_ratio_input.setDeviceSerialNumber(hardware["phidget_serial_number"])
-            self.voltage_ratio_input.setChannel(hardware["phidget_channel"])
-            self.voltage_ratio_input.openWaitForAttachment(hardware["phidget_attachment_timeout_ms"])
-            self.voltage_ratio_input.setDataInterval(
-                self.system_config["acquisition"]["sample_interval_ms"]
+            self.voltage_ratio_input = self._open_load_cell()
+            connected_phidget_serial = self.voltage_ratio_input.getDeviceSerialNumber()
+            tare_valid, tare_reason = validate_empty_machine_tare(
+                self.empty_machine_tare,
+                parameters,
+                self.system_config,
+                connected_phidget_serial_number=connected_phidget_serial,
             )
-            self.tare_scale()
+            if not tare_valid:
+                self.invalidate_empty_machine_tare(tare_reason)
+                raise RuntimeError(tare_reason)
 
             if self.test_stop_event.is_set():
                 raise TestStopped("Test was stopped during initialization")
             self.motion_coordinator.assert_active(self.run_motion_token)
 
             self.run_parameters = parameters
+            preset_metadata = self.current_preset_metadata(parameters)
             self.configure_trajectory(
                 parameters.commanded_afo_speed_deg_s,
                 parameters.commanded_afo_acceleration_deg_s2,
@@ -1869,20 +2407,30 @@ class MyInterface:
                 writer.writerow(CSV_COLUMNS)
 
             self.run_metadata = make_run_metadata(
-                parameters, self.system_config, offset, csv_path,
+                parameters,
+                self.system_config,
+                self.empty_machine_tare.offset_v_per_v,
+                csv_path,
                 self.odrive_configuration_snapshot(),
+                tare_metadata=self.empty_machine_tare.to_dict(),
+                preset_metadata=preset_metadata,
             )
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.run_metadata["cycle_definition"] = (
                 "Cycle 0: startup to positive endpoint. Each numbered cycle: "
                 "positive to negative to positive endpoint, with both sweeps settled. "
-                "Final neutral return is excluded from analysis sweeps."
+                "Final machine-zero return is excluded from analysis sweeps."
             )
             self.run_metadata["move_distance_definition"] = (
                 "Nominal Move Distance (deg) stores absolute target minus validated "
                 "pre-command feedback position, converted to AFO degrees."
             )
-            self.run_metadata["neutral_reference"] = self.reference_manager.metadata_snapshot()
+            self.run_metadata["machine_zero_reference"] = (
+                self.reference_manager.metadata_snapshot()
+            )
+            self.run_metadata["baseline_matching"] = self.baseline_matching_metadata(
+                parameters
+            )
             try:
                 self.run_metadata["hardware"]["connected_phidget_serial_number"] = (
                     self.voltage_ratio_input.getDeviceSerialNumber()
@@ -1954,39 +2502,141 @@ class MyInterface:
     
 
 
+    def _open_load_cell(self):
+        device = VoltageRatioInput()
+        hardware = self.system_config["hardware"]
+        try:
+            if hardware["phidget_serial_number"] is not None:
+                device.setDeviceSerialNumber(hardware["phidget_serial_number"])
+            device.setChannel(hardware["phidget_channel"])
+            device.openWaitForAttachment(hardware["phidget_attachment_timeout_ms"])
+            device.setDataInterval(self.system_config["acquisition"]["sample_interval_ms"])
+            return device
+        except Exception:
+            try:
+                device.close()
+            except Exception:
+                pass
+            raise
+
+    def tare_empty_machine(self):
+        """Capture a session tare with no AFO/load fitted and the fixture at machine zero."""
+        if self.odrive_adapter is None or not self.reference_manager.verified:
+            self.update_terminal("Verify machine zero before capturing the empty-machine tare.\n")
+            return
+        if self.motion_coordinator.owner is not None or self.strain_test_active:
+            self.update_terminal("Empty-machine tare is blocked while motion is active.\n")
+            return
+        operator = self.operator_input.get().strip()
+        fixture_id = self.fixture_id_input.get().strip()
+        calibration_id = self.calibration_id_input.get().strip()
+        if not operator or not fixture_id or not calibration_id:
+            CTkMessagebox(
+                title="Tare Details Required",
+                message="Enter Operator ID, Fixture ID, and Calibration ID before taring.",
+            )
+            return
+        confirmation = CTkMessagebox(
+            title="Tare Empty Machine",
+            message=(
+                "Confirm the AFO and all removable test loads are removed, the fixture is at "
+                "verified machine zero, and nothing is touching or preloading the load cell.\n\n"
+                "This will replace the current session tare."
+            ),
+            icon="question",
+            option_1="Cancel",
+            option_2="Tare Empty Machine",
+        )
+        if confirmation.get() != "Tare Empty Machine":
+            return
+
+        device = None
+        try:
+            self._validate_live_motion_config()
+            self._revalidate_hardware_identity(require_reference=True)
+            self._require_matching_reference_fixture(fixture_id)
+            idle_result = self.odrive_adapter.request_idle(
+                self.system_config["reference"]["idle_confirmation_timeout_s"]
+            )
+            if not idle_result.confirmed:
+                raise RuntimeError("ODrive idle could not be confirmed")
+            self.motion_coordinator.confirm_motor_idle()
+            snapshot = self._read_adapter_feedback()
+            snapshot.validate()
+            if snapshot.active_errors:
+                raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
+            if snapshot.current_state != int(AXIS_STATE_IDLE):
+                raise RuntimeError("ODrive did not report idle during tare")
+            angle = self.reference_manager.angle_from_position(snapshot.position_turns)
+            tolerance = float(self.system_config["motion"]["position_tolerance_deg"])
+            if abs(angle) > tolerance:
+                raise RuntimeError(
+                    "Fixture is away from machine zero. Return to machine zero before taring."
+                )
+
+            device = self._open_load_cell()
+            sample_count = int(self.system_config["load_cell"]["tare_samples"])
+            samples = []
+            self.update_terminal(
+                f"Capturing empty-machine tare from {sample_count} load-cell samples...\n"
+            )
+            for _ in range(sample_count):
+                value = float(device.getVoltageRatio())
+                if not math.isfinite(value):
+                    raise RuntimeError("Load-cell tare sample was not finite")
+                samples.append(value)
+                time.sleep(device.getDataInterval() / 1000.0)
+            connected_serial = int(device.getDeviceSerialNumber())
+            self.empty_machine_tare = EmptyMachineTare(
+                offset_v_per_v=sum(samples) / len(samples),
+                captured_at=datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                operator_id=operator,
+                fixture_id=fixture_id,
+                calibration_id=calibration_id,
+                phidget_serial_number=connected_serial,
+                phidget_channel=int(self.system_config["hardware"]["phidget_channel"]),
+                sample_count=sample_count,
+            )
+            self.update_terminal(
+                "Empty-machine tare captured. Mounting an AFO will not trigger another tare.\n"
+            )
+            self.update_tare_display()
+            self._refresh_motion_controls()
+        except Exception as exc:
+            self.update_terminal(f"Empty-machine tare failed: {exc}\n")
+            CTkMessagebox(title="Tare Not Captured", message=str(exc))
+        finally:
+            if device is not None:
+                try:
+                    device.close()
+                except Exception:
+                    pass
+
     def get_current_weight(self):
         """Get the current weight reading from the scale in grams"""
-        if not calibrated:
+        if self.empty_machine_tare is None:
             return 0.0
         voltage_ratio = self.voltage_ratio_input.getVoltageRatio()
-        _, weight_grams, _ = calculate_load(voltage_ratio, offset, self.system_config)
+        _, weight_grams, _ = calculate_load(
+            voltage_ratio, self.empty_machine_tare.offset_v_per_v, self.system_config
+        )
         return weight_grams
 
-    def tare_scale(self):
-        """Tare the Phidget scale"""
-        global offset, calibrated
-        num_samples = int(self.system_config["load_cell"]["tare_samples"])
-        
-        self.update_terminal("Taring scale...\n")
-        offset = 0  # Reset offset before taking new samples
-        for _ in range(num_samples):
-            offset += self.voltage_ratio_input.getVoltageRatio()
-            time.sleep(self.voltage_ratio_input.getDataInterval() / 1000.0)
-        
-        offset /= num_samples
-        calibrated = True
-        self.update_terminal(f"Scale tared. Offset: {offset}\n")
-        current_weight = self.get_current_weight()
-        self.update_terminal(f"Current weight: {current_weight:.2f} grams\n")
+    @staticmethod
+    def movement_direction_for_velocity(afo_velocity_deg_s):
+        if afo_velocity_deg_s > 0:
+            return "increasing_machine_angle"
+        if afo_velocity_deg_s < 0:
+            return "decreasing_machine_angle"
+        return "stationary"
 
 
     
     def log_strain_data(self, voltage_ratio, cycle):
         """Log strain data to buffer"""
-        global calibrated, offset
-        
         try:
-            if calibrated:
+            if self.empty_machine_tare is not None:
+                tare_offset = self.empty_machine_tare.offset_v_per_v
                 wall_time = datetime.now().astimezone()
                 monotonic_time = time.monotonic()
                 snapshot = self.get_feedback()
@@ -1997,7 +2647,7 @@ class MyInterface:
                     velocity_turns_s, self.system_config
                 )
                 mass_kg, raw_weight_grams, force_n = calculate_load(
-                    voltage_ratio, offset, self.system_config
+                    voltage_ratio, tare_offset, self.system_config
                 )
                 raw_torque_nm = calculate_torque_nm(force_n, relative_angle, self.system_config)
                 
@@ -2020,6 +2670,7 @@ class MyInterface:
                     self.sample_count,
                     cycle,
                     self.motion_phase,
+                    self.movement_direction_for_velocity(afo_velocity_deg_s),
                     f"{self.run_parameters.commanded_afo_speed_deg_s:.6f}",
                     f"{self.run_parameters.commanded_afo_acceleration_deg_s2:.6f}",
                     f"{-self.run_parameters.min_angle_deg:.6f}",
@@ -2030,6 +2681,10 @@ class MyInterface:
                     self.run_parameters.afo_id,
                     self.run_parameters.fixture_id,
                     self.run_parameters.calibration_id,
+                    self.run_parameters.test_type,
+                    self.run_metadata["protocol"]["preset_display_name"],
+                    self.run_metadata["protocol"]["preset_version"] or "",
+                    self.run_metadata["protocol"]["preset_modified"],
                     f"{self.commanded_odrive_velocity:.6f}",
                     f"{self.current_nominal_distance_deg:.6f}",
                     f"{self.current_expected_constant_speed_span_deg:.6f}",
@@ -2037,7 +2692,7 @@ class MyInterface:
                     f"{relative_angle:.6f}",
                     f"{avg_angle:.6f}",
                     f"{voltage_ratio:.12g}",
-                    f"{offset:.12g}",
+                    f"{tare_offset:.12g}",
                     f"{mass_kg:.9f}",
                     f"{raw_weight_grams:.6f}",
                     f"{avg_weight:.6f}",
@@ -2076,7 +2731,7 @@ class MyInterface:
                 self.sample_count += 1
                 
             else:
-                self.update_terminal("Phidget is not calibrated yet!\n")
+                raise RuntimeError("Empty-machine tare is not available")
                 
         except Exception as e:
             self.update_terminal(f"Error logging strain data: {str(e)}\n")
@@ -2097,7 +2752,7 @@ class MyInterface:
             self.enter_closed_loop(token)
             mapping = self.reference_manager.require_verified()
             self.update_terminal(
-                f"Verified physical 90 degree neutral: "
+                f"Verified machine zero (fixture physical 90 degrees): "
                 f"{mapping.neutral_position_turns:.8f} session turns\n"
             )
             parameters = self.run_parameters
@@ -2138,12 +2793,12 @@ class MyInterface:
             neutral_target = mapping.neutral_position_turns
             self.command_position_and_wait(
                 neutral_target,
-                "returning_to_verified_neutral",
+                "returning_to_machine_zero",
                 token,
                 speed_deg_s=motion["neutral_return_speed_deg_s"],
                 acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
             )
-            idle_result = self.safe_idle_motor("successful neutral return", token=token)
+            idle_result = self.safe_idle_motor("successful machine-zero return", token=token)
             if not idle_result or not idle_result.confirmed:
                 raise RuntimeError("Test finished but ODrive idle could not be confirmed")
             idle_confirmed = True
@@ -2314,7 +2969,7 @@ class MyInterface:
                     f"ODrive error during post-test observation: {snapshot.active_errors}"
                 )
             if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
-                raise RuntimeError("Neutral position drifted after ODrive entered idle")
+                raise RuntimeError("Machine-zero position drifted after ODrive entered idle")
             time.sleep(0.02)
     
     def continuous_strain_read(self):
@@ -2356,7 +3011,9 @@ class MyInterface:
             self.run_metadata["sample_count"] = self.sample_count
             self.run_metadata["completed_cycles"] = self.completed_cycles
             self.run_metadata["error"] = error
-            self.run_metadata["neutral_reference_final"] = self.reference_manager.metadata_snapshot()
+            self.run_metadata["machine_zero_reference_final"] = (
+                self.reference_manager.metadata_snapshot()
+            )
             self.run_metadata["idle_confirmation"] = {
                 "confirmed": bool(idle_confirmed),
                 "motion_owner": self.motion_coordinator.owner,
@@ -2596,12 +3253,13 @@ class MyInterface:
             self.update_terminal(f"Manual step blocked: {exc}\n")
             return
         self._refresh_motion_controls()
-        threading.Thread(
+        self.manual_step_thread = threading.Thread(
             target=self._manual_step_worker,
             args=(token, direction, step_angle),
             name="manual-step",
             daemon=True,
-        ).start()
+        )
+        self.manual_step_thread.start()
 
     def _manual_step_worker(self, token, direction, step_angle):
         try:
@@ -2671,12 +3329,13 @@ class MyInterface:
         self.continuous_stop_event = threading.Event()
         self.continuous_motion_token = token
         self._refresh_motion_controls()
-        threading.Thread(
+        self.continuous_thread = threading.Thread(
             target=self._continuous_movement_worker,
             args=(token, direction),
             name="manual-continuous",
             daemon=True,
-        ).start()
+        )
+        self.continuous_thread.start()
 
     def _continuous_movement_worker(self, token, direction):
         try:
@@ -2729,31 +3388,28 @@ class MyInterface:
         if self.strain_test_active:
             raise RuntimeError("Manual movement is disabled while a strain test is active")
         if self.neutral_motion_active:
-            raise RuntimeError("Wait for the neutral return to finish")
+            raise RuntimeError("Wait for the machine-zero return to finish")
         self.reference_manager.require_verified()
         snapshot = self.get_feedback()
         if snapshot.active_errors:
             raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
-    def return_to_neutral(self):
-        """Return to the verified physical 90 degree neutral for this session."""
+    def return_to_machine_zero(self):
+        """Return to the saved machine-zero encoder position for this controller session."""
         if self.odrive_controller is None:
-            self.update_terminal("Connect the ODrive before returning to neutral.\n")
+            self.update_terminal("Connect the ODrive before returning to machine zero.\n")
             return
         if not self.reference_manager.verified:
-            self.update_terminal(f"Neutral reference is unavailable: {self.reference_manager.reason}\n")
-            return
-        if not self.manual_mode.get():
-            self.update_terminal("Enable manual mode before returning to neutral.\n")
+            self.update_terminal(f"Machine zero is unavailable: {self.reference_manager.reason}\n")
             return
         if self.strain_test_active or self.neutral_motion_active:
-            self.update_terminal("Neutral return is unavailable while another motion is active.\n")
+            self.update_terminal("Machine-zero return is unavailable while another motion is active.\n")
             return
 
         confirmation = CTkMessagebox(
-            title="Return to Neutral",
+            title="Return to Machine Zero",
             message=(
-                "Return to the verified physical 90 degree neutral?\n\n"
+                "Return to verified machine zero (fixture physical 90 degrees)?\n\n"
                 "Confirm the fixture is clear and the physical E-stop is accessible."
             ),
             icon="question",
@@ -2767,7 +3423,7 @@ class MyInterface:
         try:
             token = self.motion_coordinator.acquire("neutral-return")
         except MotionConflictError as exc:
-            self.update_terminal(f"Neutral return blocked: {exc}\n")
+            self.update_terminal(f"Machine-zero return blocked: {exc}\n")
             return
         self.neutral_stop_event = threading.Event()
         self.neutral_motion_token = token
@@ -2806,7 +3462,7 @@ class MyInterface:
             tolerance_turns = afo_degrees_to_odrive_turns(
                 motion["position_tolerance_deg"], self.system_config
             )
-            self.motion_phase = "returning_to_verified_neutral"
+            self.motion_phase = "returning_to_machine_zero"
             snapshot = self.get_feedback()
             self.reference_manager.write_checkpoint(
                 MotionState.MOVING,
@@ -2816,7 +3472,7 @@ class MyInterface:
             )
             self._submit_position(token, neutral_target)
             self.update_terminal(
-                f"Returning to verified 90 degree neutral at {neutral_target:.8f} session turns.\n"
+                f"Returning to machine zero at {neutral_target:.8f} session turns.\n"
             )
             wait_for_settle(
                 self.get_feedback,
@@ -2834,22 +3490,22 @@ class MyInterface:
                 expected_disarm_reason=self.expected_disarm_reason,
                 progress=self._mark_control_health,
             )
-            idle_result = self.safe_idle_motor("neutral reached", token=token)
+            idle_result = self.safe_idle_motor("machine zero reached", token=token)
             if not idle_result or not idle_result.confirmed:
-                raise RuntimeError("Neutral reached but ODrive idle was not confirmed")
+                raise RuntimeError("Machine zero reached but ODrive idle was not confirmed")
             self.observe_idle_neutral(
                 neutral_target,
                 cancelled=lambda: self.neutral_stop_event.is_set(),
             )
-            self.update_terminal("Neutral reference reached.\n")
-            self.set_status("MANUAL / NEUTRAL", "#0f766e")
+            self.update_terminal("Machine zero reached.\n")
+            self.set_status("MACHINE ZERO / IDLE", "#0f766e")
         except TestStopped:
-            self.safe_idle_motor("neutral return stopped", token=token)
-            self.update_terminal("Neutral return stopped.\n")
+            self.safe_idle_motor("machine-zero return stopped", token=token)
+            self.update_terminal("Machine-zero return stopped.\n")
         except Exception as exc:
-            self.safe_idle_motor("neutral return error", token=token)
+            self.safe_idle_motor("machine-zero return error", token=token)
             self.set_status("ERROR / IDLE", RED)
-            self.update_terminal(f"Neutral return failed: {exc}\n")
+            self.update_terminal(f"Machine-zero return failed: {exc}\n")
         finally:
             self.motion_phase = "idle"
             self.motion_coordinator.release(token)

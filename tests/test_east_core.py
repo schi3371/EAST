@@ -6,6 +6,7 @@ from pathlib import Path
 
 from east_core import (
     CSV_COLUMNS,
+    EmptyMachineTare,
     afo_acceleration_to_odrive_turns_s2,
     afo_degrees_to_odrive_turns,
     afo_speed_to_odrive_turns_s,
@@ -13,12 +14,17 @@ from east_core import (
     calculate_torque_nm,
     constant_speed_span_deg,
     create_run_paths,
+    empty_machine_tare_identity_mismatches,
     load_tester_config,
     make_run_metadata,
+    make_preset_metadata,
     motion_timeout_seconds,
     odrive_turns_to_afo_degrees,
+    preset_motion_values,
+    preset_values_modified,
     reconcile_run_outcome,
     sanitise_identifier,
+    validate_empty_machine_tare,
     validate_test_parameters,
 )
 
@@ -30,6 +36,7 @@ def valid_values():
         "afo_id": "AFO-001",
         "fixture_id": "FIX-01",
         "calibration_id": "CAL-01",
+        "test_type": "custom",
         "cycles": "3",
         "speed_deg_s": "5",
         "acceleration_deg_s2": "10",
@@ -71,6 +78,44 @@ class EastCoreTests(unittest.TestCase):
         self.assertEqual(parameters.commanded_afo_speed_deg_s, 5.0)
         self.assertEqual(parameters.commanded_afo_acceleration_deg_s2, 10.0)
         self.assertEqual(asdict(parameters)["afo_id"], "AFO-001")
+        self.assertEqual(parameters.test_type, "custom")
+
+    def test_standard_presets_have_the_approved_provisional_values(self):
+        expected_motion = {
+            "cycles": 3,
+            "minimum_angle_deg": 10.0,
+            "maximum_angle_deg": 10.0,
+            "speed_deg_s": 5.0,
+            "acceleration_deg_s2": 100.0,
+        }
+        afo = self.config["test_presets"]["standard_afo_test"]
+        baseline = self.config["test_presets"]["standard_empty_machine_baseline"]
+        self.assertEqual(preset_motion_values(afo), expected_motion)
+        self.assertEqual(preset_motion_values(baseline), expected_motion)
+        self.assertEqual(afo["version"], "1.0")
+        self.assertEqual(afo["test_type"], "afo_test")
+        self.assertEqual(baseline["test_type"], "empty_machine_baseline")
+
+    def test_preset_modification_detection_compares_only_motion_values(self):
+        preset = self.config["test_presets"]["standard_afo_test"]
+        values = {key: str(value) for key, value in preset_motion_values(preset).items()}
+        self.assertFalse(preset_values_modified(values, preset))
+        values["speed_deg_s"] = "6"
+        self.assertTrue(preset_values_modified(values, preset))
+
+    def test_afo_test_requires_afo_id_but_baseline_uses_reserved_id(self):
+        values = valid_values()
+        values.update({
+            "test_type": "afo_test",
+            "afo_id": "",
+        })
+        with self.assertRaisesRegex(ValueError, "Enter an AFO ID"):
+            validate_test_parameters(values, self.config)
+
+        values["test_type"] = "empty_machine_baseline"
+        parameters = validate_test_parameters(values, self.config)
+        self.assertEqual(parameters.afo_id, "EMPTY_MACHINE_BASELINE")
+        self.assertEqual(parameters.test_type, "empty_machine_baseline")
 
     def test_provisional_speed_limit_is_20_deg_s(self):
         motion = self.config["motion"]
@@ -153,6 +198,11 @@ class EastCoreTests(unittest.TestCase):
         self.assertIn("Commanded Cycles", CSV_COLUMNS)
         self.assertIn("ODrive-Derived AFO Angle (deg)", CSV_COLUMNS)
         self.assertIn("ODrive-Derived AFO Velocity (deg/s)", CSV_COLUMNS)
+        self.assertIn("Movement Direction", CSV_COLUMNS)
+        for protocol_column in (
+            "Test Type", "Preset Name", "Preset Version", "Preset Modified",
+        ):
+            self.assertIn(protocol_column, CSV_COLUMNS)
         for identifier in ("File Name Prefix", "Operator ID", "AFO ID", "Fixture ID", "Calibration ID"):
             self.assertIn(identifier, CSV_COLUMNS)
 
@@ -172,6 +222,128 @@ class EastCoreTests(unittest.TestCase):
         self.assertEqual(logged["max_angle_deg"], 4.0)
         self.assertEqual(logged["cycles"], 3)
         self.assertIn("commanded values", metadata["test_parameter_status"])
+
+    def test_preset_metadata_preserves_original_and_actual_values(self):
+        values = valid_values()
+        values.update({
+            "test_type": "afo_test",
+            "cycles": "3",
+            "min_angle_deg": "10",
+            "max_angle_deg": "10",
+            "speed_deg_s": "6",
+            "acceleration_deg_s2": "100",
+        })
+        parameters = validate_test_parameters(values, self.config)
+        preset = self.config["test_presets"]["standard_afo_test"]
+        protocol = make_preset_metadata(
+            "standard_afo_test",
+            preset,
+            parameters,
+            "2026-09-28T10:00:00+10:00",
+            modified=True,
+        )
+        metadata = make_run_metadata(
+            parameters,
+            self.config,
+            tare_offset=0.001,
+            csv_path=Path("verification.csv"),
+            odrive_snapshot={},
+            preset_metadata=protocol,
+        )
+        self.assertEqual(metadata["protocol"]["preset_key"], "standard_afo_test")
+        self.assertEqual(metadata["protocol"]["preset_version"], "1.0")
+        self.assertEqual(metadata["protocol"]["test_type"], "afo_test")
+        self.assertEqual(metadata["protocol"]["original_preset_values"]["speed_deg_s"], 5.0)
+        self.assertEqual(metadata["protocol"]["actual_commanded_values"]["speed_deg_s"], 6.0)
+        self.assertTrue(metadata["protocol"]["preset_modified"])
+
+    def test_empty_machine_tare_is_bound_to_fixture_calibration_and_phidget(self):
+        parameters = validate_test_parameters(valid_values(), self.config)
+        valid, reason = validate_empty_machine_tare(
+            None, parameters, self.config
+        )
+        self.assertFalse(valid)
+        self.assertIn("Capture an empty-machine tare", reason)
+        tare = EmptyMachineTare(
+            offset_v_per_v=0.001,
+            captured_at="2026-09-28T10:00:00+10:00",
+            operator_id="SC",
+            fixture_id="FIX-01",
+            calibration_id="CAL-01",
+            phidget_serial_number=12345,
+            phidget_channel=self.config["hardware"]["phidget_channel"],
+            sample_count=20,
+        )
+        valid, _ = validate_empty_machine_tare(
+            tare, parameters, self.config, connected_phidget_serial_number=12345
+        )
+        self.assertTrue(valid)
+
+        changed = valid_values()
+        changed["fixture_id"] = "FIX-02"
+        valid, reason = validate_empty_machine_tare(
+            tare,
+            validate_test_parameters(changed, self.config),
+            self.config,
+            connected_phidget_serial_number=12345,
+        )
+        self.assertFalse(valid)
+        self.assertIn("does not match tare fixture", reason)
+
+        fixture_mismatches = empty_machine_tare_identity_mismatches(
+            tare, "FIX-02", "CAL-01", self.config
+        )
+        self.assertEqual(len(fixture_mismatches), 1)
+        self.assertIn("Fixture ID", fixture_mismatches[0])
+        self.assertEqual(
+            empty_machine_tare_identity_mismatches(
+                tare, "FIX-01", "CAL-01", self.config
+            ),
+            [],
+        )
+
+        calibration_mismatches = empty_machine_tare_identity_mismatches(
+            tare, "FIX-01", "CAL-02", self.config
+        )
+        self.assertEqual(len(calibration_mismatches), 1)
+        self.assertIn("Calibration ID", calibration_mismatches[0])
+
+        valid, reason = validate_empty_machine_tare(
+            tare, parameters, self.config, connected_phidget_serial_number=99999
+        )
+        self.assertFalse(valid)
+        self.assertIn("Connected Phidget", reason)
+
+    def test_stored_empty_machine_tare_preserves_afo_preload_and_metadata(self):
+        parameters = validate_test_parameters(valid_values(), self.config)
+        tare = EmptyMachineTare(
+            offset_v_per_v=0.001,
+            captured_at="2026-09-28T10:00:00+10:00",
+            operator_id="SC",
+            fixture_id=parameters.fixture_id,
+            calibration_id=parameters.calibration_id,
+            phidget_serial_number=12345,
+            phidget_channel=self.config["hardware"]["phidget_channel"],
+            sample_count=20,
+        )
+        ratio_delta = 0.25 / self.config["load_cell"]["mass_kg_per_voltage_ratio"]
+        mass_kg, _, force_n = calculate_load(
+            tare.offset_v_per_v + ratio_delta, tare.offset_v_per_v, self.config
+        )
+        self.assertAlmostEqual(mass_kg, 0.25)
+        self.assertGreater(force_n, 0.0)
+        self.assertGreater(calculate_torque_nm(force_n, 0.0, self.config), 0.0)
+        metadata = make_run_metadata(
+            parameters,
+            self.config,
+            tare.offset_v_per_v,
+            Path("verification.csv"),
+            {},
+            tare_metadata=tare.to_dict(),
+        )
+        self.assertEqual(
+            metadata["calibration"]["empty_machine_tare"]["sample_count"], 20
+        )
 
     def test_identifier_sanitisation(self):
         self.assertEqual(sanitise_identifier("AFO 01 / left"), "AFO_01_left")
@@ -198,6 +370,16 @@ class EastCoreTests(unittest.TestCase):
             path = Path(directory) / "tester_config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "health-coupled"):
+                load_tester_config(path)
+
+    def test_continuity_cannot_be_enabled_without_verified_uptime_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(json.dumps(self.config))
+            config["reference"]["session_continuity_enabled"] = True
+            config["reference"]["odrive_uptime_units"] = None
+            path = Path(directory) / "tester_config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "uptime_units"):
                 load_tester_config(path)
 
     def test_feedback_stale_limit_must_exceed_capture_limit(self):

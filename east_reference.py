@@ -1,4 +1,4 @@
-"""Persistent neutral-reference and motion-safety primitives for EAST.
+"""Persistent machine-zero reference and motion-safety primitives for EAST.
 
 This module deliberately has no GUI, ODrive, or Phidget imports so its safety
 logic can be exercised on development machines without tester hardware.
@@ -28,7 +28,7 @@ class ReferenceError(RuntimeError):
 
 
 class ReferenceRequiredError(ReferenceError):
-    """Raised when a motion requires a verified neutral reference."""
+    """Raised when a motion requires a verified machine-zero reference."""
 
 
 class FeedbackError(ReferenceError):
@@ -265,7 +265,7 @@ class SessionMapping:
         mapping = cls(**payload)
         if not mapping.reference_id or int(mapping.reference_generation) < 1:
             raise ValueError("invalid session-mapping reference identity")
-        _finite(mapping.neutral_position_turns, "session neutral position")
+        _finite(mapping.neutral_position_turns, "session machine-zero position")
         HardwareFingerprint.from_dict(mapping.hardware_fingerprint)
         return mapping
 
@@ -427,7 +427,7 @@ class AtomicStateStore:
             except OSError:
                 preserved = self.reference_path
             raise StateCorruptError(
-                f"Invalid neutral reference preserved at {preserved}: {exc}"
+                f"Invalid machine-zero reference preserved at {preserved}: {exc}"
             ) from exc
         self._last_generations[self.reference_path] = record.generation
         return record
@@ -587,7 +587,7 @@ class ReferenceManager:
         self.record: Optional[ReferenceRecord] = None
         self.mapping: Optional[SessionMapping] = None
         self.confidence = ReferenceConfidence.UNKNOWN
-        self.reason = "No neutral reference has been loaded"
+        self.reason = "No machine-zero reference has been loaded"
         self._generation = 0
         self._checkpoint_generation = 0
         try:
@@ -597,11 +597,11 @@ class ReferenceManager:
             self.reason = str(exc)
         else:
             if self.record is None:
-                self.reason = "No neutral reference has been established"
+                self.reason = "No machine-zero reference has been established"
             else:
                 self._generation = self.record.generation
                 self.confidence = ReferenceConfidence.RECOVERY_REQUIRED
-                self.reason = "Physical neutral must be verified for this controller session"
+                self.reason = "Machine zero must be verified for this controller session"
         try:
             checkpoint = self.store.load_checkpoint()
             if checkpoint:
@@ -630,23 +630,23 @@ class ReferenceManager:
         method: str = "operator_confirmed_physical_90_deg",
     ) -> SessionMapping:
         if not acknowledgement:
-            raise ReferenceError("Physical-neutral acknowledgement is required")
+            raise ReferenceError("Machine-zero acknowledgement is required")
         snapshot.validate()
         if snapshot.active_errors:
             raise ReferenceError(
-                f"ODrive has active errors ({snapshot.active_errors}); neutral cannot be set"
+                f"ODrive has active errors ({snapshot.active_errors}); machine zero cannot be set"
             )
         reference_cfg = self.config["reference"]
         max_velocity = float(reference_cfg["stationary_velocity_limit_deg_s"])
         degrees_per_turn = float(self.config["motion"]["afo_degrees_per_odrive_turn"])
         if abs(snapshot.velocity_turns_s * degrees_per_turn) > max_velocity:
-            raise ReferenceError("Motor must be stationary before setting neutral")
+            raise ReferenceError("Motor must be stationary before setting machine zero")
         operator = str(operator).strip()
         fixture_id = str(fixture_id).strip()
         if not operator:
-            raise ReferenceError("Operator ID is required to set neutral")
+            raise ReferenceError("Operator ID is required to set machine zero")
         if not fixture_id:
-            raise ReferenceError("Fixture ID is required to set neutral")
+            raise ReferenceError("Fixture ID is required to set machine zero")
 
         self._generation += 1
         phase_value = snapshot.raw_phase if reference_cfg["phase_recovery_enabled"] else None
@@ -657,7 +657,10 @@ class ReferenceManager:
             established_at=utc_now_iso(),
             established_by=operator,
             fixture_id=fixture_id,
-            physical_definition="Mounted AFO/fixture physically aligned at 90 degrees",
+            physical_definition=(
+                "Fixture mechanically aligned at physical 90 degrees; "
+                "machine angle defined as 0 degrees."
+            ),
             afo_degrees_per_odrive_turn=degrees_per_turn,
             hardware_fingerprint=fingerprint.to_dict(),
             phase_at_neutral=phase_value,
@@ -677,14 +680,16 @@ class ReferenceManager:
         self.record = record
         self.mapping = mapping
         self.confidence = ReferenceConfidence.VERIFIED
-        self.reason = "Physical 90 degree neutral verified for this controller session"
+        self.reason = "Machine zero verified for this controller session"
         try:
             self.store.append_event("neutral_verified", self.metadata_snapshot())
             self.write_checkpoint(MotionState.IDLE, snapshot, clean_shutdown=False)
         except Exception as exc:
             self.mapping = None
             self.confidence = ReferenceConfidence.FAULT
-            self.reason = f"Neutral was not enabled because runtime-state persistence failed: {exc}"
+            self.reason = (
+                f"Machine zero was not enabled because runtime-state persistence failed: {exc}"
+            )
             raise
         return mapping
 
@@ -706,7 +711,7 @@ class ReferenceManager:
         record = self.record
         if record is None:
             raise ReferenceRequiredError(
-                "Measured-angle recovery requires an existing physical-neutral reference"
+                "Measured-displacement recovery requires an existing machine-zero reference"
             )
         snapshot.validate()
         if snapshot.active_errors:
@@ -739,7 +744,7 @@ class ReferenceManager:
         if not str(operator).strip():
             raise ReferenceError("Operator ID is required for measured-angle recovery")
         if str(fixture_id).strip() != record.fixture_id:
-            raise ReferenceError("Fixture ID does not match the saved neutral reference")
+            raise ReferenceError("Fixture ID does not match the saved machine-zero reference")
 
         degrees_per_turn = float(self.config["motion"]["afo_degrees_per_odrive_turn"])
         if abs(snapshot.velocity_turns_s * degrees_per_turn) > float(
@@ -768,7 +773,7 @@ class ReferenceManager:
         ]
         if len(accepted) != 1:
             raise ReferenceError(
-                "Measured angle and saved phase do not identify exactly one neutral "
+                "Measured displacement and saved phase do not identify exactly one machine-zero "
                 f"candidate ({len(accepted)} matched)"
             )
         mapping = SessionMapping(
@@ -781,7 +786,7 @@ class ReferenceManager:
         )
         self.mapping = mapping
         self.confidence = ReferenceConfidence.VERIFIED
-        self.reason = "Neutral mapping recovered from measured angle and saved phase"
+        self.reason = "Machine-zero mapping recovered from measured displacement and saved phase"
         try:
             self.store.append_event(
                 "neutral_measured_angle_recovered",
@@ -834,7 +839,7 @@ class ReferenceManager:
             rel_tol=0.0,
             abs_tol=1e-12,
         ):
-            return False, "motion conversion changed since neutral was established"
+            return False, "motion conversion changed since machine zero was established"
         period = cfg.get("phase_period")
         turns_per_period = cfg.get("controller_turns_per_phase_period")
         sign = cfg.get("phase_sign")
@@ -855,7 +860,7 @@ class ReferenceManager:
             float(record.phase_uncertainty_turns or 0.0),
         )
         if not candidates:
-            return False, "phase recovery found no neutral candidate within safety bounds"
+            return False, "phase recovery found no machine-zero candidate within safety bounds"
         if len(candidates) != 1:
             return False, f"phase recovery is ambiguous ({len(candidates)} candidates)"
         mapping = SessionMapping(
@@ -868,7 +873,7 @@ class ReferenceManager:
         )
         self.mapping = mapping
         self.confidence = ReferenceConfidence.VERIFIED
-        self.reason = "Neutral mapping recovered from confirmed encoder phase model"
+        self.reason = "Machine-zero mapping recovered from confirmed encoder phase model"
         try:
             self.store.append_event("neutral_phase_recovered", self.metadata_snapshot())
             self.write_checkpoint(MotionState.IDLE, snapshot, clean_shutdown=False)
@@ -934,6 +939,35 @@ class ReferenceManager:
             "session_mapping": self.mapping.to_dict() if self.mapping else None,
             "state_directory": str(self.store.directory),
         }
+
+
+def persist_idle_continuity_checkpoint(
+    manager: ReferenceManager,
+    snapshot: Optional[FeedbackSnapshot],
+    idle_confirmed: bool,
+    reason: str,
+    expected_idle_state: Optional[int] = None,
+) -> bool:
+    """Persist clean continuity evidence only after valid, error-free idle feedback."""
+    checkpoint_snapshot = snapshot
+    clean = bool(idle_confirmed and snapshot is not None)
+    if clean:
+        try:
+            snapshot.validate()
+            clean = snapshot.active_errors == 0 and (
+                expected_idle_state is None
+                or snapshot.current_state == int(expected_idle_state)
+            )
+        except FeedbackError:
+            clean = False
+            checkpoint_snapshot = None
+    manager.write_checkpoint(
+        MotionState.IDLE if clean else MotionState.FAULT,
+        checkpoint_snapshot,
+        clean_shutdown=clean,
+        extra={"reason": reason, "continuity_checkpoint": "clean" if clean else "dirty"},
+    )
+    return clean
 
 
 def resolve_phase_candidates(
@@ -1002,7 +1036,7 @@ def evaluate_continuity(
     except (TypeError, ValueError, FeedbackError) as exc:
         return False, f"checkpoint feedback is invalid: {exc}", None
     if reference_record is None:
-        return False, "saved neutral-reference record is unavailable", None
+        return False, "saved machine-zero reference record is unavailable", None
     if checkpoint.get("reference_id") != reference_record.reference_id:
         return False, "checkpoint reference identity does not match saved reference", None
     if prior_mapping.get("reference_id") != reference_record.reference_id:
@@ -1028,7 +1062,7 @@ def evaluate_continuity(
         rel_tol=0.0,
         abs_tol=1e-12,
     ):
-        return False, "motion conversion changed since neutral was established", None
+        return False, "motion conversion changed since machine zero was established", None
     prior_uptime = prior_feedback.get("system_uptime")
     if prior_uptime is None or current_snapshot.system_uptime is None:
         return False, "controller uptime evidence is unavailable", None

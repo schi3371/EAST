@@ -26,6 +26,7 @@ from east_reference import (
     StateCorruptError,
     evaluate_continuity,
     hardware_fingerprints_match,
+    persist_idle_continuity_checkpoint,
     resolve_phase_candidates,
     wait_for_settle,
 )
@@ -108,6 +109,48 @@ class ReferenceTests(unittest.TestCase):
             upper = manager.target_for_angle(15.0)
             self.assertLess(lower, 42.25)
             self.assertGreater(upper, 42.25)
+            self.assertTrue(manager.verified)
+
+    def test_machine_zero_definition_is_explicit_in_persisted_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ReferenceManager(self.config, AtomicStateStore(Path(directory)))
+            manager.establish_at_physical_neutral(
+                snapshot(position=42.25), fingerprint(), "SC", "FIX-1", True
+            )
+            self.assertEqual(
+                manager.record.physical_definition,
+                "Fixture mechanically aligned at physical 90 degrees; "
+                "machine angle defined as 0 degrees.",
+            )
+
+    def test_clean_continuity_checkpoint_requires_idle_error_free_feedback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AtomicStateStore(Path(directory))
+            manager = ReferenceManager(self.config, store)
+            manager.establish_at_physical_neutral(
+                snapshot(position=2.0), fingerprint(), "SC", "FIX-1", True
+            )
+            self.assertTrue(
+                persist_idle_continuity_checkpoint(
+                    manager,
+                    snapshot(position=2.0, errors=0),
+                    True,
+                    "manual disconnect",
+                    expected_idle_state=1,
+                )
+            )
+            self.assertTrue(store.load_checkpoint()["clean_shutdown"])
+
+            self.assertFalse(
+                persist_idle_continuity_checkpoint(
+                    manager,
+                    snapshot(position=2.0, errors=1),
+                    True,
+                    "manual disconnect",
+                    expected_idle_state=1,
+                )
+            )
+            self.assertFalse(store.load_checkpoint()["clean_shutdown"])
 
     def test_reference_survives_but_mapping_does_not_auto_restore(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -475,6 +518,38 @@ class ReferenceTests(unittest.TestCase):
         )
         self.assertFalse(valid)
         self.assertIn("backwards", reason)
+
+    def test_dirty_checkpoint_rejects_continuity(self):
+        enabled = json.loads(json.dumps(self.config))
+        enabled["reference"]["session_continuity_enabled"] = True
+        enabled["reference"]["odrive_uptime_units"] = "seconds"
+        prior = fingerprint()
+        base_wall = 1_800_000_000.0
+        checkpoint = {
+            "reference_id": "r1",
+            "clean_shutdown": False,
+            "written_at": datetime.fromtimestamp(base_wall, timezone.utc).isoformat(),
+            "session_mapping": {
+                "reference_id": "r1",
+                "reference_generation": 1,
+                "neutral_position_turns": 12.0,
+                "verified_at": "now",
+                "verification_method": "physical",
+                "hardware_fingerprint": prior.to_dict(),
+            },
+            "feedback": snapshot(uptime=50.0).to_dict(),
+        }
+        valid, reason, mapping = evaluate_continuity(
+            checkpoint,
+            snapshot(uptime=51.0),
+            prior,
+            enabled,
+            now_wall_s=base_wall + 1.0,
+            reference_record=reference_record(prior),
+        )
+        self.assertFalse(valid)
+        self.assertIsNone(mapping)
+        self.assertIn("not confirmed clean", reason)
 
     def test_phase_candidate_resolution_zero_multiple_and_unique(self):
         multiple = resolve_phase_candidates(0.1, 0.2, 1.0, 1.0, 0.0, 2.0, 1)

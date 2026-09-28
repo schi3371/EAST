@@ -23,6 +23,7 @@ CSV_COLUMNS = [
     "Sample Index",
     "Cycle",
     "Motion Phase",
+    "Movement Direction",
     "Commanded AFO Speed (deg/s)",
     "Commanded AFO Acceleration (deg/s^2)",
     "Commanded Minimum Angle (deg)",
@@ -33,6 +34,10 @@ CSV_COLUMNS = [
     "AFO ID",
     "Fixture ID",
     "Calibration ID",
+    "Test Type",
+    "Preset Name",
+    "Preset Version",
+    "Preset Modified",
     "Commanded ODrive Velocity (turns/s)",
     "Nominal Move Distance (deg)",
     "Expected Constant-Speed Span (deg)",
@@ -62,11 +67,166 @@ class TestParameters:
     afo_id: str
     fixture_id: str
     calibration_id: str
+    test_type: str
     cycles: int
     commanded_afo_speed_deg_s: float
     commanded_afo_acceleration_deg_s2: float
     min_angle_deg: float
     max_angle_deg: float
+
+
+@dataclass(frozen=True)
+class EmptyMachineTare:
+    """A load-cell tare captured with the fixture at machine zero and no AFO fitted."""
+
+    offset_v_per_v: float
+    captured_at: str
+    operator_id: str
+    fixture_id: str
+    calibration_id: str
+    phidget_serial_number: Optional[int]
+    phidget_channel: int
+    sample_count: int
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.offset_v_per_v)):
+            raise ValueError("Empty-machine tare offset must be finite")
+        for value, label in (
+            (self.captured_at, "capture time"),
+            (self.operator_id, "operator ID"),
+            (self.fixture_id, "fixture ID"),
+            (self.calibration_id, "calibration ID"),
+        ):
+            if not str(value).strip():
+                raise ValueError(f"Empty-machine tare {label} is required")
+        if int(self.phidget_channel) < 0:
+            raise ValueError("Empty-machine tare Phidget channel must not be negative")
+        if int(self.sample_count) <= 0:
+            raise ValueError("Empty-machine tare sample count must be positive")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def validate_empty_machine_tare(
+    tare: Optional[EmptyMachineTare],
+    parameters: TestParameters,
+    config: Dict[str, Any],
+    connected_phidget_serial_number: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """Confirm that a session tare belongs to the current test and load-cell identity."""
+    if tare is None:
+        return False, "Capture an empty-machine tare before mounting and testing the AFO."
+    mismatches = empty_machine_tare_identity_mismatches(
+        tare,
+        parameters.fixture_id,
+        parameters.calibration_id,
+        config,
+    )
+    if mismatches:
+        return False, "; ".join(mismatches)
+    expected_channel = int(config["hardware"]["phidget_channel"])
+    if tare.phidget_channel != expected_channel:
+        return False, "Phidget channel changed after the empty-machine tare was captured."
+    configured_serial = config["hardware"].get("phidget_serial_number")
+    if configured_serial is not None and tare.phidget_serial_number != int(configured_serial):
+        return False, "Configured Phidget serial number does not match the tare record."
+    if (
+        connected_phidget_serial_number is not None
+        and tare.phidget_serial_number is not None
+        and tare.phidget_serial_number != int(connected_phidget_serial_number)
+    ):
+        return False, "Connected Phidget is not the device used for the empty-machine tare."
+    return True, "Empty-machine tare is valid for this measurement session."
+
+
+def empty_machine_tare_identity_mismatches(
+    tare: Optional[EmptyMachineTare],
+    fixture_id: str,
+    calibration_id: str,
+    config: Dict[str, Any],
+) -> list[str]:
+    """Return non-destructive identity-entry mismatches for a stored tare."""
+    if tare is None:
+        return []
+    mismatches = []
+    entered_fixture = str(fixture_id).strip()
+    entered_calibration = str(calibration_id).strip()
+    if entered_fixture != tare.fixture_id:
+        mismatches.append(
+            f"Fixture ID '{entered_fixture or '[empty]'}' does not match tare fixture "
+            f"'{tare.fixture_id}'"
+        )
+    if entered_calibration != tare.calibration_id:
+        mismatches.append(
+            f"Calibration ID '{entered_calibration or '[empty]'}' does not match tare "
+            f"calibration '{tare.calibration_id}'"
+        )
+    expected_channel = int(config["hardware"]["phidget_channel"])
+    if tare.phidget_channel != expected_channel:
+        mismatches.append(
+            f"Phidget channel {expected_channel} does not match tare channel "
+            f"{tare.phidget_channel}"
+        )
+    configured_serial = config["hardware"].get("phidget_serial_number")
+    if configured_serial is not None and tare.phidget_serial_number != int(configured_serial):
+        mismatches.append("Configured Phidget serial number does not match the tare record")
+    return mismatches
+
+
+PRESET_MOTION_FIELDS = (
+    "cycles",
+    "minimum_angle_deg",
+    "maximum_angle_deg",
+    "speed_deg_s",
+    "acceleration_deg_s2",
+)
+
+
+def preset_motion_values(preset: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: preset[key] for key in PRESET_MOTION_FIELDS}
+
+
+def preset_values_modified(values: Dict[str, Any], preset: Dict[str, Any]) -> bool:
+    """Compare editable motion fields numerically with a loaded preset."""
+    expected = preset_motion_values(preset)
+    try:
+        if int(str(values["cycles"]).strip()) != int(expected["cycles"]):
+            return True
+        for key in PRESET_MOTION_FIELDS[1:]:
+            if not math.isclose(
+                float(values[key]), float(expected[key]), rel_tol=0.0, abs_tol=1e-9
+            ):
+                return True
+    except (KeyError, TypeError, ValueError):
+        return True
+    return False
+
+
+def make_preset_metadata(
+    preset_key: str,
+    preset: Optional[Dict[str, Any]],
+    parameters: TestParameters,
+    loaded_at: str,
+    modified: bool,
+) -> Dict[str, Any]:
+    actual = {
+        "cycles": parameters.cycles,
+        "minimum_angle_deg": parameters.min_angle_deg,
+        "maximum_angle_deg": parameters.max_angle_deg,
+        "speed_deg_s": parameters.commanded_afo_speed_deg_s,
+        "acceleration_deg_s2": parameters.commanded_afo_acceleration_deg_s2,
+    }
+    return {
+        "preset_key": preset_key,
+        "preset_display_name": preset["display_name"] if preset else "Custom",
+        "preset_version": preset["version"] if preset else None,
+        "test_type": parameters.test_type,
+        "original_preset_values": preset_motion_values(preset) if preset else {},
+        "actual_commanded_values": actual,
+        "preset_modified": bool(modified),
+        "loaded_at": loaded_at,
+    }
 
 
 def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -76,7 +236,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
 
     required_sections = {
         "hardware", "motion", "controller", "load_cell", "torque",
-        "acquisition", "logging", "reference",
+        "acquisition", "logging", "reference", "test_presets",
     }
     missing = sorted(required_sections.difference(config))
     if missing:
@@ -126,6 +286,14 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError("reference.required_pos_vel_mapper_scale must be finite")
     if float(reference["pos_vel_mapper_scale_tolerance"]) < 0:
         raise ValueError("reference.pos_vel_mapper_scale_tolerance must not be negative")
+    if (
+        reference["session_continuity_enabled"]
+        and reference.get("odrive_uptime_units") not in ("seconds", "milliseconds")
+    ):
+        raise ValueError(
+            "reference.odrive_uptime_units must be explicitly verified before "
+            "session continuity is enabled"
+        )
     if reference["watchdog_enabled"] and not reference["watchdog_health_coupled_verified"]:
         raise ValueError(
             "ODrive watchdog cannot be enabled until health-coupled feeding is verified"
@@ -133,7 +301,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     for key in (
         "stationary_velocity_limit_deg_s", "settle_velocity_limit_deg_s",
         "idle_confirmation_timeout_s", "recovery_jog_step_deg",
-        "recovery_jog_maximum_cumulative_deg", "recovery_timeout_s",
+        "recovery_jog_maximum_cumulative_deg",
         "recovery_speed_deg_s", "recovery_acceleration_deg_s2", "watchdog_timeout_s",
     ):
         if float(reference[key]) <= 0:
@@ -144,6 +312,21 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
                 raise ValueError(f"reference.{key} is required when phase recovery is enabled")
         if int(reference["phase_sign"]) not in (-1, 1):
             raise ValueError("reference.phase_sign must be -1 or +1")
+    required_preset_fields = {
+        "display_name", "version", "test_type", *PRESET_MOTION_FIELDS,
+    }
+    display_names = set()
+    for key, preset in config["test_presets"].items():
+        missing_fields = required_preset_fields.difference(preset)
+        if missing_fields:
+            raise ValueError(
+                f"test_presets.{key} is missing: {', '.join(sorted(missing_fields))}"
+            )
+        if preset["test_type"] not in ("afo_test", "empty_machine_baseline"):
+            raise ValueError(f"test_presets.{key}.test_type is invalid")
+        if preset["display_name"] in display_names:
+            raise ValueError("Test-preset display names must be unique")
+        display_names.add(preset["display_name"])
     return config
 
 
@@ -152,7 +335,6 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
     required_text = {
         "file_prefix": "file prefix",
         "operator": "operator",
-        "afo_id": "AFO ID",
         "fixture_id": "fixture ID",
         "calibration_id": "calibration ID",
     }
@@ -161,6 +343,16 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
         cleaned[key] = str(values.get(key, "")).strip()
         if not cleaned[key]:
             raise ValueError(f"Enter a {label}.")
+    test_type = str(values.get("test_type", "custom")).strip()
+    if test_type not in ("custom", "afo_test", "empty_machine_baseline"):
+        raise ValueError("Test type is invalid.")
+    entered_afo_id = str(values.get("afo_id", "")).strip()
+    if test_type == "empty_machine_baseline":
+        cleaned["afo_id"] = "EMPTY_MACHINE_BASELINE"
+    elif entered_afo_id:
+        cleaned["afo_id"] = entered_afo_id
+    else:
+        raise ValueError("Enter an AFO ID.")
 
     try:
         cycles = int(str(values["cycles"]).strip())
@@ -229,7 +421,7 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
     for phase, distance, move_speed, move_acceleration in (
         ("startup to positive endpoint", max_angle, speed, acceleration),
         ("endpoint-to-endpoint sweep", total_traverse, speed, acceleration),
-        ("return to verified neutral", max_angle,
+        ("return to machine zero", max_angle,
          motion["neutral_return_speed_deg_s"], motion["neutral_return_acceleration_deg_s2"]),
     ):
         try:
@@ -243,6 +435,7 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
         afo_id=cleaned["afo_id"],
         fixture_id=cleaned["fixture_id"],
         calibration_id=cleaned["calibration_id"],
+        test_type=test_type,
         cycles=cycles,
         commanded_afo_speed_deg_s=speed,
         commanded_afo_acceleration_deg_s2=acceleration,
@@ -396,9 +589,11 @@ def make_run_metadata(
     tare_offset: float,
     csv_path: Path,
     odrive_snapshot: Dict[str, Any],
+    tare_metadata: Optional[Dict[str, Any]] = None,
+    preset_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_status": "started",
         "started_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
         "completed_at": None,
@@ -407,9 +602,11 @@ def make_run_metadata(
         "test_parameter_status": (
             "operator-entered commanded values; not independent physical measurements"
         ),
+        "protocol": dict(preset_metadata or {}),
         "calibration": {
             "calibration_id": parameters.calibration_id,
             "tare_offset_v_per_v": tare_offset,
+            "empty_machine_tare": dict(tare_metadata or {}),
             **config["load_cell"],
             **config["torque"],
         },

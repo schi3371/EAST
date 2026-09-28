@@ -8,16 +8,19 @@ lab-laptop layout, logos, and optional graph-window behaviour on a Mac.
 from __future__ import annotations
 
 import math
+import json
 import sys
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
+from tkinter import messagebox
 
 import customtkinter as ctk
 from PIL import Image
 
 
 APP_NAME = "EAST"
-APP_VERSION = "1.2.1-safety-hardening-preview"
+APP_VERSION = "1.4.0-protocol-presets-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -52,6 +55,22 @@ class EastGuiPreview:
         self.floating_canvas: tk.Canvas | None = None
         self.connected = False
         self.reference_verified = False
+        self.tare_valid = False
+        self.tare_fixture_id: str | None = None
+        self.tare_calibration_id: str | None = None
+        self.config = json.loads((ROOT_DIR / "tester_config.json").read_text(encoding="utf-8"))
+        self.protocol_display_to_key = {
+            "Custom": "custom",
+            **{
+                preset["display_name"]: key
+                for key, preset in self.config["test_presets"].items()
+            },
+        }
+        self.protocol_var = ctk.StringVar(value="Custom")
+        self.loaded_preset_key = "custom"
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
+        )
 
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
@@ -60,6 +79,8 @@ class EastGuiPreview:
         self._log(f"{APP_NAME} {APP_VERSION}")
         self._log("Preview only. No hardware modules are imported.")
         self._log(f"Running from: {Path(__file__).resolve()}")
+        if "--scroll-bottom" in sys.argv:
+            self.root.after(250, lambda: self.controls._parent_canvas.yview_moveto(1.0))
         if "--no-auto-plot" not in sys.argv:
             self.root.after(250, self.show_plot)
 
@@ -130,6 +151,7 @@ class EastGuiPreview:
         )
         controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
+        self.controls = controls
 
         self.status = ctk.CTkLabel(
             controls,
@@ -139,30 +161,6 @@ class EastGuiPreview:
             anchor="w",
         )
         self.status.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
-
-        reference = ctk.CTkFrame(controls, fg_color="#fff7ed", corner_radius=8)
-        reference.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-        reference.grid_columnconfigure(0, weight=1)
-        self.reference_status = ctk.CTkLabel(
-            reference,
-            text="Neutral reference: RECOVERY REQUIRED\nNo hardware in preview",
-            text_color=AMBER,
-            font=("Arial", 11, "bold"),
-            justify="left",
-            anchor="w",
-        )
-        self.reference_status.grid(row=0, column=0, sticky="ew", padx=8, pady=7)
-        self.reference_button = ctk.CTkButton(
-            reference,
-            text="Verify / Recover",
-            command=self._show_recovery_preview,
-            width=118,
-            height=28,
-            fg_color=AMBER,
-            hover_color="#b45309",
-            state="disabled",
-        )
-        self.reference_button.grid(row=0, column=1, padx=8, pady=6)
 
         self._build_inputs(controls)
         self._build_buttons(controls)
@@ -195,7 +193,7 @@ class EastGuiPreview:
 
     def _build_inputs(self, parent: ctk.CTkFrame) -> None:
         fields_panel = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        fields_panel.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
+        fields_panel.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
         fields_panel.grid_columnconfigure((0, 1), weight=1)
 
         ctk.CTkLabel(
@@ -246,10 +244,55 @@ class EastGuiPreview:
             self.max_angle_input,
         ):
             entry.bind("<KeyRelease>", self._update_parameter_summary, add="+")
+        self.fixture_id_input.bind("<KeyRelease>", self._update_tare_identity, add="+")
+        self.calibration_id_input.bind("<KeyRelease>", self._update_tare_identity, add="+")
+
+        protocol = ctk.CTkFrame(fields_panel, fg_color="transparent")
+        protocol.grid(row=6, column=0, columnspan=2, padx=6, pady=(6, 4), sticky="ew")
+        protocol.grid_columnconfigure((1, 2, 3), weight=1)
+        ctk.CTkLabel(
+            protocol, text="Protocol:", font=("Arial", 11, "bold"), text_color=TEXT
+        ).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        self.protocol_menu = ctk.CTkOptionMenu(
+            protocol,
+            variable=self.protocol_var,
+            values=list(self.protocol_display_to_key),
+            command=lambda _selection: self._update_protocol_status(),
+            height=30,
+        )
+        self.protocol_menu.grid(row=0, column=1, columnspan=3, sticky="ew")
+        ctk.CTkButton(
+            protocol,
+            text="Load Preset",
+            command=self._mock_load_preset,
+            height=30,
+            fg_color=BLUE,
+            hover_color="#1d4ed8",
+        ).grid(row=1, column=0, columnspan=2, padx=(0, 3), pady=(5, 0), sticky="ew")
+        ctk.CTkButton(
+            protocol,
+            text="Reset Test Fields",
+            command=self._mock_reset_test_fields,
+            height=30,
+            fg_color=AMBER,
+            hover_color="#b45309",
+        ).grid(row=1, column=2, columnspan=2, padx=(3, 0), pady=(5, 0), sticky="ew")
+        self.protocol_status = ctk.CTkLabel(
+            fields_panel,
+            text="Active protocol: Custom",
+            text_color=MUTED,
+            font=("Arial", 10, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=390,
+        )
+        self.protocol_status.grid(
+            row=7, column=0, columnspan=2, padx=8, pady=(0, 7), sticky="ew"
+        )
 
     def _build_buttons(self, parent: ctk.CTkFrame) -> None:
         buttons = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=0)
-        buttons.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 6))
+        buttons.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         buttons.grid_columnconfigure((0, 1), weight=1)
 
         self.parameter_summary = ctk.CTkLabel(
@@ -269,7 +312,6 @@ class EastGuiPreview:
             ("Connect", GREEN, "#15803d", self._mock_connect),
             ("Start", BLUE, "#1d4ed8", self._mock_start),
             ("Stop", RED, "#b91c1c", self._mock_stop),
-            ("Reset Form", AMBER, "#b45309", self._mock_reset),
         ]
         self.action_buttons = []
         for index, (label, colour, hover, command) in enumerate(button_defs):
@@ -283,14 +325,17 @@ class EastGuiPreview:
                 height=34,
                 font=("Arial", 13, "bold"),
             )
-            button.grid(row=1 + index // 2, column=index % 2, padx=5, pady=3, sticky="ew")
+            if index == 2:
+                button.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+            else:
+                button.grid(row=1, column=index, padx=5, pady=3, sticky="ew")
             self.action_buttons.append(button)
         self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
 
     def _build_manual_controls(self, parent: ctk.CTkFrame) -> None:
         manual = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
-        manual.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 8))
+        manual.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual.grid_columnconfigure((0, 1, 2), weight=1)
 
         ctk.CTkEntry(
@@ -329,16 +374,96 @@ class EastGuiPreview:
 
         ctk.CTkSwitch(manual, text="Continuous Mode").grid(row=1, column=2, padx=6, pady=(0, 4))
 
+        machine_zero = ctk.CTkFrame(manual, fg_color="#fff7ed", corner_radius=8)
+        machine_zero.grid(row=2, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew")
+        machine_zero.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(
+            machine_zero,
+            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
+            font=("Arial", 14, "bold"),
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 2), sticky="ew")
+        ctk.CTkLabel(
+            machine_zero,
+            text=(
+                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
+                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
+                "to make small adjustments until the fixture is aligned with the square. Then "
+                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
+                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
+            ),
+            font=("Arial", 10),
+            text_color=TEXT,
+            justify="left",
+            anchor="w",
+            wraplength=390,
+        ).grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
+        self.reference_status = ctk.CTkLabel(
+            machine_zero,
+            text="Machine zero: SETUP REQUIRED\nNo hardware in preview",
+            text_color=AMBER,
+            font=("Arial", 11, "bold"),
+            justify="left",
+            anchor="w",
+        )
+        self.reference_status.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 5))
+        self.reference_button = ctk.CTkButton(
+            machine_zero,
+            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
+            command=self._show_recovery_preview,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+            height=34,
+        )
+        self.reference_button.grid(row=3, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
         ctk.CTkButton(
-            manual,
-            text='Return to Verified 90 deg Neutral',
+            machine_zero,
+            text="Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}",
             command=self._mock_return_neutral,
             fg_color="#0f766e",
             hover_color="#115e59",
             corner_radius=8,
             height=34,
-            font=("Arial", 13, "bold"),
-        ).grid(row=2, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
+            font=("Arial", 12, "bold"),
+        ).grid(row=3, column=1, padx=(4, 8), pady=(0, 8), sticky="ew")
+
+        tare = ctk.CTkFrame(manual, fg_color="#ecfdf5", corner_radius=8)
+        tare.grid(row=3, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
+        tare.grid_columnconfigure((0, 1), weight=1)
+        self.tare_status = ctk.CTkLabel(
+            tare,
+            text="Empty-machine tare: REQUIRED",
+            text_color=AMBER,
+            font=("Arial", 11, "bold"),
+            anchor="w",
+        )
+        self.tare_status.grid(
+            row=0, column=0, columnspan=2, padx=8, pady=(7, 3), sticky="ew"
+        )
+        self.tare_button = ctk.CTkButton(
+            tare,
+            text="Tare Empty Machine",
+            command=self._mock_tare,
+            fg_color=GREEN,
+            hover_color="#15803d",
+            state="disabled",
+            height=34,
+        )
+        self.tare_button.grid(row=1, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
+        self.clear_session_tare_button = ctk.CTkButton(
+            tare,
+            text="Clear Session Tare",
+            command=self._mock_clear_session_tare,
+            fg_color=AMBER,
+            hover_color="#b45309",
+            state="disabled",
+            height=34,
+        )
+        self.clear_session_tare_button.grid(
+            row=1, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
+        )
 
     def _logo_card(
         self,
@@ -387,23 +512,129 @@ class EastGuiPreview:
                 f"+{entered(self.max_angle_input)}\N{DEGREE SIGN}"
             )
         )
+        self._update_protocol_status()
+
+    def _motion_values(self) -> dict[str, str]:
+        return {
+            "cycles": self.cycles_input.get(),
+            "minimum_angle_deg": self.min_angle_input.get(),
+            "maximum_angle_deg": self.max_angle_input.get(),
+            "speed_deg_s": self.speed_input.get(),
+            "acceleration_deg_s2": self.acceleration_input.get(),
+        }
+
+    def _preset_modified(self, preset: dict) -> bool:
+        values = self._motion_values()
+        try:
+            if int(values["cycles"]) != int(preset["cycles"]):
+                return True
+            return any(
+                not math.isclose(float(values[key]), float(preset[key]), abs_tol=1e-9)
+                for key in (
+                    "minimum_angle_deg",
+                    "maximum_angle_deg",
+                    "speed_deg_s",
+                    "acceleration_deg_s2",
+                )
+            )
+        except (TypeError, ValueError):
+            return True
+
+    def _update_protocol_status(self) -> None:
+        if not hasattr(self, "protocol_status"):
+            return
+        if self.loaded_preset_key == "custom":
+            active_name = "Custom"
+        else:
+            preset = self.config["test_presets"][self.loaded_preset_key]
+            active_name = f"{preset['display_name']} v{preset['version']}"
+            if self._preset_modified(preset):
+                active_name += " \N{EM DASH} MODIFIED"
+        selected_display = self.protocol_var.get()
+        selected_key = self.protocol_display_to_key[selected_display]
+        text = f"Active protocol: {active_name}"
+        if selected_key != self.loaded_preset_key:
+            text += (
+                f"\nSelected: {selected_display} \N{EM DASH} press Load Preset to apply. "
+                f"Active protocol remains: {active_name}."
+            )
+            colour = AMBER
+        elif active_name.endswith("MODIFIED"):
+            colour = AMBER
+        elif self.loaded_preset_key == "custom":
+            colour = MUTED
+        else:
+            colour = GREEN
+        self.protocol_status.configure(text=text, text_color=colour)
+
+    @staticmethod
+    def _set_entry(entry: ctk.CTkEntry, value: object) -> None:
+        entry.delete(0, "end")
+        entry.insert(0, str(value))
+
+    def _mock_load_preset(self) -> None:
+        selected_key = self.protocol_display_to_key[self.protocol_var.get()]
+        preset = None if selected_key == "custom" else self.config["test_presets"][selected_key]
+        has_values = any(value.strip() for value in self._motion_values().values())
+        messages = []
+        if has_values and (preset is None or self._preset_modified(preset)):
+            messages.append("This will replace the motion values currently entered.")
+        if preset and preset["test_type"] == "empty_machine_baseline":
+            messages.append(
+                "Confirm the AFO and all removable loads are removed before running this "
+                "empty-machine baseline."
+            )
+        if messages and not messagebox.askokcancel(
+            "Load Protocol Preset", "\n\n".join(messages), parent=self.root
+        ):
+            return
+        entries = {
+            "cycles": self.cycles_input,
+            "minimum_angle_deg": self.min_angle_input,
+            "maximum_angle_deg": self.max_angle_input,
+            "speed_deg_s": self.speed_input,
+            "acceleration_deg_s2": self.acceleration_input,
+        }
+        if preset is None:
+            for entry in entries.values():
+                entry.delete(0, "end")
+        else:
+            for key, entry in entries.items():
+                self._set_entry(entry, preset[key])
+        self.loaded_preset_key = selected_key
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
+        )
+        self._update_parameter_summary()
+        self._log(f"Loaded protocol: {self.protocol_var.get()}.")
 
     def _mock_connect(self) -> None:
         self.connected = True
         self.reference_verified = False
-        self.status.configure(text="CONNECTED / RECOVERY REQUIRED (PREVIEW)", text_color=AMBER)
+        self.tare_valid = False
+        self.tare_fixture_id = None
+        self.tare_calibration_id = None
+        self.status.configure(
+            text="CONNECTED / MACHINE-ZERO SETUP REQUIRED (PREVIEW)", text_color=AMBER
+        )
         self.reference_status.configure(
-            text="Neutral reference: RECOVERY REQUIRED\nPhysical 90 deg verification required",
+            text="Machine zero: SETUP REQUIRED\nPhysical 90 deg verification required",
             text_color=AMBER,
         )
+        self.tare_status.configure(text="Empty-machine tare: REQUIRED", text_color=AMBER)
+        self.tare_button.configure(state="disabled")
+        self.clear_session_tare_button.configure(state="disabled")
         self.reference_button.configure(state="normal")
         self.action_buttons[1].configure(state="disabled")
         self.preview_manual_switch.configure(state="disabled")
-        self._log("Mock connect: normal movement remains blocked pending neutral recovery.")
+        self._log("Mock connect: normal movement remains blocked pending machine-zero setup.")
 
     def _mock_start(self) -> None:
         if not self.reference_verified:
-            self._log("Mock start blocked: neutral reference is not verified.")
+            self._log("Mock start blocked: machine zero is not verified.")
+            return
+        if not self.tare_valid:
+            self._log("Mock start blocked: empty-machine tare is required.")
             return
         self._log("Mock start pressed. No motor command was sent.")
         self.show_plot()
@@ -412,7 +643,7 @@ class EastGuiPreview:
         self.status.configure(text="STOPPED PREVIEW", text_color="#b91c1c")
         self._log("Mock stop pressed.")
 
-    def _mock_reset(self) -> None:
+    def _mock_reset_test_fields(self) -> None:
         for entry in (
             self.file_name_input,
             self.cycles_input,
@@ -420,54 +651,103 @@ class EastGuiPreview:
             self.acceleration_input,
             self.min_angle_input,
             self.max_angle_input,
-            self.operator_input,
             self.afo_id_input,
-            self.fixture_id_input,
-            self.calibration_id_input,
         ):
             entry.delete(0, "end")
-        self._update_parameter_summary()
-        self.terminal.delete("1.0", "end")
-        self.status.configure(text="PREVIEW / NO HARDWARE", text_color="#0369a1")
-        self.connected = False
-        self.reference_verified = False
-        self.reference_button.configure(state="disabled")
-        self.action_buttons[1].configure(state="disabled")
-        self.preview_manual_switch.configure(state="disabled")
-        self.reference_status.configure(
-            text="Neutral reference: RECOVERY REQUIRED\nNo hardware in preview",
-            text_color=AMBER,
+        self.protocol_var.set("Custom")
+        self.loaded_preset_key = "custom"
+        self.preset_loaded_at = datetime.now().astimezone().isoformat(
+            timespec="milliseconds"
         )
-        self._log(f"{APP_NAME} {APP_VERSION}")
-        self._log("Preview reset.")
+        self._update_parameter_summary()
+        self._update_tare_identity()
+        self._log("Run-specific test fields reset; session state was preserved.")
+
+    def _mock_clear_session_tare(self) -> None:
+        if not self.tare_valid:
+            return
+        if not messagebox.askokcancel(
+            "Clear Session Tare",
+            "Discard only the stored empty-machine tare? Machine zero, connection, operator, "
+            "fixture, calibration, and all test fields will remain unchanged. A new unloaded "
+            "tare is required before the next run.",
+            parent=self.root,
+        ):
+            return
+        self.tare_valid = False
+        self.tare_fixture_id = None
+        self.tare_calibration_id = None
+        self.tare_status.configure(text="Empty-machine tare: REQUIRED", text_color=AMBER)
+        self.clear_session_tare_button.configure(state="disabled")
+        self.action_buttons[1].configure(state="disabled")
+        self._log("Stored session tare cleared; all other session and test fields were preserved.")
+
+    def _update_tare_identity(self, _event=None) -> None:
+        if not self.tare_valid:
+            return
+        mismatches = []
+        if self.fixture_id_input.get().strip() != self.tare_fixture_id:
+            mismatches.append("Fixture ID does not match the stored tare")
+        if self.calibration_id_input.get().strip() != self.tare_calibration_id:
+            mismatches.append("Calibration ID does not match the stored tare")
+        if mismatches:
+            self.tare_status.configure(
+                text="Empty-machine tare: IDENTITY MISMATCH\n" + "\n".join(mismatches),
+                text_color=RED,
+            )
+            self.action_buttons[1].configure(state="disabled")
+        else:
+            self.tare_status.configure(
+                text="Empty-machine tare: VALID\nPreview session offset 0.000000 V/V",
+                text_color=GREEN,
+            )
+            if self.reference_verified:
+                self.action_buttons[1].configure(state="normal")
 
     def _mock_return_neutral(self) -> None:
-        self.status.configure(text="NEUTRAL RETURN PREVIEW", text_color="#0f766e")
-        self._log("Mock neutral return pressed.")
+        self.status.configure(text="MACHINE ZERO RETURN PREVIEW", text_color="#0f766e")
+        self._log("Mock machine-zero return pressed.")
         self._log("Real app commands only the verified session mapping after safety checks.")
+
+    def _mock_tare(self) -> None:
+        if not self.reference_verified:
+            self._log("Preview tare blocked: verify machine zero first.")
+            return
+        self.tare_valid = True
+        self.tare_fixture_id = self.fixture_id_input.get().strip()
+        self.tare_calibration_id = self.calibration_id_input.get().strip()
+        self.tare_status.configure(
+            text="Empty-machine tare: VALID\nPreview session offset 0.000000 V/V",
+            text_color=GREEN,
+        )
+        self.action_buttons[1].configure(state="normal")
+        self.clear_session_tare_button.configure(state="normal")
+        self._log("Preview empty-machine tare captured with no AFO/load fitted.")
 
     def _show_recovery_preview(self) -> None:
         if not self.connected:
             return
         dialog = ctk.CTkToplevel(self.root)
-        dialog.title("EAST Neutral Reference Recovery Preview")
-        dialog.geometry("610x470")
+        dialog.title("EAST Machine Zero Setup Preview")
+        dialog.geometry("650x510")
         dialog.configure(fg_color=BG)
         dialog.transient(self.root)
         panel = ctk.CTkFrame(dialog, fg_color=PANEL, corner_radius=8)
         panel.pack(fill="both", expand=True, padx=18, pady=18)
         ctk.CTkLabel(
             panel,
-            text="Verify Physical 90 Degree Neutral",
+            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
             font=("Arial", 20, "bold"),
             text_color=TEXT,
         ).pack(anchor="w", padx=16, pady=(14, 6))
         ctk.CTkLabel(
             panel,
             text=(
-                "Preview of the restricted recovery workflow. Slow jog is bounded to "
-                "+/-5 degrees and setting neutral records the current physical 90 degree "
-                "position without moving the motor."
+                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
+                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
+                "to make small adjustments until the fixture is aligned with the square. Then "
+                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
+                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
             ),
             wraplength=540,
             justify="left",
@@ -482,30 +762,40 @@ class EastGuiPreview:
         jog = ctk.CTkFrame(panel, fg_color=PANEL_SOFT, corner_radius=6)
         jog.pack(fill="x", padx=16, pady=6)
         ctk.CTkButton(
-            jog, text="Jog -0.25 deg", command=lambda: self._log("Preview recovery jog -0.25 deg")
+            jog,
+            text="Jog Left (0.25\N{DEGREE SIGN})",
+            command=lambda: self._log("Preview setup jog left 0.25 deg"),
         ).pack(side="left", fill="x", expand=True, padx=6, pady=8)
         ctk.CTkButton(
-            jog, text="Jog +0.25 deg", command=lambda: self._log("Preview recovery jog +0.25 deg")
+            jog,
+            text="Jog Right (0.25\N{DEGREE SIGN})",
+            command=lambda: self._log("Preview setup jog right 0.25 deg"),
         ).pack(side="left", fill="x", expand=True, padx=6, pady=8)
 
         def set_neutral():
             if not acknowledgement.get():
-                self._log("Preview neutral not set: acknowledgement is required.")
+                self._log("Preview machine zero not set: acknowledgement is required.")
                 return
             self.reference_verified = True
             self.reference_status.configure(
-                text="Neutral reference: VERIFIED\n90 deg = 0.00000000 preview session turns",
+                text=(
+                    "Machine zero: VERIFIED\n"
+                    "Physical 90 deg = machine 0 deg (0.00000000 preview session turns)"
+                ),
                 text_color=GREEN,
             )
-            self.status.configure(text="CONNECTED / REFERENCE VERIFIED (PREVIEW)", text_color=GREEN)
-            self.action_buttons[1].configure(state="normal")
+            self.status.configure(
+                text="CONNECTED / MACHINE ZERO VERIFIED (PREVIEW)", text_color=GREEN
+            )
+            self.action_buttons[1].configure(state="disabled")
             self.preview_manual_switch.configure(state="normal")
-            self._log("Preview physical neutral verified. No hardware moved.")
+            self.tare_button.configure(state="normal")
+            self._log("Preview machine zero verified. No hardware moved.")
             dialog.destroy()
 
         ctk.CTkButton(
             panel,
-            text="Set Current Physical Position as 90 deg Neutral",
+            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
             command=set_neutral,
             fg_color="#0f766e",
             hover_color="#115e59",
