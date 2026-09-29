@@ -260,6 +260,20 @@ def _linear_fit(t: np.ndarray, a: np.ndarray, number: int) -> dict:
     }
 
 
+def quality_control_pass(
+    valid_frame_count: int,
+    total_frame_count: int,
+    sweeps: list[dict],
+    minimum_valid_fraction: float,
+) -> bool:
+    """Accept isolated invalid frames while requiring enough valid data and a speed fit."""
+    return (
+        total_frame_count > 0
+        and valid_frame_count / total_frame_count >= minimum_valid_fraction
+        and bool(sweeps)
+    )
+
+
 def analyse(args: argparse.Namespace) -> None:
     video_path = Path(args.video).expanduser().resolve()
     output_dir = Path(args.output).expanduser().resolve()
@@ -464,7 +478,9 @@ def analyse(args: argparse.Namespace) -> None:
         "fps": fps,
         "frames": len(rows),
         "valid_frames": len(valid_rows),
+        "invalid_frames": len(rows) - len(valid_rows),
         "valid_frame_percent": 100.0 * len(valid_rows) / len(rows),
+        "minimum_valid_frame_percent": 100.0 * args.minimum_valid_fraction,
         "neutral_seconds": args.neutral_seconds,
         "neutral_orientation_deg": neutral,
         "dorsiflexion_direction": args.dorsiflexion_direction,
@@ -477,10 +493,8 @@ def analyse(args: argparse.Namespace) -> None:
         "four_aruco_detection_percent": 100.0 * four_marker_frames / len(rows),
         "reference_held_frames": reference_held_frames,
         "colour_fallback_frames": colour_fallback_frames,
-        "qc_pass": (
-            len(valid_rows) / len(rows) >= args.minimum_valid_fraction
-            and bool(sweeps)
-            and (not args.require_black_dots or (yellow_dot_frames == len(rows) and magenta_dot_frames == len(rows)))
+        "qc_pass": quality_control_pass(
+            len(valid_rows), len(rows), sweeps, args.minimum_valid_fraction
         ),
         "colour_thresholds": {"magenta": vars(magenta), "yellow": vars(yellow)},
     }

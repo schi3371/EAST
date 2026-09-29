@@ -125,7 +125,7 @@ The results folder contains:
 1. Watch the complete overlay video.
 2. Confirm the colour-circle indicators and centre-dot crosses stay on the correct targets. For final analysis, use `--require-black-dots` so a fallback cannot pass unnoticed.
 3. Confirm all four ArUco IDs are detected for nearly every frame.
-4. Require at least **95% valid frames** and a valid speed fit. The script reports this as `qc_pass`.
+4. Require at least **95% valid frames** and a valid speed fit. The script reports this as `qc_pass`. Invalid frames remain in `frame_data.csv` with `valid=False` and `NaN` angle values, and are omitted from speed regression without interpolation. This preserves the real timestamps and avoids introducing synthetic measurements.
 5. Review each sweep’s R². For formal speed verification, investigate any fit below **0.995**.
 6. Confirm the angle begins near 0°, reaches the intended endpoints, and returns near 0°.
 7. Retain the original video, marker sheet version, script version, output CSV/JSON, and overlay together.

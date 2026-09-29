@@ -55,6 +55,32 @@ class HybridDetectionTests(unittest.TestCase):
             actual = MODULE.transform_point(centre, transform)
             np.testing.assert_allclose(actual, reference[marker_id], atol=1e-3)
 
+    def test_qc_accepts_an_isolated_invalid_frame(self):
+        self.assertTrue(
+            MODULE.quality_control_pass(5908, 5909, [{"speed_deg_s": 5.0}], 0.95)
+        )
+
+    def test_qc_rejects_excessive_invalid_frames(self):
+        self.assertFalse(
+            MODULE.quality_control_pass(949, 1000, [{"speed_deg_s": 5.0}], 0.95)
+        )
+
+    def test_qc_still_requires_a_speed_fit(self):
+        self.assertFalse(MODULE.quality_control_pass(1000, 1000, [], 0.95))
+
+    def test_speed_fit_omits_invalid_frame_without_interpolation(self):
+        rows = []
+        for index in range(41):
+            rows.append({
+                "valid": index != 20,
+                "time_s": index * 0.1,
+                "angle_deg": -10.0 + index * 0.5,
+            })
+        fits = MODULE.fit_speed(rows, -8.0, 8.0)
+        self.assertEqual(len(fits), 1)
+        self.assertEqual(fits[0]["points"], 30)
+        self.assertAlmostEqual(fits[0]["speed_deg_s"], 5.0, places=10)
+
 
 if __name__ == "__main__":
     unittest.main()
