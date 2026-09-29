@@ -219,6 +219,34 @@ class EastCoreTests(unittest.TestCase):
             self.assertNotEqual(first_metadata, second_metadata)
             self.assertEqual(first_csv.parent.name, "EAST Logs")
 
+    def test_baseline_filename_omits_reserved_afo_identifier(self):
+        values = valid_values()
+        values.update({
+            "file_prefix": "SPEED TEST",
+            "test_type": "empty_machine_baseline",
+            "afo_id": "",
+        })
+        parameters = validate_test_parameters(values, self.config)
+        self.assertEqual(parameters.afo_id, "EMPTY_MACHINE_BASELINE")
+        with tempfile.TemporaryDirectory() as temporary:
+            csv_path, metadata_path = create_run_paths(
+                parameters, self.config, Path(temporary)
+            )
+        self.assertTrue(csv_path.name.startswith("SPEED_TEST_"))
+        self.assertNotIn("EMPTY_MACHINE_BASELINE", csv_path.name)
+        self.assertNotIn("EMPTY_MACHINE_BASELINE", metadata_path.name)
+
+    def test_afo_filename_still_includes_afo_identifier(self):
+        values = valid_values()
+        values["test_type"] = "afo_test"
+        parameters = validate_test_parameters(values, self.config)
+        with tempfile.TemporaryDirectory() as temporary:
+            csv_path, metadata_path = create_run_paths(
+                parameters, self.config, Path(temporary)
+            )
+        self.assertTrue(csv_path.name.startswith("verification_AFO-001_"))
+        self.assertTrue(metadata_path.name.startswith("verification_AFO-001_"))
+
     def test_csv_schema_has_unique_columns(self):
         self.assertEqual(len(CSV_COLUMNS), len(set(CSV_COLUMNS)))
         self.assertIn("Elapsed Time (s)", CSV_COLUMNS)
