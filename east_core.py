@@ -549,14 +549,11 @@ def create_run_paths(parameters: TestParameters, config: Dict[str, Any], base_di
     output_dir = root / config["logging"]["output_directory"]
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S_%f%z")
-    name_parts = [sanitise_identifier(parameters.file_prefix)]
-    # Empty-machine baselines use a reserved AFO identifier for metadata and
-    # matching, but that internal label should not clutter the operator's file
-    # name. Real AFO identifiers remain in AFO-test and custom-run filenames.
-    if parameters.test_type != "empty_machine_baseline":
-        name_parts.append(sanitise_identifier(parameters.afo_id, "AFO"))
-    name_parts.append(timestamp)
-    stem = "_".join(name_parts)
+    stem = "_".join([
+        sanitise_identifier(parameters.file_prefix),
+        sanitise_identifier(parameters.afo_id, "AFO"),
+        timestamp,
+    ])
     csv_path = output_dir / f"{stem}_strain_data.csv"
     metadata_path = output_dir / f"{stem}_metadata.json"
     suffix = 1
