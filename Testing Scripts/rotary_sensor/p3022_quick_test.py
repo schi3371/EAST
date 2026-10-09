@@ -23,6 +23,54 @@ def nominal_angle(voltage):
     return voltage * 72.0
 
 
+ELECTRICAL_MAX_V = 5.3
+ESTIMATE_FIELDS = [
+    "estimated_shaft_angle_deg", "angle_estimate_full_scale_voltage_v",
+    "angle_estimate_basis", "electrical_range_valid", "angle_estimate_status",
+]
+
+
+def estimate_fields(voltage, full_scale_voltage):
+    """Provisional linear estimate, never clipped/wrapped or treated as calibration.
+
+    Full scale is an explicit assumption, not a simultaneous VCC measurement.
+    Preserve voltages outside the interface range but do not interpret as angles.
+    """
+    if not math.isfinite(full_scale_voltage) or not 0 < full_scale_voltage <= ELECTRICAL_MAX_V:
+        raise ValueError("Assumed full-scale voltage must be finite and in (0, 5.3] V")
+    finite = math.isfinite(voltage)
+    electrical_valid = finite and 0 <= voltage <= ELECTRICAL_MAX_V
+    if not finite:
+        status = "non_finite_voltage"
+    elif not electrical_valid:
+        status = "outside_hub_electrical_range"
+    elif voltage > full_scale_voltage:
+        status = "uncalibrated_above_assumed_full_scale"
+    else:
+        status = "uncalibrated_assumed_linear_scale"
+    return {
+        "estimated_shaft_angle_deg": f"{360.0 * voltage / full_scale_voltage:.5f}" if electrical_valid else "",
+        "angle_estimate_full_scale_voltage_v": format(full_scale_voltage, ".12g"),
+        "angle_estimate_basis": "assumed_linear_0_to_full_scale_over_360_deg_not_calibrated",
+        "electrical_range_valid": electrical_valid,
+        "angle_estimate_status": status,
+    }
+
+
+def display_sample(elapsed, voltage, estimate):
+    angle = estimate["estimated_shaft_angle_deg"]
+    text = f"{elapsed:7.2f} s | {voltage:7.4f} V | "
+    if angle:
+        text += f"estimated shaft angle {float(angle):8.3f} deg (UNCALIBRATED)"
+        if estimate["angle_estimate_status"] == "uncalibrated_above_assumed_full_scale":
+            text += " | ABOVE assumed full scale; linear extrapolation, not rollover-corrected"
+        elif voltage > 5.0:
+            text += " | above nominal 5 V; within hub electrical range"
+    else:
+        text += estimate["angle_estimate_status"]
+    return text
+
+
 def relative_angle(angle, reference_voltage, direction):
     if angle is None or reference_voltage is None:
         return None
@@ -123,12 +171,14 @@ def run(args):
                 )
             )
 
-        print("\n{}P3022 QUICK TEST | no motor commands | nominal angle only".format(
+        print("\n{}P3022 QUICK TEST | no motor commands | uncalibrated estimate".format(
             "SIMULATED DATA / " if args.demo else ""
         ))
         print("No automatic zeroing. Ctrl+C stops. Interval: {} ms.".format(effective_interval))
+        print(f"Angle estimate assumes 0-{args.full_scale_voltage:g} V over 360 degrees. "
+              "This is NOT calibrated angle or a measured supply voltage.")
         if args.reference_voltage is not None:
-            print("Relative angle uses your supplied reference {:.6f} V; NOT EAST machine zero.".format(
+            print("Legacy NOMINAL 5 V relative angle uses reference {:.6f} V; NOT EAST machine zero.".format(
                 args.reference_voltage
             ))
         else:
@@ -148,7 +198,7 @@ def run(args):
                 "host_timestamp_iso", "host_elapsed_s", "hub_serial", "voltage_v",
                 "nominal_shaft_angle_deg", "reference_voltage_v", "nominal_relative_angle_deg",
                 "nominal_range_valid", "data_source",
-            ])
+            ] + ESTIMATE_FIELDS)
             while args.duration == 0 or time.monotonic() - started < args.duration:
                 if args.demo:
                     elapsed = time.monotonic() - started
@@ -167,6 +217,7 @@ def run(args):
                 elapsed = sample_time - started
                 if elapsed < 0:
                     continue
+                estimate = estimate_fields(voltage, args.full_scale_voltage)
                 angle = nominal_angle(voltage)
                 relative = relative_angle(angle, args.reference_voltage, args.direction)
                 writer.writerow([
@@ -175,17 +226,14 @@ def run(args):
                     "" if args.reference_voltage is None else args.reference_voltage,
                     "" if relative is None else "{:.5f}".format(relative),
                     angle is not None, "simulation" if args.demo else "HUB0007_VoltageInput",
-                ])
+                ] + [estimate[field] for field in ESTIMATE_FIELDS])
                 count += 1
-                if angle is not None:
+                if math.isfinite(voltage):
                     values.append(voltage)
                 if elapsed >= next_print:
-                    text = "{:7.2f} s | {:7.4f} V | {}".format(
-                        elapsed, voltage, "estimated shaft angle {:8.3f} deg".format(angle)
-                        if angle is not None else "OUTSIDE nominal 0-5 V range",
-                    )
+                    text = display_sample(elapsed, voltage, estimate)
                     if relative is not None:
-                        text += " | relative {:+8.3f} deg".format(relative)
+                        text += " | legacy nominal relative {:+8.3f} deg".format(relative)
                     print(text, flush=True)
                     handle.flush()
                     next_print = elapsed + 0.2
@@ -210,7 +258,7 @@ def run(args):
                 "Finished" if completed else "Partial recording", count, output
             ))
         if values:
-            print("Observed voltage range: {:.6f} to {:.6f} V.".format(min(values), max(values)))
+            print("Observed voltage range (all finite readings, including above 5 V): {:.6f} to {:.6f} V.".format(min(values), max(values)))
             print("Changing voltage supports communication; it does not establish angle accuracy.")
 
 
@@ -222,10 +270,14 @@ def main():
     parser.add_argument("--serial", type=int, help="Serial number of the HUB0007 to use")
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds; 0 runs until Ctrl+C")
     parser.add_argument("--interval-ms", type=int, default=100, help="Requested measurement interval")
+    parser.add_argument("--full-scale-voltage", type=float, default=5.0,
+                        help="Explicit assumed voltage at 360 deg (default 5 V); NOT calibration or measured VCC")
     parser.add_argument("--reference-voltage", type=float, help="Previously measured reference voltage; no auto-zero")
     parser.add_argument("--direction", type=int, choices=(-1, 1), default=1)
     parser.add_argument("--output-dir", type=Path, help="CSV folder; default: results beside this script")
     args = parser.parse_args()
+    if not math.isfinite(args.full_scale_voltage) or not 0 < args.full_scale_voltage <= ELECTRICAL_MAX_V:
+        parser.error("--full-scale-voltage must be finite and in (0, 5.3] V")
     if not math.isfinite(args.duration) or args.duration < 0:
         parser.error("--duration must be finite and non-negative")
     if args.interval_ms < 1:

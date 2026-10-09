@@ -79,12 +79,79 @@ The Control Panel's main discovery window can remain open.
 
 CSV files go into `results/` beside the script. Timestamps are **host callback
 arrival times**, not sensor hardware timestamps; this is a communication test,
-not validated speed acquisition. Invalid nominal-range readings are retained
-with blank angle values, never silently clipped.
+not validated speed acquisition. Original nominal 0-5 V angle fields are retained for compatibility. Their flags
+are NOT sensor-health flags. Separate estimated-angle fields are populated for
+finite readings inside the hub's 0-5.3 V electrical range, including readings above
+5 V. Raw voltages are never clipped or silently discarded.
 
-The displayed conversion is **voltage x 72 degrees/V**, assuming nominal
-0-5 V over 360 degrees. USB supply variation, sensor response, coupling and
-calibration can affect it. These readings are NOT validated EAST fixture angles.
+The displayed estimate is **360 x voltage / assumed full-scale voltage**.
+The default full-scale assumption is 5 V, matching the original nominal test.
+Select another explicit assumption with `--full-scale-voltage`. For exploratory
+estimates using the operator-reported 5.19 V value:
+
+```sh
+.venv/bin/python p3022_quick_test.py --serial 750256 --full-scale-voltage 5.19
+```
+
+On Windows use `.\.venv\Scripts\python.exe` instead of `.venv/bin/python`.
+**5.19 V is an assumed endpoint, not a calibration or a live VCC measurement.**
+The output has not yet been confirmed to follow its supply exactly. USB supply
+variation, endpoint offsets, coupling and nonlinearity remain unverified.
+
+Angles above 360 degrees are explicitly marked as linear extrapolations above
+assumed full scale. They are not clipped or wrapped to zero; a reading above the
+assumed endpoint does not establish a completed revolution. Non-finite readings
+or readings outside the hub's 0-5.3 V input range remain saved but have no estimate.
+The final observed-voltage summary includes **all finite readings**, including
+above 5 V and outside the electrical range.
+
+New CSV columns:
+
+- `estimated_shaft_angle_deg`: uncalibrated linear estimate, not an EAST fixture angle.
+- `angle_estimate_full_scale_voltage_v`: explicit assumed scaling endpoint.
+- `angle_estimate_basis`: assumption provenance; never marked calibrated.
+- `electrical_range_valid`: finite and within the hub input specification.
+- `angle_estimate_status`: uncalibrated, extrapolated, outside electrical range, or non-finite.
+
+The legacy `nominal_shaft_angle_deg`, `nominal_relative_angle_deg` and
+`nominal_range_valid` retain the original 5 V convention. The optional relative
+console display is labelled **legacy nominal** and remains blank above 5 V.
+Use the new estimate column when reviewing the provisional absolute angle.
+
+## Add estimates to existing recordings
+
+The backfill tool appends the new columns while preserving every original column,
+row, timestamp, voltage and old validity flag. It validates all files first.
+An explicit full-scale assumption is required; it is not recorded as a measured
+historical supply. Close a running logger before updating its CSVs.
+
+Preview only:
+
+```sh
+.venv/bin/python backfill_p3022_estimates.py results --full-scale-voltage 5.19
+```
+
+Apply after preview:
+
+```sh
+.venv/bin/python backfill_p3022_estimates.py results --full-scale-voltage 5.19 --apply
+```
+
+Before replacing any file, the tool saves byte-for-byte originals beneath
+`results/originals_before_angle_estimates/<timestamp>/`. A migration manifest
+records checksums, row counts, selected assumption and completed files. Each CSV
+replacement is atomic. Files with estimate columns are refused, preventing an
+accidental repeat from replacing provenance.
+
+Recordings from different USB setups must not be treated as having a measured
+5.19 V supply merely because the exploratory estimate uses that assumption.
+Keep backups and raw measurements for later calibrated reanalysis.
+
+Focused verification (no hardware):
+
+```sh
+.venv/bin/python -m unittest discover -s . -p 'test_p3022_estimates.py' -v
+```
 
 For an optional relative display, manually record a reference voltage and supply
 that SAME value after a restart, for example:
