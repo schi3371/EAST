@@ -282,6 +282,12 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError(
             "reference.feedback_stale_after_ms must exceed maximum_feedback_capture_ms"
         )
+    retries = reference.get("idle_feedback_retry_count", 2)
+    if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 3:
+        raise ValueError("reference.idle_feedback_retry_count must be an integer from 0 to 3")
+    retry_window = float(reference.get("idle_feedback_retry_window_ms", 1000))
+    if not math.isfinite(retry_window) or not float(reference["feedback_stale_after_ms"]) < retry_window <= 2000:
+        raise ValueError("reference.idle_feedback_retry_window_ms must exceed the stale limit and be <= 2000")
     if not math.isfinite(float(reference["required_pos_vel_mapper_scale"])):
         raise ValueError("reference.required_pos_vel_mapper_scale must be finite")
     if float(reference["pos_vel_mapper_scale_tolerance"]) < 0:

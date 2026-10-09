@@ -35,6 +35,13 @@ class FeedbackError(ReferenceError):
     """Raised when controller feedback is missing, stale, or non-finite."""
 
 
+class FeedbackAcquisitionTimeout(FeedbackError):
+    """A completed read exceeded the coherence limit; retain it only for diagnostics."""
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+        super().__init__(f"ODrive feedback acquisition took too long ({snapshot.capture_duration_s:.3f} s)")
+
+
 class MotionConflictError(ReferenceError):
     """Raised when another owner already controls motion."""
 
@@ -127,9 +134,7 @@ class FeedbackSnapshot:
             if duration < 0:
                 raise FeedbackError("feedback capture duration is negative")
             if max_capture_duration_s is not None and duration > max_capture_duration_s:
-                raise FeedbackError(
-                    f"ODrive feedback acquisition took too long ({duration:.3f} s)"
-                )
+                raise FeedbackAcquisitionTimeout(self)
         if max_age_s is not None:
             now = time.monotonic() if now_monotonic_s is None else now_monotonic_s
             age = _finite(now, "current monotonic time") - self.captured_monotonic_s
@@ -142,6 +147,57 @@ class FeedbackSnapshot:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "FeedbackSnapshot":
         return cls(**payload)
+
+
+class IdleFeedbackRetry:
+    """Bounded rejection of a late idle sample; never accepts that sample or restores a lost reference."""
+    PASSIVE_OWNERS = (None, "rotary-static-capture", "rotary-sensor-only-capture")
+
+    def __init__(self, config):
+        self.config = config
+        self.rejected = 0
+
+    def consistent(self, previous, current):
+        if previous is None:
+            return False
+        try:
+            previous.validate()
+            current.validate()
+        except FeedbackError:
+            return False
+        gap = current.captured_monotonic_s - previous.captured_monotonic_s
+        cfg = self.config
+        if not 0 < gap <= cfg["reference"].get("idle_feedback_retry_window_ms", 1000) / 1000:
+            return False
+        if previous.active_errors or current.active_errors or previous.current_state != 1 or current.current_state != 1:
+            return False
+        if previous.disarm_reason != current.disarm_reason:
+            return False
+        if (previous.system_uptime is None or current.system_uptime is None
+                or current.system_uptime <= previous.system_uptime):
+            return False
+        conversion = cfg["motion"]["afo_degrees_per_odrive_turn"]
+        velocity_limit = cfg["reference"]["stationary_velocity_limit_deg_s"] / conversion
+        tolerance = cfg["motion"]["position_tolerance_deg"] / conversion
+        return (abs(previous.velocity_turns_s) <= velocity_limit
+                and abs(current.velocity_turns_s) <= velocity_limit
+                and abs(current.position_turns - previous.position_turns) <= tolerance)
+
+    def reject_and_retry(self, error, previous, expected_state, owner):
+        if not isinstance(error, FeedbackAcquisitionTimeout):
+            return False
+        limit = self.config["reference"].get("idle_feedback_retry_count", 2)
+        if expected_state is not None or owner not in self.PASSIVE_OWNERS or self.rejected >= limit:
+            return False
+        if not self.consistent(previous, error.snapshot):
+            return False
+        self.rejected += 1
+        return True
+
+    def accept_fresh(self, previous, current):
+        if self.rejected and not self.consistent(previous, current):
+            raise FeedbackError("Idle feedback retry could not confirm unchanged position/controller state")
+        self.rejected = 0
 
 
 @dataclass(frozen=True)

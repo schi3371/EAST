@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject isolated over-duration idle feedback reads and allow bounded retries without discarding machine zero. Fresh feedback must confirm unchanged idle state, position, disarm reason and advancing uptime. Motor enable remains blocked during retries; powered motion, controller faults, reset evidence and exhausted retries retain the stop path.
+
 - Added explicit passive Sensor only calibration capture without a verified motor zero. Preserves independent angle and sensor readings, retains available turns as unverified observations, excludes them from motor conversion, and retains motor stop/zero requirements.
 
 - Fixed rotary connection rejection of valid VoltageRatioInput_PORT/VoltageInput_PORT channels: validate the parent HUB0007 and selected serial/port instead of treating the analog-channel SKU as the hub SKU.

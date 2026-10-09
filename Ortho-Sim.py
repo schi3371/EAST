@@ -58,6 +58,8 @@ from east_odrive import ODriveAdapter
 from east_reference import (
     AtomicStateStore,
     FeedbackError,
+    FeedbackAcquisitionTimeout,
+    IdleFeedbackRetry,
     MotionConflictError,
     MotionCoordinator,
     MotionState,
@@ -84,7 +86,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.5.4-sensor-only-capture"
+APP_VERSION = "1.5.5-idle-feedback-retry"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -179,6 +181,7 @@ class MyInterface:
         self.feedback_lock = threading.RLock()
         self.latest_feedback = None
         self.monitor_error = None
+        self.feedback_retry_pending = False
         self.monitor_thread = None
         self.expected_axis_state = None
         self.expected_disarm_reason = None
@@ -1052,6 +1055,7 @@ class MyInterface:
         )
         idle_ui = (
             not self.strain_test_active
+            and not self.feedback_retry_pending
             and self.motion_coordinator.owner is None
             and self.motion_coordinator.motor_idle_confirmed
         )
@@ -1101,6 +1105,7 @@ class MyInterface:
             prior.join(timeout=1.0)
         self.monitor_stop_event = threading.Event()
         self.monitor_error = None
+        self.feedback_retry_pending = False
         self.monitor_thread = threading.Thread(
             target=self._feedback_monitor_loop,
             name="odrive-feedback-monitor",
@@ -1191,19 +1196,45 @@ class MyInterface:
         interval_s = reference_cfg["feedback_poll_interval_ms"] / 1000.0
         checkpoint_s = reference_cfg["checkpoint_interval_ms"] / 1000.0
         next_checkpoint = time.monotonic()
+        retry = IdleFeedbackRetry(self.system_config)
+        with self.feedback_lock:
+            last_good = self.latest_feedback
         try:
             while not self.monitor_stop_event.is_set():
                 adapter = self.odrive_adapter
                 if adapter is None:
                     return
-                snapshot = adapter.snapshot(
-                    include_phase=bool(reference_cfg["phase_recovery_enabled"]),
-                    max_capture_duration_s=(
-                        reference_cfg["maximum_feedback_capture_ms"] / 1000.0
-                    ),
-                )
+                try:
+                    snapshot = adapter.snapshot(
+                        include_phase=bool(reference_cfg["phase_recovery_enabled"]),
+                        max_capture_duration_s=(
+                            reference_cfg["maximum_feedback_capture_ms"] / 1000.0
+                        ),
+                    )
+                except FeedbackAcquisitionTimeout as exc:
+                    if not retry.reject_and_retry(exc, last_good, self.expected_axis_state,
+                                                  self.motion_coordinator.owner):
+                        raise
+                    self.feedback_retry_pending = True
+                    # Do not publish or log the late snapshot as measured data.
+                    self.state_store.append_event("idle_feedback_sample_rejected", {
+                        "duration_s": exc.snapshot.capture_duration_s,
+                        "retry": retry.rejected, "motor_reference_changed": False})
+                    self.ui_message_queue.put(("terminal", f"Feedback delay while idle: {exc}. "
+                        f"Sample rejected; retry {retry.rejected}. Machine zero retained; motion blocked pending fresh feedback.\n"))
+                    self.ui_message_queue.put(("status", "FEEDBACK DELAY / RETRYING", AMBER))
+                    self.ui_message_queue.put(("reference",))
+                    self.monitor_stop_event.wait(interval_s)
+                    continue
+                retry.accept_fresh(last_good, snapshot)
                 with self.feedback_lock:
                     self.latest_feedback = snapshot
+                last_good = snapshot
+                if self.feedback_retry_pending:
+                    self.feedback_retry_pending = False
+                    self.ui_message_queue.put(("terminal", "Fresh idle feedback restored; machine zero was retained.\n"))
+                    self.ui_message_queue.put(("status", "IDLE / FEEDBACK RESTORED", GREEN))
+                    self.ui_message_queue.put(("reference",))
                 if snapshot.active_errors:
                     raise FeedbackError(f"ODrive active errors: {snapshot.active_errors}")
                 expected_state = self.expected_axis_state
@@ -1412,6 +1443,8 @@ class MyInterface:
             return None
 
     def enter_closed_loop(self, token, allow_unreferenced=False):
+        if self.feedback_retry_pending:
+            raise FeedbackError("Motor enable blocked while idle feedback is being rechecked")
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive is not connected")
         if not allow_unreferenced:
@@ -1451,6 +1484,8 @@ class MyInterface:
         return armed
 
     def _motion_cancelled(self, token):
+        if self.feedback_retry_pending:
+            return True
         try:
             self.motion_coordinator.assert_active(token)
             return False
@@ -1458,6 +1493,8 @@ class MyInterface:
             return True
 
     def _submit_position(self, token, target_turns):
+        if self.feedback_retry_pending:
+            raise FeedbackError("Position command blocked while idle feedback is being rechecked")
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive disconnected during motion")
         self.motion_coordinator.submit_command(

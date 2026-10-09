@@ -1,6 +1,6 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.5.4-sensor-only-capture. This is a stationary, empty-fixture
+Version: EAST 1.5.5-idle-feedback-retry. This is a stationary, empty-fixture
 measurement workflow. It does not apply a calibration to motor control or replace
 angles in strain-test CSV files.
 
@@ -253,3 +253,35 @@ For physical angle sign, use dorsiflexion positive and plantarflexion negative.
 Whether an included-angle protractor reads above or below 90 depends on the
 chosen surfaces: assign sign by anatomical direction, not automatically by
 subtracting 90 from every reading. Document those surfaces and convention.
+
+## Idle feedback delays (1.5.5)
+
+A single ODrive acquisition longer than 150 ms previously stopped the monitor
+and invalidated machine zero, including between stationary calibration points.
+Acquisition time includes waiting for the adapter I/O lock and reading several
+controller properties. A delay alone does not identify a controller reset.
+
+EAST now rejects a late sample and permits up to two consecutive retries only
+when the controller is idle, no motion owner is active (or the owner is a
+stationary rotary capture), position and velocity remain within the existing
+stationary limits, disarm reason is unchanged, and controller uptime advances.
+All retry observations must be within 1 second of the last accepted sample.
+Late snapshots are diagnostic evidence only: they do not replace the feedback
+cache, become calibration measurements, or refresh reference checkpoints.
+Motion controls and motor enable are blocked pending fresh feedback. A fresh
+sample must confirm the same conditions before the delay status clears.
+
+The 150 ms acquisition limit and 250 ms freshness limit remain unchanged.
+Stationary paired captures still reject stale feedback; a hold may need repeating.
+Powered movement, missing/reset uptime, changed position/state/disarm reason,
+controller errors, failed reads and exhausted retries still use the existing
+fault/idle/invalidation path. This feature does not restore a zero already lost
+in an older run, establish automatic continuity after reconnect, or bypass the
+enclosure interlock. Preserve existing calibration files before restarting.
+
+Bench verification: with the empty machine and enclosure closed, verify fresh
+idle readings between holds, use a controlled software test to inject one idle
+read delay, and confirm the rejection/restoration messages with zero retained.
+Repeat the hold if sampling was interrupted. Sustained delay and powered-motion
+fault behavior require controlled verification by the operator; do not disconnect
+USB during powered movement as a fault-injection method.

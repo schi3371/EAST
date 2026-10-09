@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.5.4-sensor-only-capture",
+  "software_version": "1.5.5-idle-feedback-retry",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -59,7 +59,9 @@
     "recovery_acceleration_deg_s2": 5.0,
     "watchdog_enabled": false,
     "watchdog_timeout_s": 1.0,
-    "watchdog_health_coupled_verified": false
+    "watchdog_health_coupled_verified": false,
+    "idle_feedback_retry_count": 2,
+    "idle_feedback_retry_window_ms": 1000
   },
   "controller": {
     "apply_controller_gains": false,
