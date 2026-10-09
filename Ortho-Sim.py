@@ -81,8 +81,10 @@ torque_data = []
 plot_window = None
 plot_curve = None
 
+from east_gui_tabs import OutputTabs
+
 APP_NAME = "EAST"
-APP_VERSION = "1.5.0-rotary-calibration"
+APP_VERSION = "1.5.1-tabbed-output"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -228,40 +230,10 @@ class MyInterface:
             self.update_terminal(f"HARDWARE CONTROLS BLOCKED: {self.startup_block_reason}\n")
             self.buttons[0].configure(state="disabled")
         self.master.after(50, self._drain_ui_queues)
-        self.master.after(350, self.create_plot_window)
+        self.master.after_idle(self.update_plot)
 
-        # Bind window events
-        self.master.bind('<Configure>', self.on_window_move)
-        self.master.bind('<Unmap>', self.on_window_minimize)
-        self.master.bind('<Map>', self.on_window_restore)
         self.master.bind('<Escape>', lambda _event: self.stop_logging())
         self.master.bind_all('<Escape>', lambda _event: self.stop_logging())
-
-    def on_window_move(self, event):
-        """Window move handler kept for compatibility with existing bindings."""
-        return
-
-    def on_window_minimize(self, event):
-        """Hide plot window when main window is minimized"""
-        if event.widget is not self.master:
-            return
-        if hasattr(self, 'plot_container') and self.plot_container is not None:
-            if self.plot_container.winfo_exists():
-                self.plot_container.withdraw()
-
-    def on_window_restore(self, event):
-        """Show plot window when main window is restored"""
-        if event.widget is not self.master:
-            return
-        if (
-            hasattr(self, 'plot_container')
-            and self.plot_container is not None
-            and self.plot_container.winfo_exists()
-        ):
-            self.plot_container.deiconify()
-        elif plot_window_open:
-            # If plot window was open but container was lost, recreate it
-            self.create_plot_window()
 
     def create_header_logo(self, parent, candidate_names, fallback_text, column, width):
         """Place a transparent logo directly on the application background."""
@@ -723,19 +695,19 @@ class MyInterface:
             widget.configure(state="disabled")
         self.buttons[1].configure(state="disabled")
 
-        terminal_frame = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
-        terminal_frame.grid(row=0, column=1, sticky="nsew")
-        terminal_frame.grid_columnconfigure(0, weight=1)
-        terminal_frame.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(
-            terminal_frame,
-            text="Session Terminal",
-            font=("Arial", 18, "bold"),
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 5))
+        self.output_tabs = OutputTabs(
+            body, fg_color=PANEL, corner_radius=10,
+            segmented_button_selected_color=BLUE,
+            segmented_button_selected_hover_color="#1d4ed8",
+            command=self._on_output_tab_changed,
+        )
+        self.output_tabs.grid(row=0, column=1, sticky="nsew")
+        terminal_tab = self.output_tabs.add("Session Terminal")
+        self.plot_container = self.output_tabs.add("Plot")
+        terminal_tab.grid_columnconfigure(0, weight=1)
+        terminal_tab.grid_rowconfigure(0, weight=1)
         self.terminal = ctk.CTkTextbox(
-            terminal_frame,
+            terminal_tab,
             height=220,
             fg_color=BG,
             text_color=TEXT,
@@ -744,7 +716,9 @@ class MyInterface:
             corner_radius=8,
             wrap="word",
         )
-        self.terminal.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        self.terminal.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.output_tabs.set("Session Terminal")
+        self.create_plot_window(select_plot=False)
 
         # Handle window closing event
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -2378,7 +2352,7 @@ class MyInterface:
 
     def start_strain_test(self):
         """Start the strain test with the current motor settings"""
-        # Clear plot data if plot window is open
+        # Clear the embedded plot for a new run.
         global angle_data, torque_data
         if plot_window_open:
             angle_data = []
@@ -2830,7 +2804,7 @@ class MyInterface:
                         os.fsync(file.fileno())
                     self.strain_data_buffer = []
                 
-                # Update plot data if plot window is open (using moving average values)
+                # Collect plot data regardless of which output tab is visible.
                 if plot_window_open:
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:
@@ -3170,75 +3144,56 @@ class MyInterface:
         else:
             self.update_terminal("No strain test active\n")
 
-    def create_plot_window(self):
-        """Create a Tk-native torque-angle plot window."""
+    def _on_output_tab_changed(self):
+        if self.output_tabs.get() == "Plot":
+            self.master.after_idle(self.update_plot)
+
+    def create_plot_window(self, *, select_plot=True):
+        """Initialise the embedded Plot tab; retain the legacy caller name."""
         global plot_window_open, plot_window, plot_curve
-
-        try:
-            self.plot_title = self.file_name_input.get() or "AFO Strain Test"
-            existing = (
-                plot_window_open
-                and getattr(self, "plot_container", None) is not None
-                and self.plot_container.winfo_exists()
-            )
-            if existing:
-                self.plot_container.deiconify()
-                self.plot_container.lift()
-                self.update_plot()
-                self.update_terminal("Plot updated\n")
-                return
-
-            self.plot_container = ctk.CTkToplevel(self.master)
-            self.plot_container.title("Torque vs AFO Angle")
-            self.plot_container.geometry("1100x720")
-            self.plot_container.minsize(760, 480)
-            self.plot_container.configure(fg_color=BG)
-            self.plot_container.protocol("WM_DELETE_WINDOW", self.close_plot_window)
-            self.plot_container.bind("<Escape>", lambda _event: self.stop_logging())
-
-            frame = ctk.CTkFrame(self.plot_container, fg_color=PANEL, corner_radius=10)
-            frame.pack(fill="both", expand=True, padx=15, pady=15)
+        self.plot_title = self.file_name_input.get() or "AFO Strain Test"
+        canvas = getattr(self, "plot_canvas", None)
+        if canvas is None or not canvas.winfo_exists():
             self.plot_canvas = tk.Canvas(
-                frame, background=PANEL, highlightthickness=0
+                self.plot_container, background=PANEL, highlightthickness=0
             )
-            self.plot_canvas.pack(fill="both", expand=True, padx=8, pady=8)
+            self.plot_canvas.pack(fill="both", expand=True, padx=4, pady=4)
             self.plot_canvas.bind("<Configure>", lambda _event: self.update_plot())
-            plot_window = self.plot_canvas
+            self.plot_container.bind("<Escape>", lambda _event: self.stop_logging())
             plot_curve = None
-            plot_window_open = True
-            self.plot_container.lift()
-            self.plot_container.after_idle(self.update_plot)
-            self.update_terminal("Tk plot window created successfully\n")
-        except Exception as e:
-            self.update_terminal(f"Error creating plot window: {str(e)}\n")
-            plot_window_open = False
+        plot_window = self.plot_canvas
+        plot_window_open = True
+        if select_plot:
+            self.output_tabs.set("Plot")
+        self.master.after_idle(self.update_plot)
 
     def update_plot(self):
-        """Render the live plot on the Tk main thread."""
+        """Render the visible Plot tab on the Tk main thread."""
         global plot_curve, angle_data, torque_data
 
         canvas = getattr(self, "plot_canvas", None)
-        if not plot_window_open or canvas is None or not canvas.winfo_exists():
+        if (not plot_window_open or canvas is None or not canvas.winfo_exists()
+                or self.output_tabs.get() != "Plot"):
             return
 
         canvas.delete("plot")
         width = max(canvas.winfo_width(), 300)
         height = max(canvas.winfo_height(), 240)
-        left, right, top, bottom = 82, 28, 55, 68
+        left, right, top, bottom = 68, 16, 50, 64
         x0, x1 = left, width - right
         y0, y1 = top, height - bottom
 
         canvas.create_text(
             width / 2, 24, text=self.plot_title, fill=TEXT,
-            font=("Arial", 16, "bold"), tags="plot",
+            font=("Arial", 13, "bold"), tags="plot",
         )
         canvas.create_text(
             width / 2, height - 22,
             text="ODrive-Derived AFO Angle (degrees)", fill=TEXT,
-            font=("Arial", 11, "bold"), tags="plot",
+            font=("Arial", 9, "bold"), tags="plot",
         )
         canvas.create_text(
-            22, height / 2, text="Torque (Nm)", fill=TEXT,
+            18, height / 2, text="Torque (Nm)", fill=TEXT,
             font=("Arial", 11, "bold"), angle=90, tags="plot",
         )
 
@@ -3300,23 +3255,17 @@ class MyInterface:
             )
 
     def close_plot_window(self):
-        """Close the Tk plot window safely."""
+        """Release the embedded plot during application shutdown."""
         global plot_window_open, plot_window, plot_curve, angle_data, torque_data
-
-        try:
-            container = getattr(self, "plot_container", None)
-            if container is not None and container.winfo_exists():
-                container.destroy()
-        except Exception as e:
-            print(f"Error closing plot window: {e}")
-        finally:
-            plot_window_open = False
-            plot_window = None
-            plot_curve = None
-            angle_data = []
-            torque_data = []
-            self.plot_container = None
-            self.plot_canvas = None
+        canvas = getattr(self, "plot_canvas", None)
+        if canvas is not None and canvas.winfo_exists():
+            canvas.destroy()
+        plot_window_open = False
+        plot_window = None
+        plot_curve = None
+        angle_data = []
+        torque_data = []
+        self.plot_canvas = None
 
     def update_plot_data(self, angle, torque):
         """Add a data point and redraw from the Tk main thread."""

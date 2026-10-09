@@ -2,7 +2,7 @@
 
 This script does not import ODrive, Phidget, PyQtGraph, pywinstyles, or the
 main hardware-control GUI. It is only for checking EAST branding, window size,
-lab-laptop layout, logos, and optional graph-window behaviour on a Mac.
+lab-laptop layout, logos, and tabbed terminal/plot behaviour without hardware.
 """
 
 from __future__ import annotations
@@ -21,8 +21,10 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+from east_gui_tabs import OutputTabs
+
 APP_NAME = "EAST"
-APP_VERSION = "1.5.0-rotary-calibration-preview"
+APP_VERSION = "1.5.1-tabbed-output-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -53,8 +55,6 @@ class EastGuiPreview:
         self.root.configure(fg_color=BG)
 
         self.logo_images: list[ctk.CTkImage] = []
-        self.plot_window: ctk.CTkToplevel | None = None
-        self.floating_canvas: tk.Canvas | None = None
         self.connected = False
         self.reference_verified = False
         self.tare_valid = False
@@ -83,8 +83,6 @@ class EastGuiPreview:
         self._log(f"Running from: {Path(__file__).resolve()}")
         if "--scroll-bottom" in sys.argv:
             self.root.after(250, lambda: self.controls._parent_canvas.yview_moveto(1.0))
-        if "--no-auto-plot" not in sys.argv:
-            self.root.after(250, self.show_plot)
 
     def _build_ui(self) -> None:
         shell = ctk.CTkFrame(self.root, fg_color=BG)
@@ -168,30 +166,26 @@ class EastGuiPreview:
         self._build_buttons(controls)
         self._build_manual_controls(controls)
 
-        right_panel = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
-        right_panel.grid(row=0, column=1, sticky="nsew")
-        right_panel.grid_columnconfigure(0, weight=1)
-        right_panel.grid_rowconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            right_panel,
-            text="Session Terminal",
-            font=("Arial", 18, "bold"),
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 5))
-
-        self.terminal = ctk.CTkTextbox(
-            right_panel,
-            height=220,
-            fg_color="#f8fafc",
-            text_color=TEXT,
-            border_width=1,
-            border_color="#cbd5e1",
-            corner_radius=8,
-            wrap="word",
+        self.output_tabs = OutputTabs(
+            body, fg_color=PANEL, corner_radius=10,
+            segmented_button_selected_color=BLUE,
+            segmented_button_selected_hover_color="#1d4ed8",
+            command=self._output_tab_changed,
         )
-        self.terminal.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        self.output_tabs.grid(row=0, column=1, sticky="nsew")
+        terminal_tab = self.output_tabs.add("Session Terminal")
+        plot_tab = self.output_tabs.add("Plot")
+        terminal_tab.grid_columnconfigure(0, weight=1)
+        terminal_tab.grid_rowconfigure(0, weight=1)
+        self.terminal = ctk.CTkTextbox(
+            terminal_tab, height=220, fg_color=BG, text_color=TEXT,
+            border_width=1, border_color="#cbd5e1", corner_radius=8, wrap="word",
+        )
+        self.terminal.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.plot_canvas = tk.Canvas(plot_tab, bg=PANEL, highlightthickness=0)
+        self.plot_canvas.pack(fill="both", expand=True, padx=4, pady=4)
+        self.plot_canvas.bind("<Configure>", lambda _event: self._draw_plot_on_canvas(self.plot_canvas, compact=True))
+        self.output_tabs.set("Session Terminal")
 
     def _build_inputs(self, parent: ctk.CTkFrame) -> None:
         fields_panel = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
@@ -851,53 +845,16 @@ class EastGuiPreview:
             hover_color=MUTED,
         ).pack(fill="x", padx=16, pady=(0, 14))
 
+    def _output_tab_changed(self) -> None:
+        if self.output_tabs.get() == "Plot":
+            self.root.after_idle(lambda: self._draw_plot_on_canvas(self.plot_canvas, compact=True))
+
     def show_plot(self) -> None:
-        if self.plot_window is None or not self.plot_window.winfo_exists():
-            self.plot_window = ctk.CTkToplevel(self.root)
-            self.plot_window.title("Torque vs AFO Angle Preview")
-            self.plot_window.geometry("640x420")
-            self.plot_window.minsize(520, 340)
-            self.plot_window.configure(fg_color=PANEL_DARK)
-            self.plot_window.protocol("WM_DELETE_WINDOW", self.close_plot)
-            self._make_plot_window_float()
-
-            self.floating_canvas = tk.Canvas(self.plot_window, bg="#ffffff", highlightthickness=0)
-            self.floating_canvas.pack(fill="both", expand=True, padx=15, pady=15)
-            self.floating_canvas.bind("<Configure>", lambda _event: self._draw_floating_plot())
-
-        self.plot_window.deiconify()
-        self.plot_window.lift()
-        self._draw_floating_plot()
-        self._log("Floating preview plot shown.")
+        self.output_tabs.set("Plot")
+        self._output_tab_changed()
 
     def close_plot(self) -> None:
-        if self.plot_window is not None and self.plot_window.winfo_exists():
-            self.plot_window.destroy()
-        self.plot_window = None
-        self.floating_canvas = None
-        self._log("Floating preview plot closed.")
-
-    def _draw_floating_plot(self) -> None:
-        self._draw_plot_on_canvas(self.floating_canvas, compact=False)
-
-    def _make_plot_window_float(self) -> None:
-        if self.plot_window is None:
-            return
-        try:
-            self.plot_window.attributes("-topmost", True)
-        except tk.TclError:
-            pass
-        if sys.platform == "darwin":
-            try:
-                self.plot_window.tk.call(
-                    "tk::unsupported::MacWindowStyle",
-                    "style",
-                    self.plot_window._w,
-                    "floating",
-                    "closeBox",
-                )
-            except tk.TclError:
-                pass
+        self.output_tabs.set("Session Terminal")
 
     def _draw_plot_on_canvas(self, canvas: tk.Canvas | None, compact: bool) -> None:
         if canvas is None:

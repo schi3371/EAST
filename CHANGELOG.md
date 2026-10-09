@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Embedded Session Terminal and Plot in right-hand tabs, retaining history and live samples when switching; removed the separate plot window and matched the layout preview.
+
 - Increased the maximum motion timeout from 30 to 60 seconds so 0.5 deg/s quasi-static sweeps over -10 deg to +10 deg are supported; retained the 5-second margin and rejection of moves requiring more than 60 seconds.
 - Replaced the fixed-size test-start confirmation with a shorter, resizable, scrollable dialog whose action buttons stay visible on small screens.
 - Added the collected EAST and legacy OrthoSim run logs to version control.

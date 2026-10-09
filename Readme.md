@@ -75,6 +75,14 @@ libraries without discovering, opening or commanding hardware.
 See [Mac setup and hardware check](docs/MAC_SETUP.md). Successful library and GUI
 checks do not validate USB attachment, timing, stopping or physical movement.
 
+## Session terminal and live plot
+
+The right-hand panel contains **Session Terminal** and **Plot** tabs. Settings
+remain in the left-hand panel. EAST opens on Session Terminal; starting a test
+selects Plot. Switching tabs preserves terminal history and plot samples,
+and both continue receiving updates throughout a run. The Plot tab displays
+torque against ODrive-derived angle and resizes with the main window.
+
 ## Outputs
 
 Each run creates a uniquely named pair in `EAST Logs`:
