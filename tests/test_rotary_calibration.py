@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from east_core import load_tester_config
 from east_reference import MotionCoordinator, MotionConflictError
-from east_rotary_calibration import summarise_hold, fit_calibration, StationaryCaptureGuard
+from east_rotary_calibration import summarise_hold, fit_calibration, StationaryCaptureGuard, SensorOnlyCaptureGuard
 
 
 def point(angle, role="Calibration", mode="Voltage ratio", sign=1):
@@ -148,6 +148,94 @@ class CaptureGuardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             StationaryCaptureGuard(app)
         self.assertIsNone(app.motion_coordinator.owner)
+
+
+class SensorOnlyCaptureTests(unittest.TestCase):
+    app = CaptureGuardTests.app
+    def test_unverified_reference_and_stale_feedback_do_not_block_sensor_only(self):
+        app = self.app()
+        app.startup_block_reason = "Unverified machine zero"
+        app.reference_manager.require_verified.side_effect = ValueError("zero invalid")
+        app.get_feedback.side_effect = ValueError("no fresh motor feedback")
+        app.motion_coordinator.request_stop()
+        guard = SensorOnlyCaptureGuard(app)
+        self.assertIsNone(guard.check())
+        self.assertFalse(app.motion_coordinator.motor_idle_confirmed)
+        with self.assertRaises(MotionConflictError):
+            app.motion_coordinator.acquire("manual-step")
+        guard.close()
+        self.assertIsNone(app.motion_coordinator.owner)
+        self.assertFalse(app.motion_coordinator.motor_idle_confirmed)
+        with self.assertRaises(MotionConflictError):
+            app.motion_coordinator.acquire("manual-step")
+        app.reference_manager.require_verified.assert_not_called()
+        self.assertEqual(app.odrive_adapter.mock_calls, [])
+
+    def test_observation_reservation_cannot_submit_motor_command(self):
+        app = self.app()
+        guard = SensorOnlyCaptureGuard(app)
+        command = Mock()
+        with self.assertRaisesRegex(MotionConflictError, "Passive observation"):
+            app.motion_coordinator.submit_command(guard.token, command)
+        command.assert_not_called()
+        guard.close()
+
+    def test_faulted_idle_feedback_is_observation_only_without_clearing_fault(self):
+        app = self.app()
+        self.feedback.active_errors = 123
+        app.reference_manager.require_verified.side_effect = ValueError("zero invalid")
+        guard = SensorOnlyCaptureGuard(app)
+        self.assertIs(guard.check(), self.feedback)
+        self.assertEqual(self.feedback.active_errors, 123)
+        guard.close()
+        app.reference_manager.require_verified.assert_not_called()
+
+    def test_active_motion_or_existing_owner_blocks_passive_capture(self):
+        app = self.app()
+        token = app.motion_coordinator.acquire("manual-step")
+        with self.assertRaises(MotionConflictError):
+            SensorOnlyCaptureGuard(app)
+        app.motion_coordinator.release(token)
+        self.feedback.current_state = 8
+        with self.assertRaisesRegex(ValueError, "Stop motor"):
+            SensorOnlyCaptureGuard(app)
+        self.assertIsNone(app.motion_coordinator.owner)
+
+    def test_position_change_aborts_sensor_only_hold(self):
+        app = self.app()
+        guard = SensorOnlyCaptureGuard(app)
+        self.feedback.position_turns += 1
+        with self.assertRaisesRegex(ValueError, "Movement"):
+            guard.check()
+        guard.close()
+
+    def test_sensor_only_hold_can_be_valid_without_motor_feedback(self):
+        samples = [dict(raw_reading=0.47, sensor_valid=True,
+                        motor_position_turns=None, motor_feedback_valid=False) for _ in range(89)]
+        hold = summarise_hold(samples, dict(input_mode="Voltage ratio", capture_mode="Sensor only"))
+        self.assertTrue(hold["valid"])
+        self.assertIsNone(hold["motor_position_mean_turns"])
+        bad = summarise_hold(samples, dict(input_mode="Voltage ratio", capture_mode="Sensor + motor"))
+        self.assertFalse(bad["valid"])
+        samples[0]["sensor_valid"] = False
+        self.assertFalse(summarise_hold(samples, dict(input_mode="Voltage ratio", capture_mode="Sensor only"))["valid"])
+
+    def test_sensor_only_points_never_enter_motor_fit_even_if_turns_present(self):
+        data = [point(a) for a in (-10, 0, 10)]
+        for p in data:
+            p["capture_mode"] = "Sensor only"
+        model = fit_calibration(data)
+        self.assertAlmostEqual(model["slope"], 360)
+        self.assertNotIn("motor_conversion_fit", model)
+        self.assertEqual(model["motor_conversion_point_count"], 0)
+
+    def test_paired_fit_ignores_sensor_only_turns(self):
+        data = [point(a) for a in (-10, 0, 10)]
+        extra = point(5)
+        extra.update(capture_mode="Sensor only", motor_position_mean_turns=1000)
+        model = fit_calibration(data + [extra])
+        self.assertAlmostEqual(model["motor_conversion_fit"]["slope"], 2.263)
+        self.assertEqual(model["motor_conversion_point_count"], 3)
 
 
 class RotaryReaderTests(unittest.TestCase):
@@ -332,6 +420,22 @@ class RotaryConnectionUiTests(unittest.TestCase):
         self.assertEqual(window.connect_button.configure.call_args.kwargs["state"], "normal")
         self.assertEqual(window.disconnect_button.configure.call_args.kwargs["state"], "disabled")
         self.assertFalse(window._updating_controls)
+
+    def test_sensor_only_context_preserves_existing_session_without_verified_zero(self):
+        window, reader = self.window()
+        window.capture_mode = Mock(get=lambda: "Sensor only")
+        window.app.operator_input.get.return_value = "SC"
+        window.app.fixture_id_input.get.return_value = "fixture"
+        window.app.reference_manager.require_verified.side_effect = ValueError("zero invalid")
+        window.sensor = dict(hub_serial=750256, input_mode="Voltage ratio")
+        window.identity = dict(reference_id="previous-zero")
+        self.assertEqual(window._context()["reference_id"], "previous-zero")
+        window.identity = None
+        self.assertIsNone(window._context()["reference_id"])
+        window.app.reference_manager.require_verified.assert_not_called()
+        window.capture_mode.get = lambda: "Sensor + motor"
+        with self.assertRaisesRegex(ValueError, "zero invalid"):
+            window._context()
 
     def test_connection_and_first_sample_reach_gui(self):
         window, reader = self.window()

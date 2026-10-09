@@ -11,7 +11,7 @@ import customtkinter as ctk
 
 from east_core import write_json_atomic
 from east_rotary_calibration import (
-    INPUT_MODES, SAMPLE_FIELDS, POINT_FIELDS, StationaryCaptureGuard,
+    INPUT_MODES, SAMPLE_FIELDS, POINT_FIELDS, StationaryCaptureGuard, SensorOnlyCaptureGuard,
     finite_number, reading_valid, summarise_hold, fit_calibration, write_table,
 )
 
@@ -156,9 +156,10 @@ class RotaryCalibrationWindow:
         instructions = (
             "Use EAST Manual Mode to position the empty fixture. Then measure its ACTUAL angle "
             "with the square/protractor. The motor command is only a positioning aid.\n"
-            "Enter the measured signed change from physical 90° (e.g. 85° → −5°, 95° → +5°). "
+            "Enter the measured change from physical 90°: dorsiflexion positive, plantarflexion negative. "
             "Capture 0 and points on both sides; repeat from both directions. "
             "Use separate Validation points to check the fitted calibration.\n"
+            "Sensor only captures remain available without motor zero; motor turns are unverified and excluded from its fit.\n"
             "No sensor fit is applied to motor control, machine zero, tare or strain-test angles."
         )
         ctk.CTkLabel(panel, text=instructions, wraplength=720, justify="left", anchor="w",
@@ -209,6 +210,12 @@ class RotaryCalibrationWindow:
         self.status = ctk.CTkLabel(panel, text="Motor controls remain in EAST Manual Mode. They are blocked during each hold.",
                                   justify="left", wraplength=720, anchor="w", text_color="#92400e")
         self.status.grid(row=13, column=0, columnspan=3, sticky="ew", pady=4)
+        self.capture_mode = ctk.StringVar(value="Sensor + motor")
+        self.capture_mode_menu = ctk.CTkOptionMenu(panel, values=["Sensor + motor", "Sensor only"],
+                                                variable=self.capture_mode)
+        self.capture_mode_menu.grid(row=13, column=0, sticky="ew", padx=4)
+        self.status.grid_configure(column=1, columnspan=2)
+        self.status.configure(wraplength=480)
         self.table = ctk.CTkTextbox(panel, height=150, wrap="none", font=("Courier", 12))
         self.table.grid(row=14, column=0, columnspan=3, sticky="ew", pady=6)
         self.result = ctk.CTkLabel(panel, text="No calibration fitted. Reference graduation spacing limits the conclusion.",
@@ -245,6 +252,8 @@ class RotaryCalibrationWindow:
                 widget.configure(state="disabled" if busy else "normal")
             for widget in (self.instrument, self.resolution, self.supply):
                 widget.configure(state="disabled" if busy or self.session_dir else "normal")
+            if hasattr(self, "capture_mode_menu"):
+                self.capture_mode_menu.configure(state="disabled" if busy else "normal")
             self.connect_button.configure(state="normal" if not active and not self.preview else "disabled")
             self.disconnect_button.configure(state="normal" if active else "disabled")
             self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
@@ -291,9 +300,14 @@ class RotaryCalibrationWindow:
         operator, fixture = app.operator_input.get().strip(), app.fixture_id_input.get().strip()
         if not operator or not fixture:
             raise ValueError("Enter Operator ID and Fixture ID in EAST first")
-        mapping = app.reference_manager.require_verified()
+        if self.capture_mode.get() == "Sensor only":
+            # The physical reference is the operator's square/protractor, not
+            # a currently valid motor mapping. Preserve existing session identity.
+            reference_id = self.identity["reference_id"] if self.identity else None
+        else:
+            reference_id = app.reference_manager.require_verified().reference_id
         return {"operator_id": operator, "fixture_id": fixture,
-                "reference_id": mapping.reference_id, "hub_serial": self.sensor["hub_serial"],
+                "reference_id": reference_id, "hub_serial": self.sensor["hub_serial"],
                 "input_mode": self.sensor["input_mode"]}
 
     def start_capture(self):
@@ -319,7 +333,10 @@ class RotaryCalibrationWindow:
             context = self._context()
             if self.identity is not None and self.identity != context:
                 raise ValueError("Operator, fixture, zero, hub or input mode changed; start a new calibration session")
-            guard = StationaryCaptureGuard(self.app)
+            capture_mode = self.capture_mode.get()
+            if capture_mode not in ("Sensor + motor", "Sensor only"):
+                raise ValueError("Select a supported capture mode")
+            guard = SensorOnlyCaptureGuard(self.app) if capture_mode == "Sensor only" else StationaryCaptureGuard(self.app)
             if self.session_dir is None:
                 root = Path(self.app.system_config["logging"]["output_directory"])
                 if not root.is_absolute():
@@ -333,7 +350,9 @@ class RotaryCalibrationWindow:
                     "sensor": dict(self.sensor), "instrument": instrument,
                     "reference_graduation_spacing_deg": resolution, "measured_supply_v": supply,
                     "supply_use": "operator-reported metadata only; never used to normalise ratio readings",
-                    "machine_zero": self.app.reference_manager.record.to_dict(),
+                    "machine_zero": self.app.reference_manager.record.to_dict() if self.app.reference_manager.record else None,
+                    "machine_zero_verified_at_session_start": bool(self.app.reference_manager.verified),
+                    "capture_modes": "Recorded per point; sensor-only motor turns are unverified observations",
                     "software_version": self.app.system_config["software_version"],
                     "accepted_motor_conversion": self.app.system_config["motion"]["afo_degrees_per_odrive_turn"],
                     "timestamp_basis": "host callback arrival; not validated for dynamic speed",
@@ -349,7 +368,9 @@ class RotaryCalibrationWindow:
             mode = self.sensor["input_mode"]
             metadata = {"point_id": len(self.points) + 1, "role": self.role.get(),
                         "reference_angle_deg": angle, "repeat": repeat, "approach": self.approach.get(),
-                        "input_mode": mode, "unit": "V/V" if mode == "Voltage ratio" else "V"}
+                        "input_mode": mode, "unit": "V/V" if mode == "Voltage ratio" else "V",
+                        "capture_mode": capture_mode,
+                        "motor_reference_id": getattr(guard, "reference_id", None)}
             self.capture = {"guard": guard, "handle": handle, "writer": writer, "samples": [],
                             "metadata": metadata, "start": time.monotonic(), "duration": duration}
             self.acknowledged.set(False)
@@ -376,7 +397,10 @@ class RotaryCalibrationWindow:
                "raw_reading": sample[2], "sensor_valid": reading_valid(sample[2], mode),
                "motor_position_turns": feedback.position_turns if feedback else None,
                "motor_velocity_turns_s": feedback.velocity_turns_s if feedback else None,
-               "motor_feedback_valid": feedback is not None, "hub_serial": self.sensor["hub_serial"],
+               "motor_feedback_valid": feedback is not None and capture["metadata"]["capture_mode"] != "Sensor only",
+               "motor_feedback_status": ("unverified_observation" if feedback else "unavailable")
+                   if capture["metadata"]["capture_mode"] == "Sensor only" else ("verified_stationary" if feedback else "invalid"),
+               "hub_serial": self.sensor["hub_serial"],
                "measured_supply_v": self.session_metadata["measured_supply_v"]}
         capture["writer"].writerow(row)
         capture["handle"].flush()
@@ -400,7 +424,8 @@ class RotaryCalibrationWindow:
             write_table(self.session_dir / "points.csv", POINT_FIELDS, self.points)
             write_json_atomic(self.session_dir / "points.json", {"metadata": self.session_metadata, "points": self.points})
             message = (f"Point {point['point_id']}: {point['samples']} samples. "
-                       + ("Recorded; ready for next position." if point["valid"] else "EXCLUDED: " + point["reason"]))
+                       + (("Recorded sensor only; motor turns excluded from conversion fit." if point.get("capture_mode") == "Sensor only"
+                           else "Recorded; ready for next position.") if point["valid"] else "EXCLUDED: " + point["reason"]))
             self.status.configure(text=message)
             self.path_label.configure(text=str(self.session_dir))
             self._show_points()
@@ -420,12 +445,12 @@ class RotaryCalibrationWindow:
     def _show_points(self):
         self.table.configure(state="normal")
         self.table.delete("1.0", "end")
-        self.table.insert("end", "ID Purpose       Angle   Rep    Sensor mean       SD     N  Status\n")
+        self.table.insert("end", "ID Purpose       Angle   Rep    Sensor mean       SD     N  Status / Capture mode\n")
         for p in self.points:
             mean = f"{p['raw_mean']:.8f}" if p['raw_mean'] is not None else "unavailable"
             sd = f"{p['raw_sd']:.6f}" if p['raw_sd'] is not None else "   n/a"
             self.table.insert("end", f"{p['point_id']:2} {p['role']:11} {p['reference_angle_deg']:+6.2f} "
-                f"{p['repeat']:4} {mean:>14} {sd:>9} {p['samples']:5} {'recorded' if p['valid'] else 'EXCLUDED'}\n")
+                f"{p['repeat']:4} {mean:>14} {sd:>9} {p['samples']:5} {'recorded' if p['valid'] else 'EXCLUDED'} / {p.get('capture_mode', 'Sensor + motor')}\n")
         self.table.configure(state="disabled")
 
     def fit(self):
@@ -445,6 +470,8 @@ class RotaryCalibrationWindow:
             if "motor_conversion_fit" in model:
                 motor = model['motor_conversion_fit']
                 message += f"Independent angle versus motor turns: {motor['slope']:+.6g} deg/turn (magnitude {abs(motor['slope']):.6g}).\n"
+            else:
+                message += "Motor conversion unavailable: sensor-only holds do not validate motor turns.\n"
             message += "No automatic acceptance or changes to EAST control/calibration. Assess protractor resolution."
             self.result.configure(text=message)
         except Exception as exc:

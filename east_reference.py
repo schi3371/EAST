@@ -274,6 +274,7 @@ class SessionMapping:
 class MotionToken:
     owner: str
     generation: int
+    read_only: bool = False
 
 
 class ProcessLock:
@@ -534,6 +535,17 @@ class MotionCoordinator:
                 self._owner_token = token
                 return token
 
+    def reserve_observation(self, owner: str) -> MotionToken:
+        """Block commands for passive measurement without changing stop/idle state."""
+        with self._command_gate:
+            with self._lock:
+                if self._owner_token is not None:
+                    raise MotionConflictError(f"Motion is already owned by {self._owner_token.owner}")
+                self._generation += 1
+                token = MotionToken(owner, self._generation, read_only=True)
+                self._owner_token = token
+                return token
+
     def request_stop(self) -> int:
         # Taking the same gate as submit_command guarantees that every command
         # already in progress completes before stop is latched, and no command
@@ -565,6 +577,8 @@ class MotionCoordinator:
     def submit_command(self, token: MotionToken, command: Callable[[], Any]) -> Any:
         """Run one target write only if ownership is still valid at submission."""
         with self._command_gate:
+            if token.read_only:
+                raise MotionConflictError("Passive observation cannot submit motor commands")
             self.assert_active(token)
             return command()
 

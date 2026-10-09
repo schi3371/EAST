@@ -1,6 +1,6 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.5.3-rotary-hub-identity. This is a stationary, empty-fixture
+Version: EAST 1.5.4-sensor-only-capture. This is a stationary, empty-fixture
 measurement workflow. It does not apply a calibration to motor control or replace
 angles in strain-test CSV files.
 
@@ -76,9 +76,10 @@ Do not label a point with the EAST display just because the motor moved there.
 
 Align the protractor to consistent rigid fixture surfaces in the rotation plane:
 a fixed footplate reference and the moving shank/linkage reference. Establish
-90° with the square, then measure angular change from that reference. Where the
-instrument displays the included angle directly, 85° minus 90° is −5°, and 95°
-minus 90° is +5°. Check that its orientation gives the chosen sign consistently.
+90° with the square, then measure angular change from that reference. Assign
+positive change to dorsiflexion and negative change to plantarflexion. The
+protractor's included-angle reading depends on the chosen surfaces; do not assume
+that reading minus 90 always has the required sign.
 Measure the same physical joint/member at every point. Photograph the instrument
 placement and record its graduation spacing and any reading ambiguity.
 
@@ -108,8 +109,8 @@ For each point:
    retain it, investigate the stated reason, then collect a replacement point.
 
 Motor commands are blocked during each capture by EAST's existing motion owner.
-Stop/Escape, cancellation, stale feedback, sensor loss, active motor state,
-movement and reference changes end the hold. Partial readings remain saved with
+For Sensor + motor, Stop/Escape, cancellation, stale feedback, sensor loss,
+active motor state, movement and reference changes end the hold. Partial readings remain saved with
 an exclusion reason; excluded holds are not used to fit.
 
 A **3-point exploratory check** at negative angle, physical zero and positive
@@ -213,3 +214,42 @@ The built-in analog channel can report `VoltageRatioInput_PORT` or
 `VoltageInput_PORT` as its device SKU. These are valid channel identities, not
 wrong hubs. EAST validates the parent hub's HUB0007 SKU, hub/channel serial,
 port 0 and hub-port-device flag, and records hub and channel SKUs separately.
+
+
+## Capture after opening the enclosure invalidates motor zero
+
+Select **Sensor only** in the calibration window's capture-mode dropdown.
+Enter the angle independently measured relative to physical 90 degrees, e.g.
+**-10.1** for 10.1 degrees plantarflexion. Confirm the empty, independently
+measured, stationary fixture and capture. This mode does not require a valid
+ODrive reference or fresh ODrive feedback. It never sets zero, clears faults,
+confirms motor idle or enables movement. The operator must independently confirm
+that the fixture stays stationary; when fresh motor feedback exists, active
+motor state or movement aborts the hold. Sensor loss, stale sensor readings,
+invalid sensor values and operator cancellation still exclude the hold.
+
+The capture reserves passive observation so other motor commands cannot be
+submitted during the hold, even if a motor stop is already latched. Stop/idle
+state is retained. Existing motor/reference requirements still apply before
+subsequent movement. This solves recording at the current physical angle; it
+is not a solution to motor reference loss when the enclosure is opened.
+
+`capture_mode` identifies every hold. Sensor-only readings may fit the sensor
+against the independent physical angle. Available raw motor turns are retained
+with `motor_feedback_status=unverified_observation` and
+`motor_feedback_valid=False`; absent feedback is blank and marked unavailable.
+They are excluded from motor means and the motor-conversion fit. Only
+**Sensor + motor** captures supply verified paired motor measurements.
+
+Within an open session, switching to Sensor only retains the existing physical
+calibration session identity even if the motor reference is invalidated. It does
+not claim that the saved motor zero is currently valid. Operator, fixture, hub
+and input-mode changes still require a new session. Files from older sessions
+remain untouched. Restarting EAST creates a new calibration folder; retain both
+folders and explicitly reconcile their physical reference/setup before combined
+analysis. Do not assume the GUI automatically resumes an older session.
+
+For physical angle sign, use dorsiflexion positive and plantarflexion negative.
+Whether an included-angle protractor reads above or below 90 depends on the
+chosen surfaces: assign sign by anatomical direction, not automatically by
+subtracting 90 from every reading. Document those surfaces and convention.

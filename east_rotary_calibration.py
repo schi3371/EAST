@@ -11,11 +11,13 @@ SAMPLE_FIELDS = (
     "host_timestamp_iso", "host_monotonic_s", "raw_reading", "input_mode", "unit",
     "sensor_valid", "motor_position_turns", "motor_velocity_turns_s",
     "motor_feedback_valid", "hub_serial", "measured_supply_v",
+    "capture_mode", "motor_reference_id", "motor_feedback_status",
 )
 POINT_FIELDS = (
     "point_id", "role", "reference_angle_deg", "repeat", "approach", "input_mode",
     "unit", "samples", "raw_mean", "raw_sd", "raw_min", "raw_max",
     "motor_position_mean_turns", "motor_span_turns", "valid", "reason",
+    "capture_mode", "motor_reference_id",
 )
 
 
@@ -46,7 +48,7 @@ def summarise_hold(samples, metadata, *, failure=None):
         reason = "Fewer than 10 samples"
     if not reason and any(not s["sensor_valid"] for s in samples):
         reason = "Out-of-range/non-finite sensor reading"
-    if not reason and any(not s["motor_feedback_valid"] for s in samples):
+    if not reason and metadata.get("capture_mode", "Sensor + motor") != "Sensor only" and any(not s["motor_feedback_valid"] for s in samples):
         reason = "Motor feedback unavailable or movement detected"
     if not reason and raw and max(raw) - min(raw) > (0.5 if mode == "Voltage ratio" else 2.65):
         reason = "Possible sensor rollover within hold; arithmetic mean is unsuitable"
@@ -109,7 +111,9 @@ def fit_calibration(points):
         "method": "OLS: independently measured fixture angle = slope * raw reading + intercept",
         "motor_control_changed": False,
     })
-    motor_points = [p for p in training if p.get("motor_position_mean_turns") is not None]
+    motor_points = [p for p in training if p.get("capture_mode", "Sensor + motor") != "Sensor only"
+                    and p.get("motor_position_mean_turns") is not None]
+    model["motor_conversion_point_count"] = len(motor_points)
     if len(motor_points) >= 3:
         try:
             model["motor_conversion_fit"] = linear_fit(
@@ -179,6 +183,47 @@ class StationaryCaptureGuard:
                 or abs(feedback.velocity_turns_s) > velocity_limit
                 or abs(feedback.position_turns - self.origin) > position_limit):
             raise ValueError("Motor must remain idle and stationary throughout the hold")
+        return feedback
+
+    def close(self):
+        if self.token is not None:
+            self.app.motion_coordinator.release(self.token)
+            self.token = None
+
+
+class SensorOnlyCaptureGuard:
+    """Reserve passive observation; never verify zero, clear faults or arm a motor."""
+    def __init__(self, app):
+        self.app, self.token, self.origin = app, None, None
+        if app.strain_test_active:
+            raise ValueError("Finish the active test before sensor-only capture")
+        self.token = app.motion_coordinator.reserve_observation("rotary-sensor-only-capture")
+        try:
+            self.check()
+        except Exception:
+            self.close()
+            raise
+
+    def check(self):
+        if self.app.motion_coordinator.active_token != self.token:
+            raise ValueError("Sensor-only capture reservation was cancelled")
+        # Missing/stale ODrive feedback is permitted for passive sensor capture.
+        # Any available turns are observations only, never a motor calibration.
+        try:
+            feedback = self.app.get_feedback()
+        except Exception:
+            return None
+        if feedback is None:
+            return None
+        conversion = self.app.system_config["motion"]["afo_degrees_per_odrive_turn"]
+        velocity_limit = self.app.system_config["reference"]["stationary_velocity_limit_deg_s"] / conversion
+        position_limit = self.app.system_config["motion"]["position_tolerance_deg"] / conversion
+        if feedback.current_state != 1 or abs(feedback.velocity_turns_s) > velocity_limit:
+            raise ValueError("Stop motor movement before sensor-only capture")
+        if self.origin is None:
+            self.origin = finite_number(feedback.position_turns, "Observed motor position")
+        if abs(feedback.position_turns - self.origin) > position_limit:
+            raise ValueError("Movement detected during sensor-only hold")
         return feedback
 
     def close(self):
