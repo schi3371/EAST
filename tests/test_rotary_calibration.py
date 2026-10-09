@@ -156,7 +156,7 @@ class RotaryReaderTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "east_rotary_gui.py"
         tree = ast.parse(path.read_text())
         worker = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "RotaryReader")
-        namespace = dict(queue=queue, threading=threading, time=time, datetime=datetime)
+        namespace = dict(queue=queue, threading=threading, time=time, datetime=datetime, math=math)
         exec(compile(ast.Module(body=[worker], type_ignores=[]), str(path), "exec"), namespace)
         return namespace["RotaryReader"]
 
@@ -171,7 +171,9 @@ class RotaryReaderTests(unittest.TestCase):
             channel.getDeviceSerialNumber.return_value = 750256
             channel.getMinDataInterval.return_value = 1
             channel.getMaxDataInterval.return_value = 60000
-            reader.stop.wait = Mock()
+            reader.stop.wait = Mock(return_value=True)
+            channel.getVoltageRatio.return_value = 0.5
+            channel.getVoltage.return_value = 2.5
             fake = SimpleNamespace(**{constructor: Mock(return_value=channel)})
             with patch.dict("sys.modules", {module: fake}):
                 reader._run()
@@ -179,8 +181,15 @@ class RotaryReaderTests(unittest.TestCase):
             channel.setHubPort.assert_called_once_with(0)
             channel.setIsHubPortDevice.assert_called_once_with(True)
             channel.close.assert_called_once()
-            self.assertEqual(reader.events.get_nowait()[0], "connected")
-            self.assertEqual(reader.events.get_nowait()[0], "closed")
+            events = []
+            while not reader.events.empty():
+                events.append(reader.events.get_nowait())
+            readings = [value for kind, value in events if kind == "sample"]
+            self.assertEqual(len(readings), 1)
+            self.assertEqual(readings[0][2], 0.5 if mode == "Voltage ratio" else 2.5)
+            self.assertEqual([kind for kind, _ in events if kind != "progress"], ["connected", "sample", "closed"])
+            channel.setOnVoltageRatioChangeHandler.assert_not_called()
+            channel.setOnVoltageChangeHandler.assert_not_called()
 
     def test_attachment_failure_closes_channel_and_reports_error(self):
         reader = self.reader_class()(750256, "Voltage ratio")
@@ -189,8 +198,173 @@ class RotaryReaderTests(unittest.TestCase):
         fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
         with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
             reader._run()
-        self.assertEqual(reader.events.get_nowait(), ("error", "missing hub"))
+        events = list(reader.events.queue)
+        error = next(value for kind, value in events if kind == "error")
+        self.assertIn("Opening hub 750256", error)
+        self.assertIn("missing hub", error)
+        self.assertFalse(any(kind == "connected" for kind, _ in events))
         channel.close.assert_called_once()
+
+
+    def channel(self):
+        channel = Mock()
+        channel.getDeviceSKU.return_value = "HUB0007"
+        channel.getDeviceSerialNumber.return_value = 750256
+        channel.getMinDataInterval.return_value = 1
+        channel.getMaxDataInterval.return_value = 60000
+        channel.getVoltageRatio.return_value = 0.5
+        return channel
+
+    def test_initial_unknown_value_is_retried_before_connection(self):
+        reader = self.reader_class()(750256, "Voltage ratio")
+        unknown = RuntimeError("first value unavailable")
+        unknown.code = 51
+        channel = self.channel()
+        channel.getVoltageRatio.side_effect = [unknown, 0.5]
+        reader.stop.wait = Mock(side_effect=[False, True])
+        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
+        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
+            reader._run()
+        events = list(reader.events.queue)
+        self.assertFalse(any(kind == "error" for kind, _ in events))
+        self.assertEqual(sum(kind == "sample" for kind, _ in events), 1)
+        channel.close.assert_called_once()
+
+    def test_getter_failure_is_reported_without_false_connection(self):
+        reader = self.reader_class()(750256, "Voltage ratio")
+        channel = self.channel()
+        channel.getVoltageRatio.side_effect = RuntimeError("driver read failed")
+        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
+        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
+            reader._run()
+        events = list(reader.events.queue)
+        self.assertIn("driver read failed", next(value for kind, value in events if kind == "error"))
+        self.assertFalse(any(kind == "connected" for kind, _ in events))
+        channel.close.assert_called_once()
+
+    def test_cancel_during_attachment_prevents_configuration_or_reading(self):
+        reader = self.reader_class()(750256, "Voltage ratio")
+        channel = self.channel()
+        channel.openWaitForAttachment.side_effect = lambda _timeout: reader.stop.set()
+        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
+        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
+            reader._run()
+        channel.getVoltageRatio.assert_not_called()
+        self.assertFalse(any(kind == "connected" for kind, _ in list(reader.events.queue)))
+        channel.close.assert_called_once()
+
+    def test_stationary_values_are_sampled_without_change_callbacks(self):
+        reader = self.reader_class()(750256, "Voltage ratio")
+        channel = self.channel()
+        reader.stop.wait = Mock(side_effect=[False, False, True])
+        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
+        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
+            reader._run()
+        values = [value[2] for kind, value in list(reader.events.queue) if kind == "sample"]
+        self.assertEqual(values, [0.5, 0.5, 0.5])
+        self.assertEqual(channel.getVoltageRatio.call_count, 3)
+        channel.setOnVoltageRatioChangeHandler.assert_not_called()
+
+
+class RotaryConnectionUiTests(unittest.TestCase):
+    def window(self):
+        path = Path(__file__).resolve().parents[1] / "east_rotary_gui.py"
+        tree = ast.parse(path.read_text())
+        node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "RotaryCalibrationWindow")
+        namespace = dict(time=time, queue=queue)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+        window = namespace["RotaryCalibrationWindow"].__new__(namespace["RotaryCalibrationWindow"])
+        window.closed, window.closing = False, False
+        window.sensor, window.latest, window.capture = None, None, None
+        window.window, window.status, window.live_label = Mock(), Mock(), Mock()
+        window.app = Mock()
+        window._controls, window._record_sample, window.cancel_capture = Mock(), Mock(), Mock()
+        reader = SimpleNamespace(events=queue.Queue(), timed_out=False, stop=threading.Event(),
+            started_monotonic=time.monotonic(), CONNECT_TIMEOUT_S=8,
+            phase="Opening hub", serial=750256, thread=Mock())
+        reader.thread.is_alive.return_value = True
+        window.reader = reader
+        return window, reader
+
+    def test_nested_gui_event_cannot_leave_connect_disabled_after_worker_exits(self):
+        window, reader = self.window()
+        window.preview, window.points, window.session_dir = False, [], None
+        for name in ("serial", "mode_menu", "angle", "repeat", "duration", "role_menu",
+                     "approach_menu", "ack", "instrument", "resolution", "supply",
+                     "connect_button", "disconnect_button", "capture_button", "cancel_button",
+                     "fit_button", "new_button"):
+            setattr(window, name, Mock())
+        window._controls = type(window)._controls.__get__(window)
+        def nested_failure(**_kwargs):
+            window.serial.configure.side_effect = None
+            window.reader = None
+            window._controls()
+        window.serial.configure.side_effect = nested_failure
+        window._controls()
+        self.assertEqual(window.connect_button.configure.call_args.kwargs["state"], "normal")
+        self.assertEqual(window.disconnect_button.configure.call_args.kwargs["state"], "disabled")
+        self.assertFalse(window._updating_controls)
+
+    def test_connection_and_first_sample_reach_gui(self):
+        window, reader = self.window()
+        metadata = dict(hub_serial=750256, input_mode="Voltage ratio", interval_ms=100)
+        sample = (time.monotonic(), "test", 0.5)
+        reader.events.put(("connected", metadata))
+        reader.events.put(("sample", sample))
+        window._tick()
+        self.assertEqual(window.sensor, metadata)
+        self.assertEqual(window.latest, sample)
+        self.assertIn("0.50000000 V/V", window.live_label.configure.call_args.kwargs["text"])
+        window.window.after.assert_called_once()
+
+    def test_hung_worker_gets_watchdog_error_and_late_connection_is_ignored(self):
+        window, reader = self.window()
+        reader.started_monotonic -= 9
+        window._tick()
+        self.assertTrue(reader.timed_out)
+        self.assertTrue(reader.stop.is_set())
+        self.assertIs(window.reader, reader)  # do not create an overlapping channel
+        message = window.status.configure.call_args.kwargs["text"]
+        self.assertIn("timed out", message)
+        self.assertIn("Opening hub", message)
+        window.app.update_terminal.assert_called_once()
+        reader.events.put(("connected", dict(hub_serial=750256)))
+        window._tick()
+        self.assertIsNone(window.sensor)
+
+    def test_driver_error_remains_visible_and_finished_worker_allows_retry(self):
+        window, reader = self.window()
+        reader.events.put(("error", "EPHIDGET_TIMEOUT: no matching device"))
+        reader.events.put(("closed", None))
+        reader.thread.is_alive.return_value = False
+        window._tick()
+        self.assertIsNone(window.reader)
+        self.assertIn("no matching device", window.status.configure.call_args.kwargs["text"])
+        window.app.update_terminal.assert_called_once()
+        window.window.after.assert_called_once()
+
+    def test_late_progress_does_not_overwrite_driver_error(self):
+        window, reader = self.window()
+        reader.events.put(("error", "driver failure"))
+        reader.events.put(("progress", "Waiting for first reading"))
+        window._tick()
+        self.assertIn("driver failure", window.status.configure.call_args.kwargs["text"])
+
+    def test_event_processing_error_does_not_stop_gui_pump(self):
+        window, reader = self.window()
+        reader.events.put(("progress", "Loading driver"))
+        window.app.update_terminal.side_effect = RuntimeError("terminal widget error")
+        with self.assertRaises(RuntimeError):
+            window._tick()
+        window.window.after.assert_called_once()
+
+    def test_queue_drain_is_bounded(self):
+        window, reader = self.window()
+        for _ in range(250):
+            reader.events.put(("sample", (time.monotonic(), "test", 0.5)))
+        window._tick()
+        self.assertEqual(reader.events.qsize(), 50)
+        window.window.after.assert_called_once()
 
 
 if __name__ == "__main__":

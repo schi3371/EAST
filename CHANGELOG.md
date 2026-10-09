@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added rotary connection stage/error reporting in the GUI and session terminal, an 8-second connection watchdog, and explicit stationary sensor reads rather than relying on change callbacks. Fixed nested GUI refreshes leaving Connect disabled after a failed connection.
+
 - Embedded Session Terminal and Plot in right-hand tabs, retaining history and live samples when switching; removed the separate plot window and matched the layout preview.
 
 - Increased the maximum motion timeout from 30 to 60 seconds so 0.5 deg/s quasi-static sweeps over -10 deg to +10 deg are supported; retained the 5-second margin and rejection of moves requiring more than 60 seconds.

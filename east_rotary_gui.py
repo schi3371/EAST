@@ -17,34 +17,43 @@ from east_rotary_calibration import (
 
 
 class RotaryReader:
-    """Only this worker opens/closes the selected hub port; callbacks enqueue data."""
+    """Open/read/close the selected hub only in this worker; no Tk calls."""
+    CONNECT_TIMEOUT_S = 8.0
+
     def __init__(self, serial, mode):
         self.serial, self.mode = serial, mode
         self.events = queue.Queue()
         self.stop = threading.Event()
+        self.phase = "Starting sensor worker"
+        self.started_monotonic = None
+        self.timed_out = False
         self.thread = threading.Thread(target=self._run, name="rotary-sensor-reader", daemon=True)
 
     def start(self):
+        self.started_monotonic = time.monotonic()
         self.thread.start()
+
+    def _progress(self, phase):
+        self.phase = phase
+        self.events.put(("progress", phase))
 
     def _run(self):
         channel = None
         try:
+            self._progress("Loading Phidget driver")
             # Address the hub explicitly; never open the load-cell Bridge.
             if self.mode == "Voltage ratio":
                 from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
                 channel = VoltageRatioInput()
-            else:
+            elif self.mode == "Voltage":
                 from Phidget22.Devices.VoltageInput import VoltageInput
                 channel = VoltageInput()
+            else:
+                raise ValueError("Unsupported sensor input mode")
             channel.setDeviceSerialNumber(self.serial)
             channel.setHubPort(0)
             channel.setIsHubPortDevice(True)
             channel.setChannel(0)
-
-            def sample(_channel, value):
-                self.events.put(("sample", (time.monotonic(),
-                    datetime.now().astimezone().isoformat(timespec="milliseconds"), value)))
 
             def error(_channel, *details):
                 self.events.put(("error", "Sensor disconnected/error: " + str(details)))
@@ -52,9 +61,11 @@ class RotaryReader:
 
             channel.setOnDetachHandler(error)
             channel.setOnErrorHandler(error)
+            self._progress(f"Opening hub {self.serial}, port 0, {self.mode} (4-second attachment timeout)")
             channel.openWaitForAttachment(4000)
             if self.stop.is_set():
                 return
+            self._progress("Checking attached hub and configuring sampling")
             sku = channel.getDeviceSKU()
             if not sku.startswith("HUB0007"):
                 raise RuntimeError(f"Expected HUB0007, received {sku}; no calibration acquired")
@@ -62,15 +73,41 @@ class RotaryReader:
             channel.setDataInterval(interval)
             if self.mode == "Voltage ratio":
                 channel.setVoltageRatioChangeTrigger(0.0)
-                channel.setOnVoltageRatioChangeHandler(sample)
+                get_reading = channel.getVoltageRatio
             else:
                 channel.setVoltageChangeTrigger(0.0)
-                channel.setOnVoltageChangeHandler(sample)
-            self.events.put(("connected", {"hub_serial": channel.getDeviceSerialNumber(),
-                "sku": sku, "interval_ms": interval, "input_mode": self.mode}))
-            self.stop.wait()
+                get_reading = channel.getVoltage
+            self._progress("Waiting for the first sensor reading")
+            metadata = {"hub_serial": channel.getDeviceSerialNumber(), "sku": sku,
+                        "interval_ms": interval, "input_mode": self.mode}
+            attached_at = time.monotonic()
+            connected = False
+            while not self.stop.is_set():
+                try:
+                    value = get_reading()
+                except Exception as exc:
+                    # Phidget's first value can be UNKNOWNVAL (0x33) immediately
+                    # after attachment. Retry only this initial, documented state.
+                    if not connected and getattr(exc, "code", None) == 0x33 and time.monotonic() - attached_at < 3:
+                        self.stop.wait(0.1)
+                        continue
+                    raise
+                if self.stop.is_set():
+                    break
+                if not math.isfinite(value):
+                    raise ValueError("Sensor returned a non-finite reading")
+                if not connected:
+                    self.events.put(("connected", metadata))
+                    connected = True
+                    self.phase = "Reading sensor"
+                self.events.put(("sample", (time.monotonic(),
+                    datetime.now().astimezone().isoformat(timespec="milliseconds"), value)))
+                # Explicit reads produce stationary samples even when no change
+                # callback arrives. Wait is interruptible for disconnect/shutdown.
+                if self.stop.wait(interval / 1000.0):
+                    break
         except Exception as exc:
-            self.events.put(("error", str(exc)))
+            self.events.put(("error", f"{self.phase}: {type(exc).__name__}: {exc}"))
         finally:
             if channel is not None:
                 try:
@@ -184,20 +221,33 @@ class RotaryCalibrationWindow:
         return entry
 
     def _controls(self):
-        busy = self.capture is not None
-        active = self.reader is not None
-        for widget in (self.serial, self.mode_menu):
-            widget.configure(state="disabled" if active or self.points else "normal")
-        for widget in (self.angle, self.repeat, self.duration, self.role_menu, self.approach_menu, self.ack):
-            widget.configure(state="disabled" if busy else "normal")
-        for widget in (self.instrument, self.resolution, self.supply):
-            widget.configure(state="disabled" if busy or self.session_dir else "normal")
-        self.connect_button.configure(state="normal" if not active and not self.preview else "disabled")
-        self.disconnect_button.configure(state="normal" if active else "disabled")
-        self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
-        self.cancel_button.configure(state="normal" if busy else "disabled")
-        self.fit_button.configure(state="normal" if self.points and not busy else "disabled")
-        self.new_button.configure(state="disabled" if busy else "normal")
+        # CTk configuration can process nested Tk events. A failure handled during
+        # a refresh must not be overwritten by the outer refresh's old state.
+        if getattr(self, "_updating_controls", False):
+            self._controls_pending = True
+            return
+        self._updating_controls = True
+        self._controls_pending = False
+        try:
+            busy = self.capture is not None
+            active = self.reader is not None
+            for widget in (self.serial, self.mode_menu):
+                widget.configure(state="disabled" if active or self.points else "normal")
+            for widget in (self.angle, self.repeat, self.duration, self.role_menu, self.approach_menu, self.ack):
+                widget.configure(state="disabled" if busy else "normal")
+            for widget in (self.instrument, self.resolution, self.supply):
+                widget.configure(state="disabled" if busy or self.session_dir else "normal")
+            self.connect_button.configure(state="normal" if not active and not self.preview else "disabled")
+            self.disconnect_button.configure(state="normal" if active else "disabled")
+            self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
+            self.cancel_button.configure(state="normal" if busy else "disabled")
+            self.fit_button.configure(state="normal" if self.points and not busy else "disabled")
+            self.new_button.configure(state="disabled" if busy else "normal")
+        finally:
+            self._updating_controls = False
+            if self._controls_pending:
+                self._controls_pending = False
+                self._controls()
 
     def connect(self):
         if self.reader is not None or self.preview:
@@ -206,13 +256,21 @@ class RotaryCalibrationWindow:
             serial = int(self.serial.get())
             if serial <= 0:
                 raise ValueError("Hub serial must be positive")
-            self.latest = None
+            self.sensor, self.latest = None, None
             self.reader = RotaryReader(serial, self.mode.get())
+            self._sensor_status(f"Connecting hub {serial}, port 0 as {self.mode.get()}...")
             self.reader.start()
-            self.status.configure(text="Connecting sensor; close other HUB0007 channel windows first.")
             self._controls()
         except Exception as exc:
-            self.status.configure(text=str(exc))
+            if self.reader is not None and not self.reader.thread.is_alive():
+                self.reader = None
+            self._sensor_status("Sensor connection failed: " + str(exc))
+            self._controls()
+
+    def _sensor_status(self, message):
+        self.status.configure(text=message)
+        if self.app is not None:
+            self.app.update_terminal("ROTARY SENSOR: " + message + "\n")
 
     def disconnect(self):
         self.cancel_capture("Sensor disconnected by operator")
@@ -397,29 +455,52 @@ class RotaryCalibrationWindow:
         if self.closed:
             return
         try:
-            if self.reader:
-                while True:
+            reader = self.reader
+            if reader:
+                # Bound queue draining so sensor events cannot monopolise Tk.
+                for _ in range(200):
                     try:
-                        kind, payload = self.reader.events.get_nowait()
+                        kind, payload = reader.events.get_nowait()
                     except queue.Empty:
                         break
-                    if kind == "connected":
+                    if reader.timed_out and kind != "closed":
+                        continue
+                    if kind == "progress":
+                        if not reader.stop.is_set():
+                            self._sensor_status(payload)
+                    elif kind == "connected":
+                        if reader.stop.is_set():
+                            continue
                         self.sensor = payload
-                        self.status.configure(text=f"Sensor connected: {payload['input_mode']}, {payload['interval_ms']} ms. No angle calibration applied.")
+                        self._sensor_status(f"Sensor connected: hub {payload['hub_serial']}, {payload['input_mode']}, {payload['interval_ms']} ms. No angle calibration applied.")
                         self._controls()
                     elif kind == "sample":
+                        if reader.stop.is_set():
+                            continue
                         self.latest = payload
                         self._record_sample(payload)
                     elif kind == "error":
+                        reader.stop.set()
                         self.cancel_capture(payload)
                         self.sensor, self.latest = None, None
-                        self.status.configure(text=payload)
+                        self._sensor_status("Sensor connection/read failed: " + payload)
                         self._controls()
                     elif kind == "closed":
                         self.cancel_capture("Sensor channel closed")
                         self.sensor, self.latest = None, None
                         # Retain ownership until the worker has actually exited.
-            if self.reader and not self.reader.thread.is_alive():
+                if (not self.sensor and not reader.stop.is_set()
+                        and reader.started_monotonic is not None
+                        and time.monotonic() - reader.started_monotonic >= reader.CONNECT_TIMEOUT_S):
+                    reader.timed_out = True
+                    reader.stop.set()
+                    self.sensor, self.latest = None, None
+                    self._sensor_status(f"Connection timed out while: {reader.phase}. Hub {reader.serial}, port 0. "
+                        "Check the hub serial, Phidget Windows driver and other sensor programs. "
+                        "Waiting for the driver to close; do not open a second sensor session.")
+                    self._controls()
+            if (self.reader and self.reader.started_monotonic is not None
+                    and not self.reader.thread.is_alive()):
                 self.reader = None
                 self.sensor, self.latest = None, None
                 self._controls()
@@ -440,11 +521,13 @@ class RotaryCalibrationWindow:
             if self.closing and self.reader is None:
                 self.closed = True
                 self.window.destroy()
-                return
         except Exception as exc:
             self.cancel_capture(str(exc))
-            self.status.configure(text=str(exc))
-        self.window.after(50, self._tick)
+            self._sensor_status("Sensor GUI error: " + str(exc))
+        finally:
+            # An error in a queued event must never silently stop the UI pump.
+            if not self.closed:
+                self.window.after(50, self._tick)
 
     def close(self):
         self.closing = True

@@ -1,6 +1,6 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.5.0-rotary-calibration. This is a stationary, empty-fixture
+Version: EAST 1.5.2-rotary-connection. This is a stationary, empty-fixture
 measurement workflow. It does not apply a calibration to motor control or replace
 angles in strain-test CSV files.
 
@@ -183,3 +183,28 @@ Offline calculation, guard and reader-addressing tests; actual GUI rendering,
 mocked paired capture/export/cancellation and normal idle shutdown were checked
 on macOS without opening hardware. Windows GUI, the installed HUB0007/ODrive
 pair and physical measurement behaviour require the first lab bench check.
+
+## If Connect Sensor does not produce readings
+
+Keep the main EAST GUI and its calibration window open. They are one application,
+not competing sensor sessions. The connection message names hub serial, input
+mode and stage. Progress and errors also appear under **Session Terminal**.
+
+EAST requests attachment with a four-second timeout. An eight-second GUI watchdog
+reports a stalled driver/first-reading step and requests cleanup. Connect stays
+disabled while that worker still owns the channel, preventing a second channel
+from being opened on top of it. Disconnect requests cancellation.
+
+Check that the serial in the window matches the connected HUB0007. Close only
+separate programs using its analog port: the standalone sensor logger or a
+Phidget Control Panel channel window. Keep the Bridge/ODrive USBs connected.
+Check the Phidget Windows driver/library installation if attachment fails.
+If it still fails, copy the **ROTARY SENSOR** lines from the Session Terminal;
+these identify the failing stage and preserve the actual exception. No failure
+message proves that another program is open. Do not change sensor wiring solely
+to address a software connection failure.
+
+Stationary readings now use explicit VoltageRatioInput/VoltageInput getters in
+the worker at the configured interval (normally 100 ms), rather than depending
+on sensor-change callbacks. Repeated unchanged readings are recorded. Host
+timestamps remain acquisition-arrival timestamps, not validated dynamic timing.
