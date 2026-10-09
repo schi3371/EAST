@@ -84,7 +84,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.5.2-rotary-connection"
+APP_VERSION = "1.5.3-rotary-hub-identity"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"

@@ -1,6 +1,6 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.5.2-rotary-connection. This is a stationary, empty-fixture
+Version: EAST 1.5.3-rotary-hub-identity. This is a stationary, empty-fixture
 measurement workflow. It does not apply a calibration to motor control or replace
 angles in strain-test CSV files.
 
@@ -208,3 +208,8 @@ Stationary readings now use explicit VoltageRatioInput/VoltageInput getters in
 the worker at the configured interval (normally 100 ms), rather than depending
 on sensor-change callbacks. Repeated unchanged readings are recorded. Host
 timestamps remain acquisition-arrival timestamps, not validated dynamic timing.
+
+The built-in analog channel can report `VoltageRatioInput_PORT` or
+`VoltageInput_PORT` as its device SKU. These are valid channel identities, not
+wrong hubs. EAST validates the parent hub's HUB0007 SKU, hub/channel serial,
+port 0 and hub-port-device flag, and records hub and channel SKUs separately.

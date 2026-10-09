@@ -66,9 +66,17 @@ class RotaryReader:
             if self.stop.is_set():
                 return
             self._progress("Checking attached hub and configuring sampling")
-            sku = channel.getDeviceSKU()
+            # A built-in analog channel identifies itself as VoltageRatioInput_PORT
+            # or VoltageInput_PORT. Validate its parent hub, not the channel SKU.
+            channel_sku = channel.getDeviceSKU()
+            hub = channel.getHub()
+            sku = hub.getDeviceSKU()
+            hub_serial = hub.getDeviceSerialNumber()
             if not sku.startswith("HUB0007"):
-                raise RuntimeError(f"Expected HUB0007, received {sku}; no calibration acquired")
+                raise RuntimeError(f"Expected parent HUB0007, received {sku}; no calibration acquired")
+            if (hub_serial != self.serial or channel.getDeviceSerialNumber() != self.serial
+                    or channel.getHubPort() != 0 or not channel.getIsHubPortDevice()):
+                raise RuntimeError("Attached sensor does not match the selected hub serial and analog port 0; no calibration acquired")
             interval = max(channel.getMinDataInterval(), min(100, channel.getMaxDataInterval()))
             channel.setDataInterval(interval)
             if self.mode == "Voltage ratio":
@@ -78,7 +86,7 @@ class RotaryReader:
                 channel.setVoltageChangeTrigger(0.0)
                 get_reading = channel.getVoltage
             self._progress("Waiting for the first sensor reading")
-            metadata = {"hub_serial": channel.getDeviceSerialNumber(), "sku": sku,
+            metadata = {"hub_serial": hub_serial, "sku": sku, "channel_sku": channel_sku,
                         "interval_ms": interval, "input_mode": self.mode}
             attached_at = time.monotonic()
             connected = False

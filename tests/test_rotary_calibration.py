@@ -166,11 +166,8 @@ class RotaryReaderTests(unittest.TestCase):
             ("Voltage", "Phidget22.Devices.VoltageInput", "VoltageInput"),
         ):
             reader = self.reader_class()(750256, mode)
-            channel = Mock()
-            channel.getDeviceSKU.return_value = "HUB0007"
-            channel.getDeviceSerialNumber.return_value = 750256
-            channel.getMinDataInterval.return_value = 1
-            channel.getMaxDataInterval.return_value = 60000
+            channel = self.channel()
+            channel.getDeviceSKU.return_value = constructor + "_PORT"
             reader.stop.wait = Mock(return_value=True)
             channel.getVoltageRatio.return_value = 0.5
             channel.getVoltage.return_value = 2.5
@@ -186,6 +183,9 @@ class RotaryReaderTests(unittest.TestCase):
                 events.append(reader.events.get_nowait())
             readings = [value for kind, value in events if kind == "sample"]
             self.assertEqual(len(readings), 1)
+            metadata = next(value for kind, value in events if kind == "connected")
+            self.assertEqual(metadata["sku"], "HUB0007")
+            self.assertEqual(metadata["channel_sku"], constructor + "_PORT")
             self.assertEqual(readings[0][2], 0.5 if mode == "Voltage ratio" else 2.5)
             self.assertEqual([kind for kind, _ in events if kind != "progress"], ["connected", "sample", "closed"])
             channel.setOnVoltageRatioChangeHandler.assert_not_called()
@@ -208,12 +208,40 @@ class RotaryReaderTests(unittest.TestCase):
 
     def channel(self):
         channel = Mock()
-        channel.getDeviceSKU.return_value = "HUB0007"
+        channel.getDeviceSKU.return_value = "VoltageRatioInput_PORT"
+        channel.getHub.return_value.getDeviceSKU.return_value = "HUB0007"
+        channel.getHub.return_value.getDeviceSerialNumber.return_value = 750256
         channel.getDeviceSerialNumber.return_value = 750256
+        channel.getHubPort.return_value = 0
+        channel.getIsHubPortDevice.return_value = True
         channel.getMinDataInterval.return_value = 1
         channel.getMaxDataInterval.return_value = 60000
         channel.getVoltageRatio.return_value = 0.5
         return channel
+
+    def test_wrong_parent_hub_or_address_is_rejected_before_reading(self):
+        for mismatch in ("hub_sku", "hub_serial", "channel_serial", "port", "port_device"):
+            with self.subTest(mismatch=mismatch):
+                reader = self.reader_class()(750256, "Voltage ratio")
+                channel = self.channel()
+                if mismatch == "hub_sku":
+                    channel.getHub.return_value.getDeviceSKU.return_value = "HUB0000"
+                elif mismatch == "hub_serial":
+                    channel.getHub.return_value.getDeviceSerialNumber.return_value = 123
+                elif mismatch == "channel_serial":
+                    channel.getDeviceSerialNumber.return_value = 123
+                elif mismatch == "port":
+                    channel.getHubPort.return_value = 1
+                else:
+                    channel.getIsHubPortDevice.return_value = False
+                fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
+                with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
+                    reader._run()
+                events = list(reader.events.queue)
+                self.assertTrue(any(kind == "error" for kind, _ in events))
+                self.assertFalse(any(kind == "connected" for kind, _ in events))
+                channel.getVoltageRatio.assert_not_called()
+                channel.close.assert_called_once()
 
     def test_initial_unknown_value_is_retried_before_connection(self):
         reader = self.reader_class()(750256, "Voltage ratio")

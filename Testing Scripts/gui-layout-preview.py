@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.5.2-rotary-connection-preview"
+APP_VERSION = "1.5.3-rotary-hub-identity-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
