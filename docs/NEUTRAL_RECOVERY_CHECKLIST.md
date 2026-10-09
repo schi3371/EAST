@@ -9,7 +9,7 @@ Use this checklist for the first non-clinical bench verification of version `1.4
 - [ ] Confirm automatic session continuity is `false` and `odrive_uptime_units` is `null` until `system_stats.uptime` is bench-verified. Confirm phase recovery, measured-angle recovery, and watchdog are also disabled.
 - [ ] Close every other EAST GUI and motion diagnostic.
 - [ ] Confirm the physical E-stop and door/interlock stop the ODrive independently of software.
-- [ ] Remove the AFO for the initial empty-machine check; clear the full +/-15 degree envelope.
+- [ ] Remove the AFO for the initial empty-machine check; clear the full +/-30 degree envelope.
 
 ## Connect and inspect
 
@@ -48,7 +48,7 @@ Use this checklist for the first non-clinical bench verification of version `1.4
 
 - [ ] Start with the empty machine and a small step at the configured 1-5 degree/s manual/return speed.
 - [ ] Check left/right direction against the GUI labels.
-- [ ] Check manual travel clamps at +/-15 degrees from verified machine zero, not from connection position.
+- [ ] Check manual travel clamps at +/-30 degrees from verified machine zero, not from connection position.
 - [ ] Test `Return to Machine Zero - 90 deg` without enabling Manual Mode; confirm settle, idle, and no visible drift.
 - [ ] During a low-speed move, press Stop. Confirm immediate idle and no automatic machine-zero return.
 - [ ] Repeat the stop check with Escape and, where controlled, the physical E-stop/interlock.
