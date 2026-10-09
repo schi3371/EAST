@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import queue
@@ -81,7 +82,7 @@ plot_window = None
 plot_curve = None
 
 APP_NAME = "EAST"
-APP_VERSION = "1.4.1-manual-motor-turns"
+APP_VERSION = "1.5.0-rotary-calibration"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -191,6 +192,7 @@ class MyInterface:
         self.continuous_thread = None
         self.recovery_thread = None
         self.recovery_window = None
+        self.rotary_calibration = None
         self.recovery_origin_turns = None
         self.recovery_cumulative_deg = 0.0
         self.recovery_session_acknowledged = False
@@ -241,12 +243,16 @@ class MyInterface:
 
     def on_window_minimize(self, event):
         """Hide plot window when main window is minimized"""
+        if event.widget is not self.master:
+            return
         if hasattr(self, 'plot_container') and self.plot_container is not None:
             if self.plot_container.winfo_exists():
                 self.plot_container.withdraw()
 
     def on_window_restore(self, event):
         """Show plot window when main window is restored"""
+        if event.widget is not self.master:
+            return
         if (
             hasattr(self, 'plot_container')
             and self.plot_container is not None
@@ -695,6 +701,15 @@ class MyInterface:
         )
         self.clear_session_tare_button.grid(
             row=1, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
+        )
+
+        self.rotary_calibration_button = ctk.CTkButton(
+            manual_control_frame, text="Rotary Sensor Calibration",
+            command=self.open_rotary_calibration, fg_color=BLUE,
+            hover_color="#1d4ed8", height=34,
+        )
+        self.rotary_calibration_button.grid(
+            row=6, column=0, columnspan=3, padx=6, pady=(2, 8), sticky="ew"
         )
 
         for widget in (
@@ -1681,6 +1696,8 @@ class MyInterface:
             self.update_terminal(f"Error disconnecting ODrive: {e}\n")
 
     def stop_logging(self):
+        if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+            self.rotary_calibration.cancel_capture("Operator Stop/Escape")
         was_active = self.strain_test_active
         if was_active:
             self.operator_stop_requested = True
@@ -1893,6 +1910,16 @@ class MyInterface:
             )
         except Exception as exc:
             return f"Feedback unavailable: {exc}"
+
+    def open_rotary_calibration(self):
+        if self.startup_block_reason:
+            self.update_terminal(f"Sensor calibration blocked: {self.startup_block_reason}\n")
+            return
+        if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+            self.rotary_calibration.window.lift()
+            return
+        from east_rotary_gui import RotaryCalibrationWindow
+        self.rotary_calibration = RotaryCalibrationWindow(self.master, self)
 
     def open_reference_recovery(self):
         if self.odrive_adapter is None:
@@ -2299,6 +2326,9 @@ class MyInterface:
                         + ", ".join(live_workers)
                     )
                 
+                if self.rotary_calibration is not None:
+                    self.rotary_calibration.shutdown()
+
                 # Close the plot window safely
                 self.close_plot_window()
                 
@@ -3714,18 +3744,51 @@ class MyInterface:
             # If the input is not a valid number, clear it
             widget.delete(0, 'end')
 
+
+def configure_window_icon(window, *, main_window=False):
+    """The .ico icon and taskbar identity are Windows-specific decoration."""
+    if sys.platform != "win32":
+        return
+    try:
+        icon_path = resource_path("images/icon.ico")
+        if icon_path.exists():
+            if main_window:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(str(icon_path))
+            window.iconbitmap(str(icon_path))
+    except Exception as exc:
+        print(f"Failed to set Windows icon: {exc}")
+
+
+def check_environment():
+    """Load runtime libraries only: no device discovery, connections or writes."""
+    import platform
+    from importlib.metadata import version
+    from Phidget22.Phidget import Phidget
+    import fibre.libfibre as libfibre
+
+    print(f"Platform: {platform.system()} {platform.machine()}")
+    print(f"Python: {platform.python_version()} | {sys.executable}")
+    print(f"Tk: {tk.TkVersion} (GUI launch must be checked separately)")
+    for package in ("customtkinter", "CTkMessagebox", "Pillow", "odrive", "Phidget22"):
+        print(f"{package}: {version(package)}")
+    print(f"ODrive native library: {libfibre.lib_path}")
+    try:
+        phidget_library_version = Phidget.getLibraryVersion()
+    except OSError as exc:
+        print(f"Phidget native library failed to load: {exc}", file=sys.stderr)
+        print("See docs/MAC_SETUP.md or the Phidgets installation guide.", file=sys.stderr)
+        return 1
+    print(f"Phidget native library: {phidget_library_version}")
+    print("Environment check passed. No hardware was opened or commanded.")
+    return 0
+
 def create_about_dialog(root):
     about_dialog = ctk.CTkToplevel(root)
     about_dialog.geometry("520x430")
     about_dialog.configure(fg_color=BG)
     about_dialog.title("About")
     about_dialog.transient(root)
-    try:
-        icon_path = resource_path("images/icon.ico")
-        if icon_path.exists():
-            about_dialog.iconbitmap(str(icon_path))
-    except Exception:
-        pass
+    configure_window_icon(about_dialog)
 
     content = ctk.CTkFrame(about_dialog, fg_color=PANEL, corner_radius=10)
     content.pack(fill="both", expand=True, padx=24, pady=24)
@@ -3757,6 +3820,15 @@ def create_about_dialog(root):
     ).pack(pady=28)
 
 def main():
+    parser = argparse.ArgumentParser(description="EAST AFO stiffness tester")
+    parser.add_argument(
+        "--check-environment", action="store_true",
+        help="check Python/native libraries without opening hardware or the GUI",
+    )
+    args = parser.parse_args()
+    if args.check_environment:
+        return check_environment()
+
     print(f"Starting {APP_NAME} {APP_VERSION} from {Path(__file__).resolve()}")
 
     root = ctk.CTk()
@@ -3772,14 +3844,7 @@ def main():
     app_instance = MyInterface(root)
     root.protocol("WM_DELETE_WINDOW", app_instance.on_close)
 
-    # Set the window icon
-    try:
-        icon_path = resource_path("images/icon.ico")
-        if icon_path.exists():
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(str(icon_path))
-            root.iconbitmap(str(icon_path))
-    except Exception as e:
-        print(f"Failed to set icon: {e}")
+    configure_window_icon(root, main_window=True)
 
     # Create menubar
     menubar = tk.Menu(root)
@@ -3793,4 +3858,4 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

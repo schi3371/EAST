@@ -41,8 +41,8 @@ The configured motion-timeout ceiling is 60 seconds with a 5-second safety margi
 
 ## Running the GUI
 
-1. Install the Windows ODrive and Phidget drivers.
-2. Create a Python environment and install `requirements.txt`.
+1. On Windows install the ODrive and Phidget drivers. On macOS follow [Mac setup](docs/MAC_SETUP.md), including the Phidget driver extension if your Bridge requires it.
+2. Create a Python environment. On Windows install `requirements-windows.txt` (which preserves the existing `requirements.txt` environment). On macOS install `requirements-macos.txt`; see [Mac setup](docs/MAC_SETUP.md).
 3. Review `tester_config.json`, especially serial/channel values and provisional limits.
 4. Run `python Ortho-Sim.py`.
 5. Enter the full commanded test configuration, or select `Standard AFO Test` / `Standard Empty-Machine Baseline` and press `Load Preset`. Selecting a dropdown item alone does not change any fields. The provisional standard values are versioned in `tester_config.json`; loaded motion values remain editable and modifications are recorded.
@@ -63,6 +63,17 @@ Stop, Escape, acquisition faults, feedback faults, and communication faults requ
 The application accepts motion only when the connected axis explicitly reports relative, non-circular setpoints and the configured position/velocity mapper scale. The final ownership check and each target write are serialized with Stop. Confirmed motor idle does not release the motion owner; controls remain blocked until the owning worker has finished data flush and cleanup.
 
 The persistent machine-zero record, runtime checkpoint, audit events, and process lock are stored outside the repository and frozen executable. Defaults are `%LOCALAPPDATA%\EAST` on Windows, `~/Library/Application Support/EAST` on macOS, and `$XDG_STATE_HOME/east` on Linux. `EAST_STATE_DIR` provides an explicit override for testing or managed deployment. Invalid JSON or structurally invalid state is preserved with a `.corrupt-*` suffix and cannot enable motion. Clean shutdown/disconnect continuity logic is implemented, but automatic restoration remains disabled until the units and behavior of ODrive `system_stats.uptime` are verified on the lab hardware. Phase recovery, measured-angle recovery, and the ODrive watchdog also remain disabled.
+
+## macOS hardware GUI
+
+macOS and Windows use the same `Ortho-Sim.py`, motion controls and configuration.
+The Mac dependency file avoids Windows-only packages and includes a newer Phidget
+native library; the established ODrive 0.6.8 API is unchanged. Windows dependencies
+remain unchanged. Run `python Ortho-Sim.py --check-environment` to load runtime
+libraries without discovering, opening or commanding hardware.
+
+See [Mac setup and hardware check](docs/MAC_SETUP.md). Successful library and GUI
+checks do not validate USB attachment, timing, stopping or physical movement.
 
 ## Outputs
 
@@ -181,4 +192,29 @@ angle and can change reference after a controller restart.
 Align/check the square with motion disabled; powered movements retain the
 existing enclosure interlock and E-stop. This update does not bypass those
 protections, change the 2.055 conversion, or integrate sensor feedback into
-motion control. The standalone rotary-sensor logger runs separately.
+motion control. The standalone rotary-sensor logger remains available separately. The GUI now
+includes the independent stationary calibration workflow described below.
+
+
+### Independent rotary-sensor calibration
+
+EAST 1.5.0 adds **Rotary Sensor Calibration** in Manual Mode. Connect HUB0007
+by its serial number and use the default **Voltage ratio** mode for the
+hub-powered P3022. Position the empty fixture with the existing Manual Mode
+controls, measure its actual angle independently, and capture stationary holds.
+The motor command/display supplies no calibration reference. Holds record sensor
+readings and raw ODrive turns; movement is blocked during capture. Cancelled and
+failed holds are retained with an exclusion reason.
+
+Calibration and Validation points remain separate. **Fit + Save Calibration
+Report** produces a provisional local sensor fit, validation errors and an
+independent degrees-per-motor-turn fit. No fit is applied automatically to
+control, zero, tare or strain-test data. The accepted 2.055 and existing movement
+protections remain in use. Record reference-instrument graduation spacing;
+coarse protractor readings limit the conclusions.
+
+See [the full calibration procedure](docs/ROTARY_SENSOR_CALIBRATION.md) for
+setup, three-repeat collection, separate validation, voltage/ratio interpretation
+and the automatically saved CSV/JSON files. Close other applications using the
+rotary hub port before connecting. No extra Python dependencies are required
+beyond the existing GUI/Phidget packages.

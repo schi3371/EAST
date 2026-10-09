@@ -18,9 +18,11 @@ from tkinter import messagebox
 import customtkinter as ctk
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 
 APP_NAME = "EAST"
-APP_VERSION = "1.4.1-manual-motor-turns-preview"
+APP_VERSION = "1.5.0-rotary-calibration-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -333,6 +335,10 @@ class EastGuiPreview:
         self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
 
+    def _show_rotary_calibration_preview(self):
+        from east_rotary_gui import RotaryCalibrationWindow
+        self.rotary_preview = RotaryCalibrationWindow(self.root, None, preview=True)
+
     def _preview_step_unit_changed(self, selection):
         self.preview_step_entry.delete(0, "end")
         turns = selection == "Motor turns"
@@ -495,6 +501,11 @@ class EastGuiPreview:
         self.clear_session_tare_button.grid(
             row=1, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
         )
+        ctk.CTkButton(
+            manual, text="Rotary Sensor Calibration", command=self._show_rotary_calibration_preview,
+            height=34,
+        ).grid(row=6, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 8))
+
 
     def _logo_card(
         self,
