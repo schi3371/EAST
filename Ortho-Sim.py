@@ -44,6 +44,7 @@ from east_core import (
     make_preset_metadata,
     make_run_metadata,
     motion_timeout_seconds,
+    manual_step_to_turns,
     odrive_turns_to_afo_degrees,
     reconcile_run_outcome,
     empty_machine_tare_identity_mismatches,
@@ -80,7 +81,7 @@ plot_window = None
 plot_curve = None
 
 APP_NAME = "EAST"
-APP_VERSION = "1.4.0-protocol-presets"
+APP_VERSION = "1.4.1-manual-motor-turns"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -206,6 +207,7 @@ class MyInterface:
         
         # Add manual mode flag
         self.manual_mode = ctk.BooleanVar(value=False)
+        self.manual_step_units = ctk.StringVar(value="Degrees")
         
         self.sample_count = 0
         
@@ -515,9 +517,13 @@ class MyInterface:
             height=30,
             corner_radius=6,
         )
-        self.step_angle_input.grid(
-            row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 4)
+        self.manual_step_units_menu = ctk.CTkOptionMenu(
+            manual_control_frame, values=["Degrees", "Motor turns"],
+            variable=self.manual_step_units, command=self._manual_step_unit_changed,
+            height=30, width=130, state="disabled",
         )
+        self.manual_step_units_menu.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 4))
+        self.step_angle_input.grid(row=0, column=1, sticky="ew", padx=6, pady=(6, 4))
         self.step_angle_input.bind("<KeyRelease>", self.validate_step_angle)
 
         self.manual_mode_toggle = ctk.CTkSwitch(
@@ -574,11 +580,24 @@ class MyInterface:
         )
         self.mode_toggle.grid(row=1, column=2, padx=6, pady=(0, 4))
 
+        self.manual_step_hint = ctk.CTkLabel(
+            manual_control_frame, text="", font=("Arial", 10), anchor="w",
+            justify="left", wraplength=390, text_color=MUTED,
+        )
+        self.manual_step_hint.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 2))
+        self.manual_position_label = ctk.CTkLabel(
+            manual_control_frame, text="Motor feedback unavailable: connect ODrive",
+            font=("Arial", 11, "bold"), anchor="w", justify="left", wraplength=390,
+            text_color=MUTED,
+        )
+        self.manual_position_label.grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 4))
+        self._update_manual_step_hint()
+
         machine_zero_frame = ctk.CTkFrame(
             manual_control_frame, fg_color="#fff7ed", corner_radius=8
         )
         machine_zero_frame.grid(
-            row=2, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew"
+            row=4, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew"
         )
         machine_zero_frame.grid_columnconfigure((0, 1), weight=1)
         ctk.CTkLabel(
@@ -641,7 +660,7 @@ class MyInterface:
         )
 
         tare_frame = ctk.CTkFrame(manual_control_frame, fg_color="#ecfdf5", corner_radius=8)
-        tare_frame.grid(row=3, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
+        tare_frame.grid(row=5, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
         tare_frame.grid_columnconfigure((0, 1), weight=1)
         self.tare_status_label = ctk.CTkLabel(
             tare_frame,
@@ -1064,9 +1083,12 @@ class MyInterface:
             self.left_arrow,
             self.right_arrow,
             self.step_angle_input,
+            self.manual_step_units_menu,
             self.mode_toggle,
         ):
             widget.configure(state=manual_state)
+        if self.manual_step_units.get() == "Motor turns":
+            self.mode_toggle.configure(state="disabled")
         self.neutral_button.configure(
             state="normal" if connected and verified and idle_ui else "disabled"
         )
@@ -1856,6 +1878,7 @@ class MyInterface:
         except queue.Empty:
             pass
 
+        self.update_manual_position_display()
         try:
             self.master.after(50, self._drain_ui_queues)
         except tk.TclError:
@@ -3281,23 +3304,47 @@ class MyInterface:
         except Exception as e:
             self.update_terminal(f"Error updating plot: {str(e)}\n")
 
-    def validate_step_angle(self, event=None):
-        """Validate and constrain step angle input"""
+    def _manual_step_unit_changed(self, _selection=None):
+        # Never reinterpret an old numeric entry in a new unit.
+        self.step_angle_input.delete(0, "end")
+        if self.manual_step_units.get() == "Motor turns":
+            self.continuous_mode.set(False)
+        self._update_manual_step_hint()
+        self._refresh_motion_controls()
+
+    def _update_manual_step_hint(self):
+        units = self.manual_step_units.get()
+        conversion = self.system_config["motion"]["afo_degrees_per_odrive_turn"]
+        if units == "Motor turns":
+            self.step_angle_input.configure(placeholder_text="Motor turns per click (e.g. 1)")
+            text = (f"Step: {0.01 / conversion:.6g}-{10 / conversion:.6g} motor turns. "
+                    "Direct turn command; existing travel limits apply.")
+        else:
+            self.step_angle_input.configure(placeholder_text="Degrees per click (0.01-10)")
+            text = "Degree steps use the configured motor conversion. Continuous mode uses degrees."
+        self.manual_step_hint.configure(text=text)
+
+    def update_manual_position_display(self):
+        # Called only by the Tk queue-drain timer; use cached, freshness-checked feedback.
+        if not hasattr(self, "manual_position_label"):
+            return
         try:
-            value = self.step_angle_input.get()
-            if value:  # Only validate if there's a value
-                angle = float(value)
-                if angle < 0.01:
-                    self.step_angle_input.delete(0, 'end')
-                    self.step_angle_input.insert(0, "0.01")
-                    self.update_terminal("Step angle must be at least 0.01 degrees\n")
-                elif angle > 10:
-                    self.step_angle_input.delete(0, 'end')
-                    self.step_angle_input.insert(0, "10")
-                    self.update_terminal("Step angle cannot exceed 10 degrees\n")
-        except ValueError:
-            # If the input is not a valid number, clear it
-            self.step_angle_input.delete(0, 'end')
+            snapshot = self.get_feedback()
+            text = f"ODrive motor position (session): {snapshot.position_turns:.8f} turns"
+            if self.reference_manager.verified:
+                zero = self.reference_manager.require_verified().neutral_position_turns
+                delta = snapshot.position_turns - zero
+                angle = odrive_turns_to_afo_degrees(delta, self.system_config)
+                text += f"\nFrom machine zero: {delta:+.8f} turns | motor-derived {angle:+.3f} deg"
+            else:
+                text += "\nFrom machine zero: unavailable until physical 90 deg is verified"
+            self.manual_position_label.configure(text=text, text_color=TEXT)
+        except Exception as exc:
+            self.manual_position_label.configure(text=f"Motor feedback unavailable: {exc}", text_color=AMBER)
+
+    def validate_step_angle(self, event=None):
+        # Validate on submission, not while typing fractional values.
+        return
 
     def move_motor_left(self):
         self._start_manual_step(-1)
@@ -3310,9 +3357,9 @@ class MyInterface:
             return
         try:
             self.prepare_manual_motion()
-            step_angle = float(self.step_angle_input.get())
-            if not 0.01 <= step_angle <= 10.0:
-                raise ValueError("Step angle must be between 0.01 and 10 degrees")
+            units = self.manual_step_units.get()
+            requested = float(self.step_angle_input.get())
+            step_turns = manual_step_to_turns(requested, units, self.system_config)
             token = self.motion_coordinator.acquire("manual-step")
         except Exception as exc:
             self.update_terminal(f"Manual step blocked: {exc}\n")
@@ -3320,55 +3367,52 @@ class MyInterface:
         self._refresh_motion_controls()
         self.manual_step_thread = threading.Thread(
             target=self._manual_step_worker,
-            args=(token, direction, step_angle),
+            args=(token, direction, step_turns, requested, units),
             name="manual-step",
             daemon=True,
         )
         self.manual_step_thread.start()
 
-    def _manual_step_worker(self, token, direction, step_angle):
+    def _manual_step_worker(self, token, direction, step_turns, requested, units):
         try:
             motion = self.system_config["motion"]
-            self.configure_trajectory(
-                motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"]
-            )
-            self.enter_closed_loop(token)
             current = self.get_feedback().position_turns
-            target = self.clamp_manual_target(
-                current + afo_degrees_to_odrive_turns(
-                    direction * step_angle, self.system_config
-                )
+            target = current + direction * step_turns
+            bounded = self.clamp_manual_target(target)
+            if not math.isclose(target, bounded, rel_tol=0.0, abs_tol=1e-10):
+                raise ValueError("Full requested step exceeds travel limits; reduce the step. No movement commanded.")
+            distance_deg = abs(odrive_turns_to_afo_degrees(step_turns, self.system_config))
+            timeout_s = motion_timeout_seconds(
+                distance_deg, motion["manual_speed_deg_s"],
+                motion["manual_acceleration_deg_s2"], self.system_config,
             )
+            self.configure_trajectory(motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"])
+            self.enter_closed_loop(token)
             snapshot = self.get_feedback()
             self.reference_manager.write_checkpoint(
-                MotionState.MOVING,
-                snapshot,
-                clean_shutdown=False,
-                extra={"phase": "manual_step", "target_turns": target},
+                MotionState.MOVING, snapshot, clean_shutdown=False,
+                extra={"phase": "manual_step", "target_turns": target,
+                       "requested_step": direction * requested, "step_units": units},
             )
             self._submit_position(token, target)
             wait_for_settle(
-                self.get_feedback,
-                target,
+                self.get_feedback, target,
                 afo_degrees_to_odrive_turns(motion["position_tolerance_deg"], self.system_config),
-                afo_speed_to_odrive_turns_s(
-                    self.system_config["reference"]["settle_velocity_limit_deg_s"],
-                    self.system_config,
-                ),
+                afo_speed_to_odrive_turns_s(self.system_config["reference"]["settle_velocity_limit_deg_s"], self.system_config),
                 self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
-                motion_timeout_seconds(
-                    step_angle,
-                    motion["manual_speed_deg_s"],
-                    motion["manual_acceleration_deg_s2"],
-                    self.system_config,
-                ),
+                timeout_s,
                 self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
                 lambda: self._motion_cancelled(token),
                 expected_state=int(AXIS_STATE_CLOSED_LOOP_CONTROL),
                 expected_disarm_reason=self.expected_disarm_reason,
                 progress=self._mark_control_health,
             )
-            self.update_terminal(f"Manual step complete: {direction * step_angle:+.2f} degrees.\n")
+            settled = self.get_feedback().position_turns
+            self.update_terminal(
+                f"Manual step complete: requested {direction * requested:+.6g} {units.lower()}; "
+                f"start {current:.8f}, settled {settled:.8f}, "
+                f"measured displacement {settled - current:+.8f} motor turns.\n"
+            )
         except Exception as exc:
             self.update_terminal(f"Manual step failed: {exc}\n")
         finally:
@@ -3624,6 +3668,7 @@ class MyInterface:
             self.max_angle_input.configure(state="disabled")
             self.cycles_input.configure(state="disabled")
             self.set_status("MANUAL / READY", AMBER)
+            self._refresh_motion_controls()
         else:
             self.neutral_stop_event.set()
             self.stop_continuous_movement()

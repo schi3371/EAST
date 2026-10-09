@@ -20,7 +20,7 @@ from PIL import Image
 
 
 APP_NAME = "EAST"
-APP_VERSION = "1.4.0-protocol-presets-preview"
+APP_VERSION = "1.4.1-manual-motor-turns-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -333,17 +333,34 @@ class EastGuiPreview:
         self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
 
+    def _preview_step_unit_changed(self, selection):
+        self.preview_step_entry.delete(0, "end")
+        turns = selection == "Motor turns"
+        if turns:
+            self.preview_continuous_mode.set(False)
+        self.preview_continuous_switch.configure(state="disabled" if turns else "normal")
+        conversion = self.config["motion"]["afo_degrees_per_odrive_turn"]
+        self.preview_step_entry.configure(placeholder_text="Motor turns per click (e.g. 1)" if turns else "Degrees per click (0.01-10)")
+        self.preview_step_hint.configure(text=(
+            f"Step: {0.01 / conversion:.6g}-{10 / conversion:.6g} motor turns. Direct turn command; existing travel limits apply."
+            if turns else "Degree steps use the configured motor conversion. Continuous mode uses degrees."
+        ))
+
     def _build_manual_controls(self, parent: ctk.CTkFrame) -> None:
         manual = ctk.CTkFrame(parent, fg_color=PANEL_SOFT, corner_radius=8)
         manual.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 8))
         manual.grid_columnconfigure((0, 1, 2), weight=1)
 
-        ctk.CTkEntry(
-            manual,
-            placeholder_text="Step Angle (0-10 deg)",
-            height=30,
-            corner_radius=6,
-        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 4))
+        self.preview_step_units = ctk.StringVar(value="Degrees")
+        self.preview_units_menu = ctk.CTkOptionMenu(
+            manual, values=["Degrees", "Motor turns"], variable=self.preview_step_units,
+            command=self._preview_step_unit_changed, height=30, width=130,
+        )
+        self.preview_units_menu.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 4))
+        self.preview_step_entry = ctk.CTkEntry(
+            manual, placeholder_text="Degrees per click (0.01-10)", height=30, corner_radius=6,
+        )
+        self.preview_step_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=(6, 4))
 
         self.preview_manual_switch = ctk.CTkSwitch(manual, text="Manual Mode", state="disabled")
         self.preview_manual_switch.grid(row=0, column=2, padx=6, pady=(6, 4))
@@ -372,10 +389,24 @@ class EastGuiPreview:
             font=("Arial", 20, "bold"),
         ).grid(row=1, column=1, padx=6, pady=(0, 4), sticky="ew")
 
-        ctk.CTkSwitch(manual, text="Continuous Mode").grid(row=1, column=2, padx=6, pady=(0, 4))
+        self.preview_continuous_mode = ctk.BooleanVar(value=False)
+        self.preview_continuous_switch = ctk.CTkSwitch(manual, text="Continuous Mode", variable=self.preview_continuous_mode)
+        self.preview_continuous_switch.grid(row=1, column=2, padx=6, pady=(0, 4))
+
+        self.preview_step_hint = ctk.CTkLabel(
+            manual, text="Degree steps use the configured motor conversion. Continuous mode uses degrees.",
+            font=("Arial", 10), anchor="w", justify="left", wraplength=390, text_color=MUTED,
+        )
+        self.preview_step_hint.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 2))
+        ctk.CTkLabel(
+            manual, text="ODrive motor position (session): 0.00000000 turns (PREVIEW)\n"
+                         "From machine zero: unavailable until physical 90 deg is verified",
+            font=("Arial", 11, "bold"), anchor="w", justify="left", wraplength=390,
+            text_color=MUTED,
+        ).grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 4))
 
         machine_zero = ctk.CTkFrame(manual, fg_color="#fff7ed", corner_radius=8)
-        machine_zero.grid(row=2, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew")
+        machine_zero.grid(row=4, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew")
         machine_zero.grid_columnconfigure((0, 1), weight=1)
         ctk.CTkLabel(
             machine_zero,
@@ -430,7 +461,7 @@ class EastGuiPreview:
         ).grid(row=3, column=1, padx=(4, 8), pady=(0, 8), sticky="ew")
 
         tare = ctk.CTkFrame(manual, fg_color="#ecfdf5", corner_radius=8)
-        tare.grid(row=3, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
+        tare.grid(row=5, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
         tare.grid_columnconfigure((0, 1), weight=1)
         self.tare_status = ctk.CTkLabel(
             tare,

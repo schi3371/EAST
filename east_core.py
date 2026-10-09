@@ -452,6 +452,27 @@ def odrive_turns_to_afo_degrees(turns: float, config: Dict[str, Any]) -> float:
     return float(turns) * float(config["motion"]["afo_degrees_per_odrive_turn"])
 
 
+def manual_step_to_turns(value, units, config):
+    """Resolve a positive manual step; direct motor-turn commands do not use k.
+
+    Retain the existing 0.01-10 degree-equivalent bounds. The conversion is
+    used for those bounds, trajectory profiles and timeouts, not turn targets.
+    """
+    step = float(value)
+    conversion = float(config["motion"]["afo_degrees_per_odrive_turn"])
+    if not math.isfinite(conversion) or conversion <= 0:
+        raise ValueError("Invalid configured degrees-per-turn conversion")
+    if units == "Degrees":
+        low, high = 0.01, 10.0
+    elif units == "Motor turns":
+        low, high = 0.01 / conversion, 10.0 / conversion
+    else:
+        raise ValueError("Select Degrees or Motor turns")
+    if not math.isfinite(step) or not low <= step <= high:
+        raise ValueError(f"Manual step must be between {low:.6g} and {high:.6g} {units.lower()}")
+    return step / conversion if units == "Degrees" else step
+
+
 def afo_speed_to_odrive_turns_s(speed_deg_s: float, config: Dict[str, Any]) -> float:
     return afo_degrees_to_odrive_turns(speed_deg_s, config)
 

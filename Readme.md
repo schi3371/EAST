@@ -147,3 +147,38 @@ The GUI header will display lab branding if these files are present:
 ## Change history
 
 See `CHANGELOG.md`.
+
+
+### Manual calibration using motor turns
+
+Manual Mode now has a **Degrees / Motor turns** step selector and a live display
+of raw ODrive session position, displacement from verified machine zero, and
+motor-derived angle. Readouts use freshness-checked feedback; disconnected or
+stale data is shown as unavailable. Changing units clears the step entry.
+
+For angle-only calibration, the PhidgetBridge and empty-machine tare are not
+required for manual movement. Connect ODrive, establish physical 90 degrees
+using the existing bounded machine-zero setup jogs, then enable Manual Mode.
+Choose **Motor turns**, enter `1`, and click Left or Right once. The target is
+current motor position plus/minus exactly one ODrive turn, independent of the
+2.055 conversion for calculating the commanded step.
+
+The existing conversion still defines conservative degree-equivalent step and
+travel bounds, motor speed/acceleration and motion timeouts. Motor-turn steps
+retain the existing 0.01-10 degree-equivalent step range (approximately
+0.00486618-4.86618 turns at 2.055). A step that would exceed the existing overall
+travel limits is rejected rather than silently shortened. Continuous Mode is
+disabled while motor-turn steps are selected; the existing degree continuous
+mode is unchanged. Verified zero, ownership, feedback and stop checks remain.
+
+After each step the terminal reports requested units, initial position, settled
+position and measured displacement in turns. Use the measured displacement,
+rather than assuming every requested step was achieved exactly, when pairing
+with independent physical-angle readings. Motor-derived degrees are estimates,
+not sensor measurements. ODrive session position is not a physical absolute
+angle and can change reference after a controller restart.
+
+Align/check the square with motion disabled; powered movements retain the
+existing enclosure interlock and E-stop. This update does not bypass those
+protections, change the 2.055 conversion, or integrate sensor feedback into
+motion control. The standalone rotary-sensor logger runs separately.
