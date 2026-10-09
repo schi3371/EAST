@@ -154,7 +154,7 @@ class EastCoreTests(unittest.TestCase):
         self.assertEqual(motion["minimum_constant_speed_span_deg"], 5.0)
         self.assertEqual(motion["minimum_acceleration_deg_s2"], 0.1)
         self.assertEqual(motion["maximum_acceleration_deg_s2"], 100.0)
-        self.assertEqual(motion["maximum_afo_angle_deg"], 30.0)
+        self.assertEqual(motion["maximum_afo_angle_deg"], 15.0)
 
         values = valid_values()
         values.update({
@@ -191,7 +191,7 @@ class EastCoreTests(unittest.TestCase):
             ("cycles", "1.5"),
             ("speed_deg_s", "0"),
             ("acceleration_deg_s2", "-1"),
-            ("max_angle_deg", "31"),
+            ("max_angle_deg", "16"),
             ("operator", ""),
         ):
             with self.subTest(field=field, value=value):

@@ -8,7 +8,7 @@ Version 1.4.0-protocol-presets defines the GUI speed field as commanded mounted-
 
 The accepted value is 2.055 AFO degrees per ODrive turn. It is implemented consistently for commands, ODrive-derived angles, and ODrive-derived velocities.
 
-The current provisional command limits are 0.1-20 deg/s for speed, 0.1-100 deg/s^2 for acceleration, and 0-30 deg magnitude at each angle limit. Acceleration is operator-editable during verification and is not a validated final protocol value. The software requires at least 5 deg of calculated constant-speed travel across the full commanded ROM:
+The current provisional command limits are 0.1-20 deg/s for speed, 0.1-100 deg/s^2 for acceleration, and 0-15 deg magnitude at each angle limit. Acceleration is operator-editable during verification and is not a validated final protocol value. The software requires at least 5 deg of calculated constant-speed travel across the full commanded ROM:
 
 `calculated constant-speed span = total ROM - commanded speed^2 / commanded acceleration`
 
