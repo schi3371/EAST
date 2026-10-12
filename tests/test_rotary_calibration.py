@@ -391,6 +391,8 @@ class RotaryConnectionUiTests(unittest.TestCase):
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
         window = namespace["RotaryCalibrationWindow"].__new__(namespace["RotaryCalibrationWindow"])
         window.closed, window.closing = False, False
+        window.positioning_reference = None
+        window._motor_frame = Mock(return_value="test-frame")
         window.sensor, window.latest, window.capture = None, None, None
         window.window, window.status, window.live_label = Mock(), Mock(), Mock()
         window.app = Mock()
@@ -427,6 +429,7 @@ class RotaryConnectionUiTests(unittest.TestCase):
         window.app.operator_input.get.return_value = "SC"
         window.app.fixture_id_input.get.return_value = "fixture"
         window.app.reference_manager.require_verified.side_effect = ValueError("zero invalid")
+        window.app.reference_manager.record = None
         window.sensor = dict(hub_serial=750256, input_mode="Voltage ratio")
         window.identity = dict(reference_id="previous-zero")
         self.assertEqual(window._context()["reference_id"], "previous-zero")
@@ -434,8 +437,8 @@ class RotaryConnectionUiTests(unittest.TestCase):
         self.assertIsNone(window._context()["reference_id"])
         window.app.reference_manager.require_verified.assert_not_called()
         window.capture_mode.get = lambda: "Sensor + motor"
-        with self.assertRaisesRegex(ValueError, "zero invalid"):
-            window._context()
+        self.assertIsNone(window._context()["reference_id"])
+        window.app.reference_manager.require_verified.assert_not_called()
 
     def test_connection_and_first_sample_reach_gui(self):
         window, reader = self.window()

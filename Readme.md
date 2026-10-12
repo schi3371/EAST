@@ -208,15 +208,18 @@ includes the independent stationary calibration workflow described below.
 
 EAST 1.5.0 adds **Rotary Sensor Calibration** in Manual Mode. Connect HUB0007
 by its serial number and use the default **Voltage ratio** mode for the
-hub-powered P3022. Position the empty fixture with the existing Manual Mode
-controls, measure its actual angle independently, and capture stationary holds.
+hub-powered P3022. Version 1.6.0 adds discrete degree/motor-turn movement and
+ODrive reconnect controls within the calibration window. Confirm the current
+positioning angle to enable calibration-only motion without machine zero or
+empty-machine tare, then independently measure the actual angle for each hold.
 The motor command/display supplies no calibration reference. Holds record sensor
 readings and raw ODrive turns; movement is blocked during capture. Cancelled and
 failed holds are retained with an exclusion reason.
 
 Calibration and Validation points remain separate. **Fit + Save Calibration
 Report** produces a provisional local sensor fit, validation errors and an
-independent degrees-per-motor-turn fit. No fit is applied automatically to
+independent degrees-per-motor-turn fits separated by controller frame after
+reconnect/reset. No fit is applied automatically to
 control, zero, tare or strain-test data. The accepted 2.055 and existing movement
 protections remain in use. Record reference-instrument graduation spacing;
 coarse protractor readings limit the conclusions.

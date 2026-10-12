@@ -1,4 +1,4 @@
-"""Independent P3022 measurement window within EAST; never commands motor motion."""
+"""Independent P3022 measurement and bounded empty-fixture calibration positioning."""
 import csv
 from datetime import datetime
 import math
@@ -9,9 +9,10 @@ import time
 
 import customtkinter as ctk
 
+from east_calibration_motion import CalibrationPositioningReference
 from east_core import write_json_atomic
 from east_rotary_calibration import (
-    INPUT_MODES, SAMPLE_FIELDS, POINT_FIELDS, StationaryCaptureGuard, SensorOnlyCaptureGuard,
+    INPUT_MODES, SAMPLE_FIELDS, POINT_FIELDS, RawMotorCaptureGuard, SensorOnlyCaptureGuard,
     finite_number, reading_valid, summarise_hold, fit_calibration, write_table,
 )
 
@@ -138,6 +139,11 @@ class RotaryCalibrationWindow:
         self.identity = None
         self.closed = False
         self.closing = False
+        self.positioning_reference = None
+        self.positioning_events = []
+        self.motor_epoch = 0
+        self.last_motor_connection = None
+        self.last_motor_uptime = None
         self.window = ctk.CTkToplevel(master)
         # A modeless child window avoids native macOS automatic tab grouping.
         self.window.transient(master)
@@ -154,12 +160,13 @@ class RotaryCalibrationWindow:
         ctk.CTkLabel(panel, text="Independent rotary-sensor calibration", font=("Arial", 21, "bold"),
                      text_color="#0f172a").grid(row=0, column=0, columnspan=3, sticky="w", pady=6)
         instructions = (
-            "Use EAST Manual Mode to position the empty fixture. Then measure its ACTUAL angle "
+            "Use the calibration movement controls below to position the empty fixture. Then measure its ACTUAL angle "
             "with the square/protractor. The motor command is only a positioning aid.\n"
             "Enter the measured change from physical 90°: dorsiflexion positive, plantarflexion negative. "
             "Capture 0 and points on both sides; repeat from both directions. "
             "Use separate Validation points to check the fitted calibration.\n"
             "Sensor only captures remain available without motor zero; motor turns are unverified and excluded from its fit.\n"
+            "Sensor + motor captures record stationary raw turns without requiring machine zero or load-cell tare.\n"
             "No sensor fit is applied to motor control, machine zero, tare or strain-test angles."
         )
         ctk.CTkLabel(panel, text=instructions, wraplength=720, justify="left", anchor="w",
@@ -224,6 +231,48 @@ class RotaryCalibrationWindow:
         self.path_label = ctk.CTkLabel(panel, text="Files are saved automatically when a point is captured.",
                                       wraplength=720, justify="left", anchor="w", text_color="#64748b")
         self.path_label.grid(row=16, column=0, columnspan=3, sticky="ew", pady=5)
+        ctk.CTkLabel(panel, text="Empty-fixture calibration movement", font=("Arial", 17, "bold"),
+                     text_color="#0f172a").grid(row=17, column=0, columnspan=3, sticky="w", pady=(14, 5))
+        ctk.CTkLabel(panel, text=(
+            "Machine zero and empty-machine tare are NOT required for these controls. "
+            "After reconnecting, confirm the last positioning angle only if the fixture has not moved; "
+            "otherwise enter its current measured angle. This is an approximate positioning reference, "
+            "not a measured calibration point or verified machine zero. Existing conversion and estimated "
+            "travel bounds apply. Enclosure/E-stop, feedback checks and movement timeouts remain active."
+        ), wraplength=720, justify="left").grid(row=18, column=0, columnspan=3, sticky="ew")
+        self.positioning_angle = self._entry(panel, 19, 0, "Current positioning angle (deg)", "")
+        self.step = self._entry(panel, 19, 1, "Increment per click", "0.25")
+        self.step_units = ctk.StringVar(value="Degrees")
+        ctk.CTkLabel(panel, text="Step units").grid(row=19, column=2, sticky="w")
+        self.step_units_menu = ctk.CTkOptionMenu(panel, values=["Degrees", "Motor turns"],
+            variable=self.step_units, command=lambda _value: self.step.delete(0, "end"))
+        self.step_units_menu.grid(row=20, column=2, sticky="ew", padx=4)
+        self.motion_acknowledged = ctk.BooleanVar(value=False)
+        self.motion_ack = ctk.CTkCheckBox(panel, text="Empty fixture; current positioning angle confirmed; clear for movement",
+                                        variable=self.motion_acknowledged)
+        self.motion_ack.grid(row=21, column=0, columnspan=3, sticky="w", pady=8)
+        self.reconnect_motor_button = ctk.CTkButton(panel, text="Reconnect ODrive", command=self.reconnect_motor)
+        self.reconnect_motor_button.grid(row=22, column=0, sticky="ew", padx=4, pady=4)
+        self.enable_motion_button = ctk.CTkButton(panel, text="Enable / Resume Calibration Motion", command=self.enable_positioning)
+        self.enable_motion_button.grid(row=22, column=1, columnspan=2, sticky="ew", padx=4, pady=4)
+        self.left_button = ctk.CTkButton(panel, text="Step Left / Negative", command=lambda: self.move(-1))
+        self.left_button.grid(row=23, column=0, sticky="ew", padx=4, pady=4)
+        self.right_button = ctk.CTkButton(panel, text="Step Right / Positive", command=lambda: self.move(1))
+        self.right_button.grid(row=23, column=1, sticky="ew", padx=4, pady=4)
+        self.stop_button = ctk.CTkButton(panel, text="Stop", fg_color="#b91c1c",
+                                       command=lambda: self.app.stop_logging() if self.app else None)
+        self.stop_button.grid(row=23, column=2, sticky="ew", padx=4, pady=4)
+        self.motion_status = ctk.CTkLabel(panel, text="Calibration positioning disabled; no verified zero is created.",
+                                         wraplength=720, justify="left", anchor="w")
+        self.motion_status.grid(row=24, column=0, columnspan=3, sticky="ew", pady=5)
+        if app is not None and app.reference_manager.verified:
+            try:
+                feedback = app.get_feedback()
+                mapping = app.reference_manager.require_verified()
+                nominal = (feedback.position_turns - mapping.neutral_position_turns) * app.system_config["motion"]["afo_degrees_per_odrive_turn"]
+                self.positioning_angle.insert(0, f"{nominal:.6g}")
+            except Exception:
+                pass
         self._controls()
         self.window.after(50, self._tick)
 
@@ -245,6 +294,7 @@ class RotaryCalibrationWindow:
         self._controls_pending = False
         try:
             busy = self.capture is not None
+            moving = self.app is not None and self.app.motion_coordinator.owner is not None
             active = self.reader is not None
             for widget in (self.serial, self.mode_menu):
                 widget.configure(state="disabled" if active or self.points else "normal")
@@ -259,7 +309,14 @@ class RotaryCalibrationWindow:
             self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
             self.cancel_button.configure(state="normal" if busy else "disabled")
             self.fit_button.configure(state="normal" if self.points and not busy else "disabled")
-            self.new_button.configure(state="disabled" if busy else "normal")
+            self.new_button.configure(state="disabled" if busy or moving else "normal")
+            if hasattr(self, "enable_motion_button"):
+                ready = bool(self.positioning_reference and self.positioning_reference.active)
+                for widget in (self.positioning_angle, self.motion_ack, self.step, self.step_units_menu,
+                               self.reconnect_motor_button, self.enable_motion_button):
+                    widget.configure(state="disabled" if busy or moving or self.preview else "normal")
+                for widget in (self.left_button, self.right_button):
+                    widget.configure(state="normal" if ready and not busy and not moving and not self.preview else "disabled")
         finally:
             self._updating_controls = False
             if self._controls_pending:
@@ -300,12 +357,10 @@ class RotaryCalibrationWindow:
         operator, fixture = app.operator_input.get().strip(), app.fixture_id_input.get().strip()
         if not operator or not fixture:
             raise ValueError("Enter Operator ID and Fixture ID in EAST first")
-        if self.capture_mode.get() == "Sensor only":
-            # The physical reference is the operator's square/protractor, not
-            # a currently valid motor mapping. Preserve existing session identity.
-            reference_id = self.identity["reference_id"] if self.identity else None
-        else:
-            reference_id = app.reference_manager.require_verified().reference_id
+        # Sensor calibration uses independent physical angles. A reconnect or
+        # lost machine zero does not erase those points or create a new session.
+        reference_id = (self.identity["reference_id"] if self.identity else
+                        app.reference_manager.record.reference_id if app.reference_manager.record else None)
         return {"operator_id": operator, "fixture_id": fixture,
                 "reference_id": reference_id, "hub_serial": self.sensor["hub_serial"],
                 "input_mode": self.sensor["input_mode"]}
@@ -331,12 +386,13 @@ class RotaryCalibrationWindow:
             if resolution is not None and resolution <= 0 or supply is not None and not 0 < supply <= 5.3:
                 raise ValueError("Graduation spacing must be positive; supply metadata must be in (0, 5.3] V")
             context = self._context()
+            motor_frame = self._motor_frame()
             if self.identity is not None and self.identity != context:
                 raise ValueError("Operator, fixture, zero, hub or input mode changed; start a new calibration session")
             capture_mode = self.capture_mode.get()
             if capture_mode not in ("Sensor + motor", "Sensor only"):
                 raise ValueError("Select a supported capture mode")
-            guard = SensorOnlyCaptureGuard(self.app) if capture_mode == "Sensor only" else StationaryCaptureGuard(self.app)
+            guard = SensorOnlyCaptureGuard(self.app) if capture_mode == "Sensor only" else RawMotorCaptureGuard(self.app)
             if self.session_dir is None:
                 root = Path(self.app.system_config["logging"]["output_directory"])
                 if not root.is_absolute():
@@ -360,6 +416,7 @@ class RotaryCalibrationWindow:
                 }
                 write_json_atomic(self.session_dir / "session_metadata.json", self.session_metadata)
             raw_path = self.session_dir / "raw_samples.csv"
+            write_json_atomic(self.session_dir / "calibration_motion_events.json", {"events": self.positioning_events})
             new_file = not raw_path.exists()
             handle = raw_path.open("a", newline="", encoding="utf-8")
             writer = csv.DictWriter(handle, fieldnames=SAMPLE_FIELDS, extrasaction="ignore")
@@ -370,7 +427,10 @@ class RotaryCalibrationWindow:
                         "reference_angle_deg": angle, "repeat": repeat, "approach": self.approach.get(),
                         "input_mode": mode, "unit": "V/V" if mode == "Voltage ratio" else "V",
                         "capture_mode": capture_mode,
-                        "motor_reference_id": getattr(guard, "reference_id", None)}
+                        "motor_reference_id": getattr(guard, "reference_id", None),
+                        "motor_coordinate_frame": motor_frame,
+                        "machine_zero_verified": bool(self.app.reference_manager.verified),
+                        "positioning_reference_basis": "operator_confirmed_calibration_only" if self.positioning_reference else "none"}
             self.capture = {"guard": guard, "handle": handle, "writer": writer, "samples": [],
                             "metadata": metadata, "start": time.monotonic(), "duration": duration}
             self.acknowledged.set(False)
@@ -399,7 +459,7 @@ class RotaryCalibrationWindow:
                "motor_velocity_turns_s": feedback.velocity_turns_s if feedback else None,
                "motor_feedback_valid": feedback is not None and capture["metadata"]["capture_mode"] != "Sensor only",
                "motor_feedback_status": ("unverified_observation" if feedback else "unavailable")
-                   if capture["metadata"]["capture_mode"] == "Sensor only" else ("verified_stationary" if feedback else "invalid"),
+                   if capture["metadata"]["capture_mode"] == "Sensor only" else ("stationary_raw_turns" if feedback else "invalid"),
                "hub_serial": self.sensor["hub_serial"],
                "measured_supply_v": self.session_metadata["measured_supply_v"]}
         capture["writer"].writerow(row)
@@ -471,25 +531,118 @@ class RotaryCalibrationWindow:
                 motor = model['motor_conversion_fit']
                 message += f"Independent angle versus motor turns: {motor['slope']:+.6g} deg/turn (magnitude {abs(motor['slope']):.6g}).\n"
             else:
-                message += "Motor conversion unavailable: sensor-only holds do not validate motor turns.\n"
+                message += model.get("motor_conversion_fit_error", "Motor conversion unavailable: insufficient paired raw-turn points.") + "\n"
             message += "No automatic acceptance or changes to EAST control/calibration. Assess protractor resolution."
             self.result.configure(text=message)
         except Exception as exc:
             self.result.configure(text="Fit blocked: " + str(exc))
 
     def new_session(self):
-        if self.capture:
+        if self.capture or self.app is not None and self.app.motion_coordinator.owner is not None:
             return
+        self.suspend_positioning("New calibration session")
+        self.positioning_reference = None
+        self.positioning_events = []
         self.points, self.session_dir, self.session_metadata, self.identity = [], None, None, None
         self.result.configure(text="New session. Previous files remain unchanged.")
         self.path_label.configure(text="Files will be saved when a point is captured.")
         self._show_points()
         self._controls()
 
+    def _positioning_event(self, action, **details):
+        event = {"timestamp": datetime.now().astimezone().isoformat(), "action": action, **details}
+        self.positioning_events.append(event)
+        if self.session_dir is not None:
+            write_json_atomic(self.session_dir / "calibration_motion_events.json", {"events": self.positioning_events})
+        self.app.state_store.append_event("rotary_calibration_positioning", event)
+
+    def _motor_frame(self):
+        app = self.app
+        if app is None:
+            return None
+        try:
+            feedback = app.get_feedback()
+        except Exception:
+            return f"connection-{app.odrive_connection_generation}-epoch-{self.motor_epoch}"
+        connection = app.odrive_adapter
+        uptime = feedback.system_uptime
+        if connection is not self.last_motor_connection:
+            self.last_motor_connection = connection
+            self.motor_epoch += 1
+            self.last_motor_uptime = None
+        if self.last_motor_uptime is not None and uptime is not None and uptime < self.last_motor_uptime:
+            self.motor_epoch += 1
+            self.cancel_capture("Controller uptime reset; motor coordinate frame changed")
+            app.reference_manager.invalidate("Controller reset detected during rotary calibration")
+            self.suspend_positioning("Controller reset detected")
+        self.last_motor_uptime = uptime
+        return f"connection-{app.odrive_connection_generation}-epoch-{self.motor_epoch}"
+
+    def suspend_positioning(self, reason):
+        reference = self.positioning_reference
+        if reference is not None:
+            reference.suspend()
+            self.positioning_angle.delete(0, "end")
+            self.positioning_angle.insert(0, f"{reference.angle(reference.last_position_turns):.6g}")
+        self.motion_acknowledged.set(False)
+        self.motion_status.configure(text=f"Calibration positioning disabled: {reason}. Confirm current position after reconnect.")
+        self._controls()
+
+    def reconnect_motor(self):
+        if self.app is not None and not self.preview:
+            self.app.connect_system()
+            self._controls()
+
+    def enable_positioning(self):
+        try:
+            if self.capture or self.preview or self.closing:
+                raise ValueError("Finish capture before enabling calibration motion")
+            reference = CalibrationPositioningReference.establish(
+                self.app, self.positioning_angle.get(), acknowledged=self.motion_acknowledged.get())
+            frame = self._motor_frame()
+            self._positioning_event("operator_established_reference",
+                nominal_angle_deg=reference.angle(reference.last_position_turns),
+                raw_motor_turns=reference.last_position_turns,
+                motor_coordinate_frame=frame,
+                basis="operator_confirmed_positioning_only_not_machine_zero", machine_zero_changed=False,
+                tare_required=False)
+            self.positioning_reference = reference
+            self.motion_acknowledged.set(False)
+            self._update_positioning()
+        except Exception as exc:
+            self.motion_status.configure(text="Calibration motion blocked: " + str(exc))
+        self._controls()
+
+    def move(self, direction):
+        if self.app is None or self.preview or self.capture or self.closing:
+            return
+        self.app._start_calibration_step(self, direction, self.step.get(), self.step_units.get())
+        self._controls()
+
+    def _update_positioning(self):
+        reference = self.positioning_reference
+        if reference is None or not reference.active:
+            return
+        try:
+            feedback = reference.check(self.app)
+            if feedback.current_state == 1 and self.app.motion_coordinator.owner is None:
+                reference.stationary(self.app, feedback)
+                reference.last_position_turns = feedback.position_turns
+            self.motion_status.configure(text=(
+                f"Raw motor: {feedback.position_turns:.8f} turns | "
+                f"estimated positioning angle: {reference.angle(feedback.position_turns):+.3f}°\n"
+                "Calibration only; not physical angle or verified machine zero. No load-cell tare required."
+            ))
+        except Exception as exc:
+            self.suspend_positioning(str(exc))
+
     def _tick(self):
         if self.closed:
             return
         try:
+            self._motor_frame()
+            self._update_positioning()
+            self._controls()
             reader = self.reader
             if reader:
                 # Bound queue draining so sensor events cannot monopolise Tk.
@@ -565,12 +718,18 @@ class RotaryCalibrationWindow:
                 self.window.after(50, self._tick)
 
     def close(self):
+        if self.positioning_reference is not None:
+            self.positioning_reference.suspend()
+        if self.app is not None and self.app.motion_coordinator.owner == "rotary-calibration-step":
+            self.app.stop_logging()
         self.closing = True
         self.disconnect()
 
     def shutdown(self):
         """Used by EAST shutdown: preserve partial hold and wait for sensor cleanup."""
         self.cancel_capture("EAST shutting down")
+        if self.positioning_reference is not None:
+            self.positioning_reference.suspend()
         self.closed = True
         if self.reader:
             self.reader.stop.set()

@@ -1,6 +1,6 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.5.5-idle-feedback-retry. This is a stationary, empty-fixture
+Version: EAST 1.6.0-calibration-positioning. This is a stationary, empty-fixture
 measurement workflow. It does not apply a calibration to motor control or replace
 angles in strain-test CSV files.
 
@@ -50,9 +50,9 @@ it does not remove sensor nonlinearity, mounting slip, noise or reference error.
 3. Close the standalone P3022 logger and any Phidget Control Panel channel window
    using HUB0007. The load-cell Bridge is a separate device; a tare is not needed
    for this angle-only workflow.
-4. Connect ODrive, enter Operator ID and Fixture ID, and verify machine zero at
-   physical 90° using the engineer's square. Previously verified zero can be
-   retained if its validity and physical alignment remain established.
+4. Connect ODrive and enter Operator ID and Fixture ID. Establish the physical
+   angle datum with the square. A verified machine-zero record is optional for
+   calibration-only movement and paired capture; normal tests still require it.
 5. Enable Manual Mode. Select **Rotary Sensor Calibration** below its movement
    controls. Enter the HUB0007 serial shown in the Phidget Control Panel; the
    current default is 750256. Leave input mode at **Voltage ratio** and select
@@ -61,10 +61,12 @@ it does not remove sensor nonlinearity, mounting slip, noise or reference error.
    spacing. Supply voltage is optional metadata (for example 5.11 V measured in
    the current setup). Decide and record a consistent angle sign convention.
 
-The window can show sensor readings without an ODrive connection, but paired
-point capture requires a verified zero, connected ODrive and fresh stationary
-feedback. Operator, fixture, zero, hub and mode identify a measurement session.
-Changing them requires **New Calibration Session**; previous files are preserved.
+The window can show/capture sensor-only readings without an ODrive connection.
+Sensor + motor requires connected ODrive and fresh, error-free stationary idle
+feedback, but not machine zero or load-cell tare. Operator, fixture, hub and mode
+identify the session; changing these requires New Calibration Session. Reconnects
+and machine-zero loss retain the collected points. Raw motor coordinate frames
+are recorded separately so reset origins are never fitted as one continuous frame.
 
 ## Establish independent angles
 
@@ -110,7 +112,7 @@ For each point:
 
 Motor commands are blocked during each capture by EAST's existing motion owner.
 For Sensor + motor, Stop/Escape, cancellation, stale feedback, sensor loss,
-active motor state, movement and reference changes end the hold. Partial readings remain saved with
+active motor state, movement and controller connection/reset changes end the hold. Partial readings remain saved with
 an exclusion reason; excluded holds are not used to fit.
 
 A **3-point exploratory check** at negative angle, physical zero and positive
@@ -132,6 +134,7 @@ fit; validation holds are used only to calculate prediction errors. Review:
 - separate validation errors and flags for extrapolation;
 - direction and repeat differences in the point data;
 - independent angle-versus-motor-turn slope and residuals, compared with 2.055;
+  multiple controller frames receive separate fits, not one combined fit;
 - reference graduation spacing and alignment uncertainty.
 
 No numerical pass threshold is assumed, and a high R² is not proof of accuracy.
@@ -158,8 +161,10 @@ A new folder is created under the configured EAST log directory:
 - `raw_samples.csv`: original sensor readings and paired motor feedback with
   host callback timestamps. Each row is flushed as it is recorded.
 - `points.csv` / `points.json`: hold means, SD, counts, range and exclusion reasons.
-- `calibration_report.json`: provisional sensor fit, independent motor-turn fit
-  and separate validation errors. New points mark any previous fit as outdated.
+- `calibration_report.json`: provisional sensor fit, motor-turn fits separated
+  by controller frame when needed, and separate validation errors.
+- `calibration_motion_events.json`: operator-established positioning references,
+  raw motor anchor, approximate angle, frame identity and acknowledgement basis. New points mark any previous fit as outdated.
 
 The timestamps are host callback arrival times. This stationary workflow is not
 validated for dynamic speed measurement. It does not alter load-cell calibration,
@@ -230,18 +235,19 @@ invalid sensor values and operator cancellation still exclude the hold.
 
 The capture reserves passive observation so other motor commands cannot be
 submitted during the hold, even if a motor stop is already latched. Stop/idle
-state is retained. Existing motor/reference requirements still apply before
-subsequent movement. This solves recording at the current physical angle; it
-is not a solution to motor reference loss when the enclosure is opened.
+state is retained. Normal motor/reference requirements still apply outside the calibration window.
+For subsequent empty-fixture calibration movement, use the calibration-only
+positioning controls described below.
 
 `capture_mode` identifies every hold. Sensor-only readings may fit the sensor
 against the independent physical angle. Available raw motor turns are retained
 with `motor_feedback_status=unverified_observation` and
 `motor_feedback_valid=False`; absent feedback is blank and marked unavailable.
 They are excluded from motor means and the motor-conversion fit. Only
-**Sensor + motor** captures supply verified paired motor measurements.
+**Sensor + motor** captures supply checked stationary raw motor observations;
+this does not imply a verified machine zero or independently accurate derived angle.
 
-Within an open session, switching to Sensor only retains the existing physical
+Within an open session, either capture mode retains the existing physical
 calibration session identity even if the motor reference is invalidated. It does
 not claim that the saved motor zero is currently valid. Operator, fixture, hub
 and input-mode changes still require a new session. Files from older sessions
@@ -285,3 +291,60 @@ read delay, and confirm the rejection/restoration messages with zero retained.
 Repeat the hold if sampling was interrupted. Sustained delay and powered-motion
 fault behavior require controlled verification by the operator; do not disconnect
 USB during powered movement as a fault-injection method.
+
+
+## Calibration-only positioning and reconnect (1.6.0)
+
+The rotary calibration window includes discrete Step Left / Negative and Step
+Right / Positive buttons, Degrees / Motor turns increments, Reconnect ODrive,
+and Stop. It uses the tracked manual-step worker, motion ownership, hardware
+identity checks, fresh feedback, trajectory timeouts, settle checks and idle
+cleanup. It uses the existing recovery speed (1 deg/s) and acceleration
+(5 deg/s²). It does not offer continuous jogging. Enclosure and E-stop protection
+remain active. It does not change 2.055, load-cell calibration or motor gains.
+
+To establish positioning without resetting the fixture to physical 90°:
+
+1. Confirm the fixture is empty and stationary. Enter its current positioning
+   angle in the separate Current positioning angle field. Use an independent
+   measurement where available. This value is only an approximate movement
+   reference; it is not copied to independent-angle calibration labels.
+2. Select the empty-fixture/current-position acknowledgement and Enable / Resume
+   Calibration Motion. No movement occurs and no machine-zero record is changed.
+3. Choose a discrete degree or raw motor-turn increment. Move with the enclosure
+   closed. Existing nominal ±15° travel limits and step limits apply relative to
+   the operator-established anchor; these remain conversion-derived estimates,
+   not guarantees of the independently measured physical ROM.
+4. When idle, open the enclosure and independently measure the angle. Capture
+   Sensor only if motor feedback is unavailable, or Sensor + motor if fresh
+   stationary raw motor feedback is available. Enter the measured signed angle,
+   never merely the commanded/positioning angle. No empty-machine tare is needed.
+5. Close the enclosure and select Reconnect ODrive. Collected points and the
+   sensor connection remain in the same calibration session. Positioning is
+   disabled until confirmed again. The last positioning estimate is retained.
+6. If the fixture stayed at that saved pose, confirm it and select Enable /
+   Resume Calibration Motion. If it shifted, use a fresh physical-angle
+   measurement instead of confirming the old estimate. No automatic zero is
+   inferred from the last command. The operator acknowledgement is evidence of
+   the positioning assumption, not proven controller-session continuity.
+
+Opening/closing the calibration window, reconnects, faults, controller uptime
+reset, identity/configuration changes and application restart cannot create a
+verified machine zero through this override. Closing the window cancels its
+active movement. Start/New Session is blocked during capture or movement.
+Normal Manual Mode, Return to Machine Zero and strain tests retain their existing
+reference requirements. Formal tests retain their empty-machine tare requirement.
+
+Every paired sample/point records raw motor turns, motor coordinate frame,
+machine-zero verified status and positioning-reference basis. Motor feedback
+validity means a checked stationary raw observation, not a calibrated physical
+angle. A sensor fit can span reconnects when its physical setup is unchanged;
+motor-turn fits are separated by frame. Existing files are not rewritten.
+
+First Windows bench check: start at known zero, move a small increment, measure
+and capture, open/close/reconnect at a nonzero pose, explicitly resume and move
+a small increment in each direction. Confirm normal Start/Return to Machine
+Zero stay blocked when zero is unverified, tare is not acquired implicitly,
+raw frame IDs change on reconnect, out-of-range full steps are rejected, and
+Stop/Escape/enclosure opening interrupts calibration motion. No hardware bench
+verification was performed during implementation.

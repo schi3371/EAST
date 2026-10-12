@@ -12,12 +12,14 @@ SAMPLE_FIELDS = (
     "sensor_valid", "motor_position_turns", "motor_velocity_turns_s",
     "motor_feedback_valid", "hub_serial", "measured_supply_v",
     "capture_mode", "motor_reference_id", "motor_feedback_status",
+    "motor_coordinate_frame", "machine_zero_verified", "positioning_reference_basis",
 )
 POINT_FIELDS = (
     "point_id", "role", "reference_angle_deg", "repeat", "approach", "input_mode",
     "unit", "samples", "raw_mean", "raw_sd", "raw_min", "raw_max",
     "motor_position_mean_turns", "motor_span_turns", "valid", "reason",
     "capture_mode", "motor_reference_id",
+    "motor_coordinate_frame", "machine_zero_verified", "positioning_reference_basis",
 )
 
 
@@ -114,7 +116,23 @@ def fit_calibration(points):
     motor_points = [p for p in training if p.get("capture_mode", "Sensor + motor") != "Sensor only"
                     and p.get("motor_position_mean_turns") is not None]
     model["motor_conversion_point_count"] = len(motor_points)
-    if len(motor_points) >= 3:
+    frames = {p.get("motor_coordinate_frame", p.get("motor_reference_id")) for p in motor_points}
+    if len(frames) > 1:
+        # Raw turn origins can change after reconnect/reset. Never fit them as
+        # one continuous coordinate frame, even after operator-assisted resume.
+        model["motor_conversion_fit_error"] = "Multiple motor coordinate frames; separate fits only"
+        model["motor_conversion_fits_by_frame"] = []
+        for frame in sorted(frames, key=str):
+            subset = [p for p in motor_points
+                      if p.get("motor_coordinate_frame", p.get("motor_reference_id")) == frame]
+            report = {"motor_coordinate_frame": frame, "count": len(subset)}
+            try:
+                report["fit"] = linear_fit([float(p["motor_position_mean_turns"]) for p in subset],
+                                           [float(p["reference_angle_deg"]) for p in subset])
+            except ValueError as exc:
+                report["error"] = str(exc)
+            model["motor_conversion_fits_by_frame"].append(report)
+    elif len(motor_points) >= 3:
         try:
             model["motor_conversion_fit"] = linear_fit(
                 [float(p["motor_position_mean_turns"]) for p in motor_points],
@@ -230,3 +248,29 @@ class SensorOnlyCaptureGuard:
         if self.token is not None:
             self.app.motion_coordinator.release(self.token)
             self.token = None
+
+
+class RawMotorCaptureGuard(SensorOnlyCaptureGuard):
+    """Paired physical-angle/raw-turn observation without claiming machine zero.
+
+    Keeps motor coordinate frames separate and never arms or clears a fault.
+    """
+    def __init__(self, app):
+        if app.startup_block_reason or app.odrive_adapter is None:
+            raise ValueError("Connect ODrive before paired raw-turn capture")
+        self.connection = app.odrive_adapter
+        self.reference_id = f"connection-{app.odrive_connection_generation}"
+        self.last_uptime = None
+        super().__init__(app)
+
+    def check(self):
+        if self.app.odrive_adapter is not self.connection or self.app.monitor_error:
+            raise ValueError("ODrive connection changed or feedback monitor failed during hold")
+        feedback = super().check()
+        if feedback is None or feedback.active_errors:
+            raise ValueError("Fresh, error-free stationary motor feedback is required")
+        uptime = feedback.system_uptime
+        if self.last_uptime is not None and uptime is not None and uptime < self.last_uptime:
+            raise ValueError("Controller reset during paired raw-turn hold")
+        self.last_uptime = uptime
+        return feedback

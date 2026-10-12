@@ -86,7 +86,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.5.5-idle-feedback-retry"
+APP_VERSION = "1.6.0-calibration-positioning"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -198,6 +198,7 @@ class MyInterface:
         self.recovery_thread = None
         self.recovery_window = None
         self.rotary_calibration = None
+        self.odrive_connection_generation = 0
         self.recovery_origin_turns = None
         self.recovery_cumulative_deg = 0.0
         self.recovery_session_acknowledged = False
@@ -1530,6 +1531,8 @@ class MyInterface:
                 f"Hardware controls are blocked: {self.startup_block_reason or 'process lock unavailable'}\n"
             )
             return
+        if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+            self.rotary_calibration.suspend_positioning("ODrive reconnect requested")
         self.clear_terminal()
         if self.odrive_adapter is not None:
             self.safe_idle_motor("reconnect")
@@ -1612,6 +1615,7 @@ class MyInterface:
                             self.reference_manager.invalidate(
                                 f"No continuity checkpoint; {phase_reason}"
                             )
+            self.odrive_connection_generation += 1
             self._start_feedback_monitor()
             self._start_watchdog_if_enabled()
 
@@ -3389,30 +3393,67 @@ class MyInterface:
         )
         self.manual_step_thread.start()
 
-    def _manual_step_worker(self, token, direction, step_turns, requested, units):
+    def _start_calibration_step(self, window, direction, requested, units):
+        """Discrete calibration-only positioning; never changes machine zero/tare."""
+        try:
+            if window is not self.rotary_calibration or window.closed or window.closing:
+                raise ValueError("Open the rotary calibration window first")
+            if self.strain_test_active or self.startup_block_reason:
+                raise ValueError("Finish the active test and resolve startup faults")
+            reference = window.positioning_reference
+            if reference is None:
+                raise ValueError("Confirm the current calibration positioning angle first")
+            snapshot = reference.check(self, stationary=True)
+            self._validate_live_motion_config()
+            self._revalidate_hardware_identity()
+            step_turns = manual_step_to_turns(requested, units, self.system_config)
+            reference.target(snapshot.position_turns, direction, step_turns)
+            token = self.motion_coordinator.acquire("rotary-calibration-step")
+        except Exception as exc:
+            self.update_terminal(f"Calibration step blocked: {exc}\n")
+            return
+        self._refresh_motion_controls()
+        self.manual_step_thread = threading.Thread(
+            target=self._manual_step_worker,
+            args=(token, direction, step_turns, float(requested), units, reference),
+            name="rotary-calibration-step", daemon=True,
+        )
+        self.manual_step_thread.start()
+
+    def _manual_step_worker(self, token, direction, step_turns, requested, units, calibration_reference=None):
         try:
             motion = self.system_config["motion"]
             current = self.get_feedback().position_turns
             target = current + direction * step_turns
-            bounded = self.clamp_manual_target(target)
+            if calibration_reference is not None:
+                calibration_reference.check(self, stationary=True)
+                bounded = calibration_reference.target(current, direction, step_turns)
+            else:
+                bounded = self.clamp_manual_target(target)
             if not math.isclose(target, bounded, rel_tol=0.0, abs_tol=1e-10):
                 raise ValueError("Full requested step exceeds travel limits; reduce the step. No movement commanded.")
             distance_deg = abs(odrive_turns_to_afo_degrees(step_turns, self.system_config))
-            timeout_s = motion_timeout_seconds(
-                distance_deg, motion["manual_speed_deg_s"],
-                motion["manual_acceleration_deg_s2"], self.system_config,
-            )
-            self.configure_trajectory(motion["manual_speed_deg_s"], motion["manual_acceleration_deg_s2"])
-            self.enter_closed_loop(token)
+            speed = (self.system_config["reference"]["recovery_speed_deg_s"]
+                     if calibration_reference is not None else motion["manual_speed_deg_s"])
+            acceleration = (self.system_config["reference"]["recovery_acceleration_deg_s2"]
+                            if calibration_reference is not None else motion["manual_acceleration_deg_s2"])
+            timeout_s = motion_timeout_seconds(distance_deg, speed, acceleration, self.system_config)
+            self.configure_trajectory(speed, acceleration)
+            if calibration_reference is not None:
+                self.enter_closed_loop(token, allow_unreferenced=True)
+                calibration_reference.check(self)
+            else:
+                self.enter_closed_loop(token)
             snapshot = self.get_feedback()
             self.reference_manager.write_checkpoint(
                 MotionState.MOVING, snapshot, clean_shutdown=False,
-                extra={"phase": "manual_step", "target_turns": target,
-                       "requested_step": direction * requested, "step_units": units},
+                extra={"phase": "rotary_calibration_step" if calibration_reference is not None else "manual_step",
+                       "target_turns": target, "requested_step": direction * requested, "step_units": units,
+                       "calibration_only": calibration_reference is not None},
             )
             self._submit_position(token, target)
             wait_for_settle(
-                self.get_feedback, target,
+                (lambda: calibration_reference.check(self)) if calibration_reference is not None else self.get_feedback, target,
                 afo_degrees_to_odrive_turns(motion["position_tolerance_deg"], self.system_config),
                 afo_speed_to_odrive_turns_s(self.system_config["reference"]["settle_velocity_limit_deg_s"], self.system_config),
                 self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
@@ -3434,6 +3475,11 @@ class MyInterface:
         finally:
             self.safe_idle_motor("manual step complete", token=token)
             self.motion_coordinator.release(token)
+            if calibration_reference is not None:
+                try:
+                    calibration_reference.last_position_turns = calibration_reference.check(self, stationary=True).position_turns
+                except Exception:
+                    calibration_reference.suspend()
             self.ui_message_queue.put(("reference",))
 
     def start_continuous_movement(self):
