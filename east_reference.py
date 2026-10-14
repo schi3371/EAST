@@ -113,6 +113,12 @@ class FeedbackSnapshot:
     raw_phase: Optional[float] = None
     capture_started_monotonic_s: Optional[float] = None
     capture_duration_s: Optional[float] = None
+    position_started_monotonic_s: Optional[float] = None
+    position_finished_monotonic_s: Optional[float] = None
+    velocity_started_monotonic_s: Optional[float] = None
+    velocity_finished_monotonic_s: Optional[float] = None
+    lock_wait_s: Optional[float] = None
+    property_brackets_monotonic_s: Optional[Dict[str, Tuple[float, float]]] = None
 
     def validate(
         self,
@@ -135,6 +141,12 @@ class FeedbackSnapshot:
                 raise FeedbackError("feedback capture duration is negative")
             if max_capture_duration_s is not None and duration > max_capture_duration_s:
                 raise FeedbackAcquisitionTimeout(self)
+        for name in ("position_started_monotonic_s", "position_finished_monotonic_s",
+                     "velocity_started_monotonic_s", "velocity_finished_monotonic_s",
+                     "lock_wait_s"):
+            value = getattr(self, name)
+            if value is not None:
+                _finite(value, name)
         if max_age_s is not None:
             now = time.monotonic() if now_monotonic_s is None else now_monotonic_s
             age = _finite(now, "current monotonic time") - self.captured_monotonic_s

@@ -96,16 +96,28 @@ class ODriveAdapter:
         try:
             lock_acquired = time.monotonic()
             self.last_lock_wait_s = lock_acquired - capture_started
-            position = _finite_float(self.axis.pos_vel_mapper.pos_rel, "ODrive position")
-            velocity = _finite_float(self.axis.pos_vel_mapper.vel, "ODrive velocity")
-            active_errors = int(self.axis.active_errors)
-            current_state = int(self.axis.current_state)
-            disarm_reason = int(_read_path(self.axis, "disarm_reason", 0) or 0)
-            uptime_value = _read_path(self.device, "system_stats.uptime")
+            brackets = {}
+            def timed(name, read):
+                started = time.monotonic()
+                try:
+                    return read()
+                finally:
+                    brackets[name] = (started, time.monotonic())
+            position_started = time.monotonic()
+            position = _finite_float(timed("position", lambda: self.axis.pos_vel_mapper.pos_rel), "ODrive position")
+            position_finished = brackets["position"][1]
+            position_at = utc_now_iso()
+            velocity_started = time.monotonic()
+            velocity = _finite_float(timed("velocity", lambda: self.axis.pos_vel_mapper.vel), "ODrive velocity")
+            velocity_finished = brackets["velocity"][1]
+            active_errors = int(timed("active_errors", lambda: self.axis.active_errors))
+            current_state = int(timed("current_state", lambda: self.axis.current_state))
+            disarm_reason = int(timed("disarm_reason", lambda: _read_path(self.axis, "disarm_reason", 0)) or 0)
+            uptime_value = timed("uptime", lambda: _read_path(self.device, "system_stats.uptime"))
             uptime = None if uptime_value is None else _finite_float(uptime_value, "ODrive uptime")
             raw_phase = None
             if include_phase:
-                value = _read_path(self.device, "rs485_encoder_group0.raw")
+                value = timed("raw_phase", lambda: _read_path(self.device, "rs485_encoder_group0.raw"))
                 if value is not None:
                     raw_phase = _finite_float(value, "RS485 encoder raw phase")
         finally:
@@ -113,8 +125,8 @@ class ODriveAdapter:
             self.last_transport_duration_s = capture_finished - lock_acquired
             self.io_lock.release()
         snapshot = FeedbackSnapshot(
-            captured_monotonic_s=capture_finished,
-            captured_at=utc_now_iso(),
+            captured_monotonic_s=position_finished,
+            captured_at=position_at,
             position_turns=position,
             velocity_turns_s=velocity,
             active_errors=active_errors,
@@ -124,6 +136,12 @@ class ODriveAdapter:
             raw_phase=raw_phase,
             capture_started_monotonic_s=capture_started,
             capture_duration_s=capture_finished - capture_started,
+            position_started_monotonic_s=position_started,
+            position_finished_monotonic_s=position_finished,
+            velocity_started_monotonic_s=velocity_started,
+            velocity_finished_monotonic_s=velocity_finished,
+            lock_wait_s=self.last_lock_wait_s,
+            property_brackets_monotonic_s=brackets,
         )
         snapshot.validate(max_capture_duration_s=max_capture_duration_s)
         return snapshot

@@ -104,7 +104,8 @@ class IdleFeedbackRetryTests(unittest.TestCase):
 
     def test_adapter_raises_typed_timeout_without_command(self):
         device=Device();adapter=ODriveAdapter(device,0,idle_state=1,closed_loop_state=8)
-        with patch('east_odrive.time.monotonic',side_effect=[10,10,10.266]):
+        clock = iter([10] * 15 + [10.266] * 10)
+        with patch('east_odrive.time.monotonic',side_effect=lambda: next(clock)):
             with self.assertRaises(FeedbackAcquisitionTimeout) as error:
                 adapter.snapshot(max_capture_duration_s=.15)
         self.assertAlmostEqual(error.exception.snapshot.capture_duration_s,.266)
