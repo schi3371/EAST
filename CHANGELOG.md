@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.7.3-safe-recovery
+
+- Recheck cancellation inside ODrive transport access so a target or arming request queued behind another Fibre call is rejected after Stop; already executing transport calls remain uninterruptible.
+- Scope stop workers to live connection/operation generations. A later fault starts a fresh stop; faults arriving during a stop escalate the outcome, invalidate machine-zero confidence immediately, and require new idle evidence.
+- Latch shutdown in motion admission, retain worker ownership, and prevent Start, manual movement, calibration positioning, and reconnect during cleanup. Early test initialization errors restore editable fields without enabling unconfirmed motion.
+- Add an explicitly acknowledged `Exit After Motor Power Is Isolated` route after blocked shutdown. It requires the operator to engage the physical E-stop and isolate motor power, records an incomplete/error outcome where possible, and leaves a dirty marker that vetoes automatic continuity on the next launch. Abrupt process exit may lose buffered data.
+- Add offline regression tests. Windows ODrive/Phidget behavior and physical stop timing remain unverified.
+
+## Through 1.7.2-responsive-stop
 
 - Moved periodic reference checkpoints and audit events off the ODrive feedback thread; serialized required motion/idle checkpoints through the same bounded writer and fail closed on write/backlog errors without extending freshness limits.
 - Made Stop, rotary faults and shutdown latch cancellation promptly, with one tracked idle worker. Stalled communication leaves idle unconfirmed and motion ownership held until workers exit.

@@ -1,8 +1,10 @@
 """Offline regression tests for EAST's nonblocking stop and persistence path."""
 
 import ast
+import csv
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import queue
 import tempfile
@@ -12,10 +14,12 @@ from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from east_core import load_tester_config, reconcile_run_outcome, write_json_atomic
+from east_core import (CSV_COLUMNS, ROTARY_RUN_COLUMNS, load_tester_config,
+                       reconcile_run_outcome, write_json_atomic)
 from east_odrive import ODriveAdapter
-from east_reference import (FeedbackAcquisitionTimeout, FeedbackError, IdleFeedbackRetry,
-                            MotionConflictError, MotionCoordinator, MotionState)
+from east_reference import (AtomicStateStore, FeedbackAcquisitionTimeout, FeedbackError,
+                            IdleFeedbackRetry, MotionConflictError, MotionCoordinator,
+                            MotionState, ReferenceConfidence)
 from east_runtime import CheckpointWriter
 from test_odrive_adapter import Device
 from test_idle_feedback_retry import sample
@@ -30,8 +34,10 @@ def method(name):
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MyInterface")
     function = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
     namespace = dict(threading=threading, time=time, queue=queue, datetime=datetime,
-                     Path=Path, write_json_atomic=write_json_atomic,
+                     Path=Path, write_json_atomic=write_json_atomic, os=os, csv=csv,
                      RED="red", AMBER="amber", GREEN="green",
+                     APP_VERSION="test", ReferenceConfidence=ReferenceConfidence,
+                     CSV_COLUMNS=CSV_COLUMNS, ROTARY_RUN_COLUMNS=ROTARY_RUN_COLUMNS,
                      FeedbackAcquisitionTimeout=FeedbackAcquisitionTimeout,
                      FeedbackError=FeedbackError, IdleFeedbackRetry=IdleFeedbackRetry,
                      MotionState=MotionState, TestStopped=TestStopped,
@@ -160,6 +166,77 @@ class CheckpointWriterTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_queued_target_is_cancelled_after_transport_lock_wait(self):
+        device = Device()
+        adapter = ODriveAdapter(device, 0, idle_state=1, closed_loop_state=8)
+        coordinator = MotionCoordinator()
+        token = coordinator.acquire("test")
+        occupied = threading.Event()
+        release = threading.Event()
+        outcomes = []
+
+        def hold_transport():
+            with adapter.io_lock:
+                occupied.set()
+                release.wait(1.0)
+
+        blocker = threading.Thread(target=hold_transport)
+        blocker.start()
+        self.assertTrue(occupied.wait(1.0))
+
+        def command():
+            try:
+                coordinator.submit_command(token, lambda: adapter.command_position(
+                    42.0, cancelled=lambda: coordinator.stopping))
+            except Exception as exc:
+                outcomes.append(exc)
+
+        pending = threading.Thread(target=command)
+        pending.start()
+        time.sleep(0.02)
+        coordinator.request_stop()
+        release.set()
+        pending.join(1.0)
+        blocker.join(1.0)
+        self.assertEqual(device.axis0.controller.input_pos, -999.0)
+        self.assertEqual(len(outcomes), 1)
+        self.assertIn("cancelled", str(outcomes[0]))
+        self.assertTrue(adapter.request_idle().confirmed)
+        self.assertEqual(device.axis0.controller.input_pos, -999.0)
+
+    def test_queued_arming_is_cancelled_after_transport_lock_wait(self):
+        device = Device()
+        adapter = ODriveAdapter(device, 0, idle_state=1, closed_loop_state=8)
+        occupied = threading.Event()
+        release = threading.Event()
+        cancelled = threading.Event()
+        errors = []
+
+        def hold_transport():
+            with adapter.io_lock:
+                occupied.set()
+                release.wait(1.0)
+
+        blocker = threading.Thread(target=hold_transport)
+        blocker.start()
+        self.assertTrue(occupied.wait(1.0))
+
+        def arm():
+            try:
+                adapter.request_closed_loop_holding_current(cancelled=cancelled.is_set)
+            except Exception as exc:
+                errors.append(exc)
+
+        pending = threading.Thread(target=arm)
+        pending.start()
+        time.sleep(0.02)
+        cancelled.set()
+        release.set()
+        pending.join(1.0)
+        blocker.join(1.0)
+        self.assertEqual(device.axis0.request_count, 0)
+        self.assertEqual(device.axis0.controller.input_pos, -999.0)
+        self.assertEqual(len(errors), 1)
     def test_idle_lock_wait_is_bounded_without_sending_command(self):
         device = Device()
         adapter = ODriveAdapter(device, 0, idle_state=1, closed_loop_state=8)
@@ -233,14 +310,19 @@ class GuiWorkerTests(unittest.TestCase):
             test_stop_event=threading.Event(), neutral_stop_event=threading.Event(),
             continuous_stop_event=threading.Event(), stop_worker_lock=threading.Lock(),
             stop_worker=None, stop_token=None, stop_result=None,
+            stop_operation=None, stop_sequence=0, odrive_connection_generation=1,
             stop_started_monotonic=None, stop_diagnostic_recorded=False,
             strain_test_active=False, run_metadata=None, run_finalized=True,
             acquisition_error=None, monitor_error=None,
             failure_metadata_worker=None, ui_message_queue=queue.Queue(),
+            metadata_workers=[],
+            shutdown_requested=False,
             safe_idle_motor=idle, rotary_calibration=None, operator_stop_requested=False,
+            reference_manager=Mock(),
             update_terminal=Mock(),
         )
-        bind(app, "_request_coordinated_stop", "_coordinated_stop_worker", "stop_logging")
+        bind(app, "_request_coordinated_stop", "_coordinated_stop_worker",
+             "_retire_stop_worker", "stop_logging")
         return app
 
     def test_stop_callback_returns_while_idle_is_stalled_and_blocks_restart(self):
@@ -270,9 +352,166 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIs(app.stop_worker, first_worker)
         release.set()
         first_worker.join(1.0)
+        app._retire_stop_worker()
         self.assertEqual(app.motion_coordinator.owner, "strain-test")
         app.motion_coordinator.release(app.run_motion_token)
         self.assertEqual(app.motion_coordinator.acquire("manual").owner, "manual")
+
+    def test_fresh_fault_after_completed_ownerless_stop_gets_new_idle_evidence(self):
+        app = self.app(None)
+        app.motion_coordinator.release(app.run_motion_token)
+        calls = []
+
+        def idle(reason, invalidate_reference=False, token=None):
+            calls.append((reason, invalidate_reference))
+            app.motion_coordinator.confirm_motor_idle()
+            return SimpleNamespace(confirmed=True)
+
+        app.safe_idle_motor = idle
+        app._request_coordinated_stop("ordinary stop")
+        first = app.stop_worker
+        first.join(1.0)
+        app._retire_stop_worker()
+        self.assertTrue(app.stop_result.confirmed)
+        app._request_coordinated_stop("new feedback fault", fault=True)
+        second = app.stop_worker
+        second.join(1.0)
+        app._retire_stop_worker()
+        self.assertIsNot(first, second)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[-1], ("new feedback fault", True))
+        self.assertEqual(app.monitor_error, "new feedback fault")
+
+    def test_ownerless_stop_retains_reservation_until_worker_has_exited(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingQueue(queue.Queue):
+            def put(self, item, *args, **kwargs):
+                if item[0] == "status" and threading.current_thread().name == "east-idle-stop":
+                    entered.set()
+                    release.wait(1.0)
+                return super().put(item, *args, **kwargs)
+
+        app = self.app(None)
+        app.motion_coordinator.release(app.run_motion_token)
+        app.ui_message_queue = BlockingQueue()
+
+        def idle(*args, **kwargs):
+            app.motion_coordinator.confirm_motor_idle()
+            return SimpleNamespace(confirmed=True)
+
+        app.safe_idle_motor = idle
+        app._request_coordinated_stop("ordinary stop")
+        try:
+            self.assertTrue(entered.wait(1.0))
+            self.assertTrue(app.motion_coordinator.motor_idle_confirmed)
+            app._retire_stop_worker()
+            with self.assertRaises(MotionConflictError):
+                app.motion_coordinator.acquire("manual")
+        finally:
+            release.set()
+            app.stop_worker.join(1.0)
+        app._retire_stop_worker()
+        self.assertEqual(app.motion_coordinator.acquire("manual").owner, "manual")
+
+    def test_fault_escalates_live_stop_and_rechecks_idle(self):
+        app = self.app(None)
+        app.motion_coordinator.release(app.run_motion_token)
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def idle(reason, invalidate_reference=False, token=None):
+            calls.append((reason, invalidate_reference))
+            if len(calls) == 1:
+                entered.set()
+                release.wait(1.0)
+            app.motion_coordinator.confirm_motor_idle()
+            return SimpleNamespace(confirmed=True)
+
+        app.safe_idle_motor = idle
+        app._request_coordinated_stop("operator stop")
+        worker = app.stop_worker
+        self.assertTrue(entered.wait(1.0))
+        started = time.monotonic()
+        app._request_coordinated_stop("stale feedback", fault=True)
+        self.assertLess(time.monotonic() - started, 0.05)
+        self.assertIs(worker, app.stop_worker)
+        self.assertIsNone(app.stop_result)
+        release.set()
+        worker.join(1.0)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[-1][1])
+        self.assertIn("stale feedback", calls[-1][0])
+        self.assertTrue(app.stop_result.confirmed)
+
+    def test_fault_escalation_updates_existing_incomplete_run_outcome(self):
+        entered = threading.Event()
+        release = threading.Event()
+        app = self.app(None)
+
+        def idle(*args, **kwargs):
+            entered.set()
+            release.wait(1.0)
+            app.motion_coordinator.confirm_motor_idle()
+            return SimpleNamespace(confirmed=True)
+
+        app.safe_idle_motor = idle
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "run_metadata.json"
+            path.write_text(json.dumps({"run_status": "started"}))
+            app.strain_test_active = True
+            app.run_metadata = {"run_status": "started"}
+            app.metadata_file_name = str(path)
+            app.finalize_lock = threading.Lock()
+            app.run_finalized = False
+            app.sample_count = 3
+            app.acquisition_overruns = 0
+            app.maximum_acquisition_lateness_s = 0.0
+            bind(app, "_persist_interim_outcome")
+            app._request_coordinated_stop("operator stop")
+            self.assertTrue(entered.wait(1.0))
+            app._request_coordinated_stop("feedback stale", fault=True)
+            release.set()
+            app.stop_worker.join(1.0)
+            for worker in app.metadata_workers:
+                worker.join(1.0)
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["run_status"], "error")
+            self.assertIn("feedback stale", saved["error"])
+            self.assertFalse(saved["idle_confirmation"]["confirmed"])
+            app.reference_manager.invalidate_local.assert_called_with("feedback stale", fault=True)
+
+    def test_isolated_exit_requires_explicit_power_acknowledgement(self):
+        app = self.app(None)
+        app.isolated_exit_requested = False
+        app.shutdown_requested = True
+        app.isolated_exit_offered = True
+        app.show_resizable_confirmation = Mock(return_value=False)
+        app._isolated_exit_worker = Mock()
+        app._force_process_exit = Mock()
+        app._schedule_isolated_exit_deadline = Mock()
+        app.set_status = Mock()
+        app.isolated_exit_button = Mock()
+        app.master = SimpleNamespace(after=Mock())
+        bind(app, "exit_after_motor_power_is_isolated")
+        app.exit_after_motor_power_is_isolated()
+        self.assertFalse(app.isolated_exit_requested)
+        app._request_coordinated_stop = Mock()
+        app._request_coordinated_stop.assert_not_called()
+        prompt = app.show_resizable_confirmation.call_args.kwargs["message"]
+        self.assertTrue(app.show_resizable_confirmation.call_args.kwargs["dangerous"])
+        self.assertIn("physical E-stop", prompt)
+        self.assertIn("motor power", prompt)
+        self.assertIn("buffered data may be lost", prompt)
+        app.show_resizable_confirmation.return_value = True
+        app.exit_after_motor_power_is_isolated()
+        self.assertTrue(app.isolated_exit_requested)
+        self.assertTrue(app.motion_coordinator.shutting_down)
+        app._request_coordinated_stop.assert_called_once_with(
+            "power-isolated exit; idle unconfirmed", fault=True)
+        app._schedule_isolated_exit_deadline.assert_called_once()
 
     def test_disconnect_callback_does_not_release_adapter_during_stalled_stop(self):
         release = threading.Event()
@@ -345,6 +584,7 @@ class GuiWorkerTests(unittest.TestCase):
     def test_queue_batches_are_bounded_and_plot_redraws_once(self):
         app = SimpleNamespace(ui_message_queue=queue.Queue(), plot_data_queue=queue.Queue(),
                               update_terminal=Mock(), update_plot_data=Mock(), update_plot=Mock(),
+                              _retire_stop_worker=Mock(),
                               _poll_rotary_sensor=Mock(), _diagnose_stalled_workers=Mock(),
                               update_manual_position_display=Mock(),
                               master=SimpleNamespace(after=Mock()))
@@ -402,6 +642,168 @@ class GuiWorkerTests(unittest.TestCase):
             self.assertEqual(saved["acquisition_overruns"], 4)
             app.odrive_configuration_snapshot.assert_not_called()
 
+    def test_shutdown_latch_blocks_new_motion_and_reconnect(self):
+        app = self.app(None)
+        app.motion_coordinator.begin_shutdown()
+        bind(app, "connect_system", "start_strain_test")
+        app.connect_system()
+        app.start_strain_test()
+        self.assertIn("shutdown", app.update_terminal.call_args.args[0])
+        with self.assertRaises(MotionConflictError):
+            app.motion_coordinator.acquire("manual-step")
+
+    def test_early_initialization_failure_restores_form_without_enabling_motion(self):
+        coordinator = MotionCoordinator()
+        token = coordinator.acquire("strain-test")
+        coordinator.request_stop()
+        app = SimpleNamespace(
+            system_config=load_tester_config(), stop_worker=None, data_collection_thread=None,
+            rotary_sensor=SimpleNamespace(finish_recording=lambda: {}),
+            run_metadata=None, metadata_file_name=None, run_finalized=True,
+            run_motion_token=token, motion_coordinator=coordinator,
+            metadata_workers=[],
+            strain_test_active=True, ui_message_queue=queue.Queue(),
+            update_terminal=Mock(),
+        )
+        bind(app, "_cleanup_failed_start")
+        app._cleanup_failed_start("configuration failed")
+        self.assertFalse(app.strain_test_active)
+        self.assertEqual(coordinator.owner, "strain-test")
+        self.assertEqual(app.ui_message_queue.get_nowait(), ("inputs", "normal"))
+        self.assertEqual(app.ui_message_queue.get_nowait(), ("run_buttons", "normal"))
+        with self.assertRaises(MotionConflictError):
+            coordinator.acquire("manual-step")
+
+    def test_ordinary_quit_offers_isolated_exit_when_idle_unavailable(self):
+        coordinator = MotionCoordinator()
+        coordinator.begin_shutdown()
+        app = SimpleNamespace(motion_coordinator=coordinator, isolated_exit_requested=False,
+                              shutdown_started_monotonic=time.monotonic(), odrive_adapter=object(),
+                              metadata_workers=[],
+                              _retire_stop_worker=Mock(),
+                              _offer_isolated_exit=Mock(), set_status=Mock(),
+                              master=SimpleNamespace(after=Mock()))
+        bind(app, "_poll_shutdown_ready")
+        app._poll_shutdown_ready()
+        app._offer_isolated_exit.assert_called_once_with("Idle not confirmed")
+        app.master.after.assert_not_called()
+
+    def test_power_isolated_exit_keeps_incomplete_metadata_with_surviving_worker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = AtomicStateStore(Path(folder))
+            store.mark_unsafe_exit()
+            path = Path(folder) / "run_metadata.json"
+            path.write_text(json.dumps({"run_status": "started"}))
+            strain_path = Path(folder) / "run_strain_data.csv"
+            strain_path.write_text("original saved row\n")
+            coordinator = MotionCoordinator()
+            token = coordinator.acquire("strain-test")
+            coordinator.begin_shutdown()
+            release = threading.Event()
+            worker = threading.Thread(target=lambda: release.wait(1.0), daemon=True)
+            worker.start()
+            app = SimpleNamespace(
+                state_store=store, reference_manager=SimpleNamespace(
+                    mapping="prior", confidence=ReferenceConfidence.VERIFIED, reason="prior"),
+                metadata_file_name=str(path), run_metadata={"run_status": "started"},
+                run_finalized=False, strain_test_active=True,
+                sample_count=200, acquisition_overruns=2,
+                maximum_acquisition_lateness_s=0.4, monitor_error="stale",
+                motion_coordinator=coordinator, stop_operation=None,
+                metadata_workers=[], isolated_exit_requested=True,
+                finalize_lock=threading.Lock(), strain_file_name=str(strain_path),
+                strain_data_buffer=[["buffered row"]],
+                acquisition_done_event=threading.Event(), checkpoint_writer=None,
+                ui_message_queue=queue.Queue(), _force_process_exit=Mock(),
+            )
+            bind(app, "_persist_interim_outcome", "_isolated_exit_worker")
+            app.acquisition_done_event.set()
+            try:
+                app._isolated_exit_worker()
+                saved = json.loads(path.read_text())
+                self.assertEqual(saved["run_status"], "error")
+                self.assertTrue(saved["outcome_pending_cleanup"])
+                self.assertFalse(saved["idle_confirmation"]["confirmed"])
+                self.assertTrue(worker.is_alive())
+                self.assertTrue(store.unsafe_exit_present())
+                self.assertEqual(strain_path.read_text(), "original saved row\n")
+                self.assertIn("buffered row", (Path(folder) / "run_strain_data_unsaved_buffer.csv").read_text())
+                self.assertEqual(app.reference_manager.confidence, ReferenceConfidence.FAULT)
+                app._force_process_exit.assert_called_once()
+            finally:
+                release.set()
+                worker.join(1.0)
+
+    def test_normal_shutdown_clears_marker_and_releases_lock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = AtomicStateStore(Path(folder))
+            store.mark_unsafe_exit()
+            coordinator = MotionCoordinator()
+            coordinator.begin_shutdown()
+            app = SimpleNamespace(
+                state_store=store, motion_coordinator=coordinator,
+                isolated_exit_requested=False, odrive_adapter=None,
+                isolated_exit_offered=False,
+                metadata_workers=[], _stop_watchdog=Mock(), _stop_feedback_monitor=Mock(),
+                watchdog_thread=None, monitor_thread=None, checkpoint_writer=None,
+                rotary_calibration=None, rotary_sensor=Mock(), voltage_ratio_input=None,
+                previous_unsafe_exit=False, unsafe_exit_recovered_in_session=False,
+                process_lock=Mock(), ui_message_queue=queue.Queue(), odrive_controller=object(),
+            )
+            bind(app, "_shutdown_cleanup_worker")
+            app._shutdown_cleanup_worker()
+            self.assertFalse(store.unsafe_exit_present())
+            app.process_lock.release.assert_called_once()
+            self.assertEqual(app.ui_message_queue.get_nowait(), ("shutdown_ready",))
+
+    def test_connected_shutdown_blocks_motion_during_delayed_cleanup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = AtomicStateStore(Path(folder))
+            store.mark_unsafe_exit()
+            coordinator = MotionCoordinator()
+            coordinator.begin_shutdown()
+            coordinator.confirm_motor_idle()
+            entered = threading.Event()
+            release = threading.Event()
+
+            def read_feedback():
+                entered.set()
+                release.wait(1.0)
+                return "fresh idle"
+
+            app = SimpleNamespace(
+                state_store=store, motion_coordinator=coordinator,
+                isolated_exit_requested=False, isolated_exit_offered=False,
+                odrive_adapter=object(), metadata_workers=[],
+                _stop_watchdog=Mock(), _stop_feedback_monitor=Mock(),
+                watchdog_thread=None, monitor_thread=None, checkpoint_writer=None,
+                _read_adapter_feedback=read_feedback,
+                reference_manager=SimpleNamespace(verified=True), monitor_error=None,
+                previous_unsafe_exit=False, unsafe_exit_recovered_in_session=False,
+                rotary_calibration=None, rotary_sensor=Mock(), voltage_ratio_input=None,
+                process_lock=Mock(), ui_message_queue=queue.Queue(), odrive_controller=object(),
+            )
+            worker_method = method("_shutdown_cleanup_worker")
+            persist = Mock(return_value=True)
+            worker_method.__globals__["persist_idle_continuity_checkpoint"] = persist
+            worker_method.__globals__["AXIS_STATE_IDLE"] = 1
+            worker = threading.Thread(target=lambda: worker_method(app))
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1.0))
+                with self.assertRaises(MotionConflictError):
+                    coordinator.acquire("manual")
+                with self.assertRaises(MotionConflictError):
+                    coordinator.reserve_observation("calibration")
+            finally:
+                release.set()
+                worker.join(1.0)
+            self.assertFalse(worker.is_alive())
+            persist.assert_called_once()
+            self.assertFalse(store.unsafe_exit_present())
+            app.process_lock.release.assert_called_once()
+            self.assertEqual(app.ui_message_queue.get_nowait(), ("shutdown_ready",))
+
     def test_run_finalizes_error_but_keeps_owner_while_stop_worker_is_stalled(self):
         release = threading.Event()
         coordinator = MotionCoordinator()
@@ -415,9 +817,11 @@ class GuiWorkerTests(unittest.TestCase):
             acquisition_error="feedback stale", completed_cycles=0,
             system_config=load_tester_config(), data_collection_thread=None,
             failure_metadata_worker=None, stop_worker=worker, stop_result=None,
+            metadata_workers=[],
             run_metadata={"rotary_sensor": {}},
             rotary_sensor=SimpleNamespace(finish_recording=lambda: {}),
             strain_test_active=True, ui_message_queue=queue.Queue(),
+            _retire_stop_worker=Mock(),
             _request_coordinated_stop=Mock(), update_terminal=Mock(), finalize_run=Mock(),
         )
         bind(app, "strain_test_control", "_release_run_ownership_when_workers_exit")

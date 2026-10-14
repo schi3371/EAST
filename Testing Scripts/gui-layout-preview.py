@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.7.2-responsive-stop-preview"
+APP_VERSION = "1.7.3-safe-recovery-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 

@@ -299,9 +299,13 @@ class ODriveAdapter:
             self.axis.trap_traj.config.decel_limit = acceleration
             self.axis.controller.config.vel_limit = controller_limit
 
-    def command_position(self, target_turns: float) -> None:
+    def command_position(self, target_turns: float, cancelled=lambda: False) -> None:
         target = _finite_float(target_turns, "target position")
         with self._locked_io():
+            # A queued command may have waited for another Fibre call while Stop
+            # was latched. Only a call already dispatched to transport may finish.
+            if cancelled():
+                raise RuntimeError("Motion was cancelled before target dispatch")
             self.axis.controller.input_pos = target
 
     def enter_closed_loop_holding_current(
@@ -329,8 +333,12 @@ class ODriveAdapter:
         if cancelled():
             raise RuntimeError("Motion was cancelled before arming")
         with self._locked_io():
+            if cancelled():
+                raise RuntimeError("Motion was cancelled before setpoint dispatch")
             current = _finite_float(self.axis.pos_vel_mapper.pos_rel, "ODrive position")
             # Setpoint is loaded before arming so closed loop cannot jump to a stale target.
+            if cancelled():
+                raise RuntimeError("Motion was cancelled before setpoint dispatch")
             self.axis.controller.input_pos = current
             if cancelled():
                 raise RuntimeError("Motion was cancelled before closed-loop request")

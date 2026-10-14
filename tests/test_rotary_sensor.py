@@ -392,6 +392,8 @@ class ConnectRetryTests(unittest.TestCase):
                      "cleanup_thread"): setattr(app,name,None)
         app.strain_test_active=False
         app.motion_coordinator.owner=None
+        app.motion_coordinator.shutting_down=False
+        app.metadata_workers=[]
         app.startup_block_reason=None
         app.process_lock.held=True
         app._reuse_live_odrive_connection.return_value=True
@@ -411,6 +413,8 @@ class NormalGuiIntegrationTests(unittest.TestCase):
         app.reference_manager.angle_from_position.return_value=0
         app.system_config=load_tester_config()
         app.stop_worker=None
+        app.motion_coordinator.shutting_down=False
+        app.metadata_workers=[]
         app.run_finalized=True
         app.run_metadata=None
         app.disconnect_worker=None
@@ -472,6 +476,7 @@ class NormalGuiIntegrationTests(unittest.TestCase):
         app.data_collection_thread.is_alive.return_value=False
         app.stop_worker=None
         app.failure_metadata_worker=None
+        app.metadata_workers=[]
         app.motion_coordinator.motor_idle_confirmed=True
         def request_stop(*args, **kwargs):
             app.stop_worker=Mock()

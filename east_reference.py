@@ -407,8 +407,25 @@ class AtomicStateStore:
         self.checkpoint_path = self.directory / "runtime_checkpoint.json"
         self.event_path = self.directory / "reference_events.jsonl"
         self.lock_path = self.directory / "hardware.lock"
+        self.unsafe_exit_path = self.directory / "power_isolated_exit.marker"
         self._lock = threading.RLock()
         self._last_generations: Dict[Path, int] = {}
+
+    def mark_unsafe_exit(self) -> None:
+        """Durable veto independent of a potentially stalled checkpoint writer."""
+        try:
+            with self.unsafe_exit_path.open("x", encoding="utf-8") as handle:
+                handle.write(utc_now_iso() + " power-isolated exit; recover machine zero\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            pass
+
+    def unsafe_exit_present(self) -> bool:
+        return self.unsafe_exit_path.exists()
+
+    def clear_unsafe_exit_after_recovery(self) -> None:
+        self.unsafe_exit_path.unlink(missing_ok=True)
 
     def _preserve_corrupt(self, path: Path) -> Path:
         suffix = datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -560,6 +577,7 @@ class MotionCoordinator:
         self._stopping = False
         self._motor_idle_confirmed = True
         self._cleanup_pending = False
+        self._shutdown = False
 
     @property
     def owner(self) -> Optional[str]:
@@ -577,6 +595,18 @@ class MotionCoordinator:
             return self._stopping
 
     @property
+    def shutting_down(self) -> bool:
+        with self._lock:
+            return self._shutdown
+
+    def begin_shutdown(self) -> None:
+        # This is irreversible for this process: failed shutdown must not reopen motion.
+        with self._lock:
+            self._shutdown = True
+            self._stopping = True
+            self._motor_idle_confirmed = False
+
+    @property
     def active_token(self) -> Optional[MotionToken]:
         with self._lock:
             return self._owner_token
@@ -588,7 +618,7 @@ class MotionCoordinator:
                     raise MotionConflictError(
                         f"Motion is already owned by {self._owner_token.owner}"
                     )
-                if self._stopping or not self._motor_idle_confirmed:
+                if self._shutdown or self._stopping or not self._motor_idle_confirmed:
                     raise MotionConflictError(
                         "Motion is stopping; wait for confirmed idle and worker exit"
                     )
@@ -601,6 +631,8 @@ class MotionCoordinator:
         """Block commands for passive measurement without changing stop/idle state."""
         with self._command_gate:
             with self._lock:
+                if self._shutdown:
+                    raise MotionConflictError("Observation blocked during shutdown")
                 if self._owner_token is not None:
                     raise MotionConflictError(f"Motion is already owned by {self._owner_token.owner}")
                 self._generation += 1
@@ -625,13 +657,13 @@ class MotionCoordinator:
     def complete_async_stop(self) -> None:
         with self._lock:
             self._cleanup_pending = False
-            if self._motor_idle_confirmed and self._owner_token is None:
+            if self._motor_idle_confirmed and self._owner_token is None and not self._shutdown:
                 self._stopping = False
 
     def confirm_motor_idle(self) -> None:
         with self._lock:
             self._motor_idle_confirmed = True
-            if self._owner_token is None and not self._cleanup_pending:
+            if self._owner_token is None and not self._cleanup_pending and not self._shutdown:
                 self._stopping = False
 
     def confirm_idle(self) -> None:
@@ -641,7 +673,7 @@ class MotionCoordinator:
     def assert_active(self, token: MotionToken) -> None:
         with self._lock:
             if (
-                self._stopping
+                self._shutdown or self._stopping
                 or self._owner_token != token
             ):
                 raise MotionConflictError(f"Stale or cancelled motion owner: {token.owner}")
@@ -659,7 +691,7 @@ class MotionCoordinator:
             with self._lock:
                 if self._owner_token == token:
                     self._owner_token = None
-                    if self._motor_idle_confirmed and not self._cleanup_pending:
+                    if self._motor_idle_confirmed and not self._cleanup_pending and not self._shutdown:
                         self._stopping = False
 
 
@@ -971,10 +1003,14 @@ class ReferenceManager:
         return True, self.reason
 
     def invalidate(self, reason: str, fault: bool = False) -> None:
+        self.invalidate_local(reason, fault=fault)
+        self.store.append_event("reference_invalidated", {"reason": self.reason})
+
+    def invalidate_local(self, reason: str, fault: bool = False) -> None:
+        """Fail closed immediately; audit persistence is performed off the GUI thread."""
         self.mapping = None
         self.confidence = ReferenceConfidence.FAULT if fault else ReferenceConfidence.RECOVERY_REQUIRED
         self.reason = str(reason)
-        self.store.append_event("reference_invalidated", {"reason": self.reason})
 
     def angle_from_position(self, position_turns: float) -> float:
         mapping = self.require_verified()
@@ -1098,8 +1134,11 @@ def evaluate_continuity(
     config: Dict[str, Any],
     now_wall_s: Optional[float] = None,
     reference_record: Optional[ReferenceRecord] = None,
+    unsafe_exit: bool = False,
 ) -> Tuple[bool, str, Optional[SessionMapping]]:
     """Conservatively decide whether a prior relative-position frame still exists."""
+    if unsafe_exit:
+        return False, "previous power-isolated or unclean exit requires physical recovery", None
     reference_cfg = config["reference"]
     if not reference_cfg["session_continuity_enabled"]:
         return False, "automatic controller-session continuity is disabled", None

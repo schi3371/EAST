@@ -74,6 +74,7 @@ class StrainSequenceTests(unittest.TestCase):
         app.data_collection_thread.is_alive.return_value = False
         app.stop_worker = None
         app.failure_metadata_worker = None
+        app.metadata_workers = []
         app.run_motion_token = "token"
         app.motion_coordinator.motor_idle_confirmed = True
         def request_stop(*args, **kwargs):

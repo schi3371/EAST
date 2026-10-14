@@ -8,6 +8,7 @@ Use this checklist for the first non-clinical bench verification of version `1.4
 - [ ] Confirm `tester_config.json` still contains the accepted `2.055` degree/turn conversion and approved provisional limits.
 - [ ] Confirm automatic session continuity is `false` and `odrive_uptime_units` is `null` until `system_stats.uptime` is bench-verified. Confirm phase recovery, measured-angle recovery, and watchdog are also disabled.
 - [ ] Close every other EAST GUI and motion diagnostic.
+- [ ] If the prior session used power-isolated exit or left `power_isolated_exit.marker` in the per-user EAST state directory, do not delete the marker or rely on automatic continuity. Recover physical machine zero before testing.
 - [ ] Confirm the physical E-stop and door/interlock stop the ODrive independently of software.
 - [ ] Remove the AFO for the initial empty-machine check; clear the full +/-15 degree envelope.
 
@@ -53,6 +54,7 @@ Use this checklist for the first non-clinical bench verification of version `1.4
 - [ ] During a low-speed move, press Stop. Confirm immediate idle and no automatic machine-zero return.
 - [ ] Repeat the stop check with Escape and, where controlled, the physical E-stop/interlock.
 - [ ] Perform a clean manual disconnect and clean app close. Confirm a clean checkpoint is written only after confirmed idle and fresh error-free feedback.
+- [ ] If ordinary Quit is blocked by unconfirmed idle/cleanup, first engage the physical E-stop, switch off/isolate motor power, and confirm isolation before selecting `Exit After Motor Power Is Isolated`. This acknowledgement does not electronically prove idle; preserve partial results and recover machine zero on the next launch.
 - [ ] Restart/reconnect and confirm normal movement remains blocked because automatic continuity is intentionally disabled pending ODrive uptime-unit verification.
 
 ## Speed verification run

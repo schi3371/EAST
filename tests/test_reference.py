@@ -227,6 +227,20 @@ class ReferenceTests(unittest.TestCase):
         coordinator.release(token)
         self.assertEqual(coordinator.active_token, replacement)
 
+    def test_shutdown_latch_blocks_motion_even_after_idle_confirmation(self):
+        coordinator = MotionCoordinator()
+        token = coordinator.acquire("test")
+        coordinator.begin_shutdown()
+        coordinator.confirm_motor_idle()
+        coordinator.release(token)
+        self.assertTrue(coordinator.shutting_down)
+        with self.assertRaises(MotionConflictError):
+            coordinator.acquire("manual")
+        with self.assertRaises(MotionConflictError):
+            coordinator.reserve_observation("calibration")
+        with self.assertRaises(MotionConflictError):
+            coordinator.submit_command(token, lambda: None)
+
     def test_stop_latches_during_inflight_command_and_blocks_later_targets(self):
         coordinator = MotionCoordinator()
         token = coordinator.acquire("test")
@@ -507,6 +521,23 @@ class ReferenceTests(unittest.TestCase):
         )
         self.assertTrue(valid, reason)
         self.assertEqual(mapping.neutral_position_turns, 12.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = AtomicStateStore(Path(directory))
+            self.assertFalse(store.unsafe_exit_present())
+            store.mark_unsafe_exit()
+            self.assertTrue(store.unsafe_exit_present())
+            valid, reason, restored = evaluate_continuity(
+                checkpoint, snapshot(uptime=51.0), prior, enabled,
+                now_wall_s=base_wall + 1.0,
+                reference_record=reference_record(prior),
+                unsafe_exit=store.unsafe_exit_present(),
+            )
+            self.assertFalse(valid)
+            self.assertIsNone(restored)
+            self.assertIn("physical recovery", reason)
+            store.clear_unsafe_exit_after_recovery()
+            self.assertFalse(store.unsafe_exit_present())
 
         valid, reason, _ = evaluate_continuity(
             checkpoint,
