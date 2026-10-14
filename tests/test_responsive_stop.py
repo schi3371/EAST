@@ -14,13 +14,14 @@ from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from east_core import (CSV_COLUMNS, ROTARY_RUN_COLUMNS, load_tester_config,
+from east_core import (CSV_COLUMNS, ROTARY_RUN_COLUMNS, MOTOR_TIMING_COLUMNS, load_tester_config,
                        reconcile_run_outcome, write_json_atomic)
 from east_odrive import ODriveAdapter
 from east_reference import (AtomicStateStore, FeedbackAcquisitionTimeout, FeedbackError,
                             IdleFeedbackRetry, MotionConflictError, MotionCoordinator,
                             MotionState, ReferenceConfidence)
 from east_runtime import CheckpointWriter
+from east_execution import AcquisitionLoop, Lifecycle, FeedbackMonitor
 from test_odrive_adapter import Device
 from test_idle_feedback_retry import sample
 from test_strain_sequence import TestStopped
@@ -33,11 +34,11 @@ def method(name):
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MyInterface")
     function = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
-    namespace = dict(threading=threading, time=time, queue=queue, datetime=datetime,
+    namespace = dict(FeedbackMonitor=FeedbackMonitor, AcquisitionLoop=AcquisitionLoop, Lifecycle=Lifecycle, threading=threading, time=time, queue=queue, datetime=datetime,
                      Path=Path, write_json_atomic=write_json_atomic, os=os, csv=csv,
                      RED="red", AMBER="amber", GREEN="green",
                      APP_VERSION="test", ReferenceConfidence=ReferenceConfidence,
-                     CSV_COLUMNS=CSV_COLUMNS, ROTARY_RUN_COLUMNS=ROTARY_RUN_COLUMNS,
+                     CSV_COLUMNS=CSV_COLUMNS, ROTARY_RUN_COLUMNS=ROTARY_RUN_COLUMNS, MOTOR_TIMING_COLUMNS=MOTOR_TIMING_COLUMNS,
                      FeedbackAcquisitionTimeout=FeedbackAcquisitionTimeout,
                      FeedbackError=FeedbackError, IdleFeedbackRetry=IdleFeedbackRetry,
                      MotionState=MotionState, TestStopped=TestStopped,
@@ -48,6 +49,14 @@ def method(name):
 
 
 def bind(app, *names):
+    # New explicit session domains; fixtures must not fabricate them via Mock.
+    for name, value in {
+        "engine": SimpleNamespace(busy=None, closing=False, close=Mock(return_value=True), cancel_current=Mock(), transition=Mock(), record=Mock()),
+        "transport_owner": None, "csv_recorder": None,
+        "ui_timing": {"drains": 0, "maximum_drain_s": 0.0, "maximum_gap_s": 0.0},
+        "last_ui_drain": time.monotonic(),
+    }.items():
+        if not hasattr(app, name): setattr(app, name, value)
     for name in names:
         setattr(app, name, MethodType(method(name), app))
 
@@ -783,6 +792,8 @@ class GuiWorkerTests(unittest.TestCase):
                 rotary_calibration=None, rotary_sensor=Mock(), voltage_ratio_input=None,
                 process_lock=Mock(), ui_message_queue=queue.Queue(), odrive_controller=object(),
             )
+            app.engine = SimpleNamespace(close=Mock(return_value=True))
+            app.transport_owner = None
             worker_method = method("_shutdown_cleanup_worker")
             persist = Mock(return_value=True)
             worker_method.__globals__["persist_idle_continuity_checkpoint"] = persist

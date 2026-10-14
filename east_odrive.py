@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from east_execution import transported
 from east_reference import FeedbackError, FeedbackSnapshot, HardwareFingerprint, utc_now_iso
 
 
@@ -54,12 +55,16 @@ class IdleResult:
     active_errors: Optional[int]
     current_state: Optional[int]
     detail: str
+    observed_at: Optional[str] = None
+    observed_monotonic_s: Optional[float] = None
+    observation_started_monotonic_s: Optional[float] = None
 
 
 class ODriveAdapter:
     """Thread-safe adapter; all fibre traffic passes through one re-entrant lock."""
 
-    def __init__(self, device: Any, axis_number: int, idle_state: int, closed_loop_state: int):
+    def __init__(self, device: Any, axis_number: int, idle_state: int, closed_loop_state: int, transport=None):
+        self.transport = transport
         self.device = device
         self.axis_number = int(axis_number)
         self.axis = getattr(device, f"axis{self.axis_number}")
@@ -81,11 +86,14 @@ class ODriveAdapter:
         finally:
             self.io_lock.release()
 
+    @transported()
     def snapshot(
         self,
         include_phase: bool = False,
         max_capture_duration_s: Optional[float] = None,
         lock_timeout_s: Optional[float] = None,
+        *,
+        include_uptime: bool = True,
     ) -> FeedbackSnapshot:
         capture_started = time.monotonic()
         wait_s = lock_timeout_s if lock_timeout_s is not None else max_capture_duration_s
@@ -112,8 +120,8 @@ class ODriveAdapter:
             velocity_finished = brackets["velocity"][1]
             active_errors = int(timed("active_errors", lambda: self.axis.active_errors))
             current_state = int(timed("current_state", lambda: self.axis.current_state))
-            disarm_reason = int(timed("disarm_reason", lambda: _read_path(self.axis, "disarm_reason", 0)) or 0)
-            uptime_value = timed("uptime", lambda: _read_path(self.device, "system_stats.uptime"))
+            disarm_reason = int(timed("disarm_reason", lambda: getattr(self.axis, "disarm_reason", 0)) or 0)
+            uptime_value = timed("uptime", lambda: _read_path(self.device, "system_stats.uptime")) if include_uptime else None
             uptime = None if uptime_value is None else _finite_float(uptime_value, "ODrive uptime")
             raw_phase = None
             if include_phase:
@@ -146,6 +154,7 @@ class ODriveAdapter:
         snapshot.validate(max_capture_duration_s=max_capture_duration_s)
         return snapshot
 
+    @transported()
     def validate_motion_capabilities(
         self,
         expected_mapper_scale: float,
@@ -207,6 +216,7 @@ class ODriveAdapter:
             "required_pos_vel_mapper_scale": expected,
         }
 
+    @transported()
     def fingerprint(self) -> HardwareFingerprint:
         """Read identity and frame-relevant configuration without changing hardware."""
         with self._locked_io():
@@ -241,6 +251,7 @@ class ODriveAdapter:
             }
         return HardwareFingerprint.build(serial, self.axis_number, firmware, details)
 
+    @transported()
     def read_only_report(self, include_phase: bool = True) -> Dict[str, Any]:
         snapshot = self.snapshot(include_phase=include_phase)
         fingerprint = self.fingerprint()
@@ -294,6 +305,7 @@ class ODriveAdapter:
             }
         return _json_safe_diagnostic(report)
 
+    @transported(motion=True, priority=5)
     def configure_trajectory(
         self,
         velocity_turns_s: float,
@@ -317,6 +329,7 @@ class ODriveAdapter:
             self.axis.trap_traj.config.decel_limit = acceleration
             self.axis.controller.config.vel_limit = controller_limit
 
+    @transported(motion=True, priority=5)
     def command_position(self, target_turns: float, cancelled=lambda: False) -> None:
         target = _finite_float(target_turns, "target position")
         with self._locked_io():
@@ -340,6 +353,7 @@ class ODriveAdapter:
         )
         return self.wait_for_state(self.closed_loop_state, cancelled, timeout_s)
 
+    @transported(motion=True, priority=5)
     def request_closed_loop_holding_current(
         self,
         cancelled=lambda: False,
@@ -387,6 +401,7 @@ class ODriveAdapter:
             f"ODrive did not enter state {int(expected_state)} within {timeout_s:g} seconds"
         )
 
+    @transported(priority=0)
     def request_idle(self, timeout_s: float = 1.0) -> IdleResult:
         lock_started = time.monotonic()
         deadline = lock_started + timeout_s
@@ -411,31 +426,28 @@ class ODriveAdapter:
         # its result after it returns.
         if time.monotonic() >= deadline:
             return IdleResult(True, False, None, None, "idle transport write exceeded deadline; idle unconfirmed")
-        last: Optional[FeedbackSnapshot] = None
+        last_state = last_errors = None
+        observation_started = None
         try:
             while time.monotonic() < deadline:
-                last = self.snapshot(lock_timeout_s=max(0.0, deadline - time.monotonic()))
-                if time.monotonic() >= deadline:
+                with self._locked_io(timeout_s=max(0.0, deadline-time.monotonic())):
+                    observation_started = time.monotonic()
+                    last_errors = int(self.axis.active_errors)
+                    last_state = int(self.axis.current_state)
+                    observed = time.monotonic()
+                    observed_at = utc_now_iso()
+                if observed >= deadline:
                     break
-                if last.current_state == self.idle_state:
-                    return IdleResult(
-                        True,
-                        True,
-                        last.active_errors,
-                        last.current_state,
-                        "idle confirmed",
-                    )
-                time.sleep(0.02)
+                if last_state == self.idle_state:
+                    return IdleResult(True, True, last_errors, last_state, "idle confirmed",
+                                      observed_at, observed, observation_started)
+                time.sleep(.02)
         except Exception as exc:
-            return IdleResult(True, False, None, None, f"idle confirmation failed: {exc}")
-        return IdleResult(
-            True,
-            False,
-            last.active_errors if last else None,
-            last.current_state if last else None,
-            "idle request sent but idle was not confirmed",
-        )
+            return IdleResult(True, False, last_errors, last_state, f"idle confirmation failed: {exc}")
+        return IdleResult(True, False, last_errors, last_state,
+                          "idle request sent but idle was not confirmed")
 
+    @transported()
     def configure_watchdog(self, enabled: bool, timeout_s: float) -> None:
         """Configure the optional watchdog; callers must own its feed lifecycle."""
         timeout = _finite_float(timeout_s, "watchdog timeout")
@@ -445,6 +457,7 @@ class ODriveAdapter:
             self.axis.config.watchdog_timeout = timeout
             self.axis.config.enable_watchdog = bool(enabled)
 
+    @transported()
     def feed_watchdog(self) -> None:
         with self._locked_io():
             self.axis.watchdog_feed()

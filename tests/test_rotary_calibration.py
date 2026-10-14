@@ -247,11 +247,15 @@ class RotaryConnectionUiTests(unittest.TestCase):
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
         window = namespace["RotaryCalibrationWindow"].__new__(namespace["RotaryCalibrationWindow"])
         window.closed, window.closing = False, False
+        window.persistence_busy = False
+        window.pending_capture_cleanup = None
         window.positioning_reference = None
         window._motor_frame = Mock(return_value="test-frame")
         window.sensor, window.latest, window.capture = None, None, None
         window.window, window.status, window.live_label = Mock(), Mock(), Mock()
         window.app = Mock()
+        window.app.engine.busy = None
+        window.app._set_widget_state.side_effect = lambda widget, state: widget.configure(state=state)
         window._controls, window._record_sample, window.cancel_capture = Mock(), Mock(), Mock()
         reader = SimpleNamespace(events=queue.Queue(), timed_out=False, stop=threading.Event(),
             started_monotonic=time.monotonic(), CONNECT_TIMEOUT_S=8,

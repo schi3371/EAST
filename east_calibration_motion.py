@@ -37,8 +37,6 @@ class CalibrationPositioningReference:
         operator, fixture = app.operator_input.get().strip(), app.fixture_id_input.get().strip()
         if not operator or not fixture:
             raise ValueError("Enter Operator ID and Fixture ID")
-        app._validate_live_motion_config()
-        app._revalidate_hardware_identity()
         feedback = app.get_feedback()
         cls.stationary(app, feedback)
         angle = finite_number(angle, "Current positioning angle")
@@ -68,8 +66,10 @@ class CalibrationPositioningReference:
         if not self.active or app.odrive_adapter is not self.connection:
             self.active = False
             raise ValueError("Reconnect, then confirm the current calibration position")
-        if (app.fixture_id_input.get().strip() != self.fixture_id
-                or app.operator_input.get().strip() != self.operator_id
+        context = (app.operator_context if threading.current_thread() is not threading.main_thread()
+                   else {"fixture": app.fixture_id_input.get().strip(), "operator": app.operator_input.get().strip()})
+        if (context["fixture"] != self.fixture_id
+                or context["operator"] != self.operator_id
                 or app.system_config["motion"]["afo_degrees_per_odrive_turn"] != self.factor
                 or app.system_config["motion"]["maximum_afo_angle_deg"] != self.maximum_angle):
             self.active = False

@@ -2,7 +2,7 @@ import ast
 import unittest
 from pathlib import Path
 
-from east_core import CSV_COLUMNS, ROTARY_RUN_COLUMNS
+from east_core import CSV_COLUMNS, ROTARY_RUN_COLUMNS, MOTOR_TIMING_COLUMNS
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -64,7 +64,7 @@ class GuiContractTests(unittest.TestCase):
             and isinstance(node.value, ast.List)
         ]
         self.assertEqual(len(main_rows), 1)
-        self.assertEqual(len(main_rows[0].elts), len(CSV_COLUMNS) + len(ROTARY_RUN_COLUMNS))
+        self.assertEqual(len(main_rows[0].elts), len(CSV_COLUMNS) + len(ROTARY_RUN_COLUMNS) + len(MOTOR_TIMING_COLUMNS))
 
         diagnostic_tree = ast.parse(
             (PROJECT_DIR / "Testing Scripts" / "afo-strain-test-script.py").read_text(
@@ -100,7 +100,7 @@ class GuiContractTests(unittest.TestCase):
             node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
         }
         start_source = ast.get_source_segment(source, functions["start_strain_test"])
-        set_zero_source = ast.get_source_segment(source, functions["set_machine_zero"])
+        set_zero_source = ast.get_source_segment(source, functions["_set_machine_zero_worker"])
         return_source = ast.get_source_segment(source, functions["return_to_machine_zero"])
         recovery_source = ast.get_source_segment(source, functions["recovery_jog"])
         acknowledgement_source = ast.get_source_segment(
@@ -121,7 +121,7 @@ class GuiContractTests(unittest.TestCase):
         self.assertIn("invalidate_empty_machine_tare", recovery_source)
         self.assertIn("recovery_session_acknowledged", acknowledgement_source)
         self.assertIn(
-            'state="normal" if connected and idle_ui else "disabled"', refresh_source
+            "self._set_widget_state(self.reference_action_button, 'normal' if connected and idle_ui else 'disabled')", refresh_source
         )
         self.assertIn("Tare Empty Machine", source)
         self.assertIn("Machine zero: SETUP REQUIRED", source)

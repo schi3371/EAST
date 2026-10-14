@@ -1,5 +1,6 @@
 """Exercise late-read handling without a GUI, USB devices or motor commands."""
 import ast
+from east_execution import FeedbackMonitor
 import copy
 from dataclasses import replace
 from pathlib import Path
@@ -34,7 +35,7 @@ def gui_method(name):
     tree = ast.parse((ROOT/'Ortho-Sim.py').read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'MyInterface')
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    ns = dict(time=time, IdleFeedbackRetry=IdleFeedbackRetry,
+    ns = dict(FeedbackMonitor=FeedbackMonitor, time=time, IdleFeedbackRetry=IdleFeedbackRetry,
               FeedbackAcquisitionTimeout=FeedbackAcquisitionTimeout, FeedbackError=FeedbackError,
               MotionConflictError=MotionConflictError, MotionState=MotionState,
               AMBER='amber', GREEN='green', RED='red')

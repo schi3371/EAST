@@ -69,6 +69,14 @@ ROTARY_RUN_COLUMNS = [
 ]
 
 
+MOTOR_TIMING_COLUMNS = [
+    "ODrive Position Acquisition Start (s)", "ODrive Position Acquisition End (s)",
+    "ODrive Velocity Acquisition Start (s)", "ODrive Velocity Acquisition End (s)",
+    "ODrive Position Age (s)", "ODrive Snapshot Acquisition Start (s)",
+    "ODrive Snapshot Duration (s)", "ODrive Transport Queue Wait (s)", "ODrive IO Lock Wait (s)",
+]
+
+
 @dataclass(frozen=True)
 class TestParameters:
     """A validated snapshot of all operator-entered values for one test run."""

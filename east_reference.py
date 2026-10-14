@@ -117,6 +117,7 @@ class FeedbackSnapshot:
     position_finished_monotonic_s: Optional[float] = None
     velocity_started_monotonic_s: Optional[float] = None
     velocity_finished_monotonic_s: Optional[float] = None
+    transport_queue_wait_s: Optional[float] = None
     lock_wait_s: Optional[float] = None
     property_brackets_monotonic_s: Optional[Dict[str, Tuple[float, float]]] = None
 
@@ -624,7 +625,9 @@ class MotionCoordinator:
             return self._owner_token
 
     def acquire(self, owner: str) -> MotionToken:
-        with self._command_gate:
+        if not self._command_gate.acquire(blocking=False):
+            raise MotionConflictError("A command is still dispatching; wait for the owning worker")
+        try:
             with self._lock:
                 if self._owner_token is not None:
                     raise MotionConflictError(
@@ -638,10 +641,14 @@ class MotionCoordinator:
                 token = MotionToken(owner, self._generation)
                 self._owner_token = token
                 return token
+        finally:
+            self._command_gate.release()
 
     def reserve_observation(self, owner: str) -> MotionToken:
         """Block commands for passive measurement without changing stop/idle state."""
-        with self._command_gate:
+        if not self._command_gate.acquire(blocking=False):
+            raise MotionConflictError("A command is still dispatching; wait for the owning worker")
+        try:
             with self._lock:
                 if self._shutdown:
                     raise MotionConflictError("Observation blocked during shutdown")
@@ -651,6 +658,8 @@ class MotionCoordinator:
                 token = MotionToken(owner, self._generation, read_only=True)
                 self._owner_token = token
                 return token
+        finally:
+            self._command_gate.release()
 
     def request_stop(self) -> int:
         # Latch without waiting for a transport call already inside the command

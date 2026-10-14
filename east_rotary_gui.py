@@ -11,6 +11,7 @@ import customtkinter as ctk
 
 from east_calibration_motion import CalibrationPositioningReference
 from east_core import write_json_atomic
+from east_runtime import CSVRecorder
 from east_rotary_calibration import (
     INPUT_MODES, SAMPLE_FIELDS, POINT_FIELDS, RawMotorCaptureGuard, SensorOnlyCaptureGuard,
     finite_number, reading_valid, summarise_hold, fit_calibration, write_table,
@@ -28,6 +29,8 @@ class RotaryCalibrationWindow:
         self.sensor = None
         self.latest = None
         self.capture = None
+        self.persistence_busy = False
+        self.pending_capture_cleanup = None
         self.points = []
         self.session_dir = None
         self.session_metadata = None
@@ -196,30 +199,30 @@ class RotaryCalibrationWindow:
         self._updating_controls = True
         self._controls_pending = False
         try:
-            busy = self.capture is not None
+            busy = self.capture is not None or self.persistence_busy or (self.app is not None and self.app.engine.busy is not None)
             moving = self.app is not None and self.app.motion_coordinator.owner is not None
             active = self.reader is not None
             for widget in (self.serial, self.mode_menu):
-                widget.configure(state="disabled" if active or self.points or getattr(self, "_shared_sensor", None) else "normal")
+                self.app._set_widget_state(widget, 'disabled' if active or self.points or getattr(self, '_shared_sensor', None) else 'normal')
             for widget in (self.angle, self.repeat, self.duration, self.role_menu, self.approach_menu, self.ack):
-                widget.configure(state="disabled" if busy else "normal")
+                self.app._set_widget_state(widget, 'disabled' if busy else 'normal')
             for widget in (self.instrument, self.resolution, self.supply):
-                widget.configure(state="disabled" if busy or self.session_dir else "normal")
+                self.app._set_widget_state(widget, 'disabled' if busy or self.session_dir else 'normal')
             if hasattr(self, "capture_mode_menu"):
-                self.capture_mode_menu.configure(state="disabled" if busy else "normal")
-            self.connect_button.configure(state="normal" if not active and not self.preview else "disabled")
-            self.disconnect_button.configure(state="normal" if active and not moving else "disabled")
-            self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
-            self.cancel_button.configure(state="normal" if busy else "disabled")
-            self.fit_button.configure(state="normal" if self.points and not busy else "disabled")
-            self.new_button.configure(state="disabled" if busy or moving else "normal")
+                self.app._set_widget_state(self.capture_mode_menu, 'disabled' if busy else 'normal')
+            self.app._set_widget_state(self.connect_button, 'normal' if not active and (not self.preview) else 'disabled')
+            self.app._set_widget_state(self.disconnect_button, 'normal' if active and (not moving) else 'disabled')
+            self.app._set_widget_state(self.capture_button, 'normal' if self.sensor and (not busy) and (not self.preview) else 'disabled')
+            self.app._set_widget_state(self.cancel_button, 'normal' if busy else 'disabled')
+            self.app._set_widget_state(self.fit_button, 'normal' if self.points and (not busy) else 'disabled')
+            self.app._set_widget_state(self.new_button, 'disabled' if busy or moving else 'normal')
             if hasattr(self, "enable_motion_button"):
                 ready = bool(self.positioning_reference and self.positioning_reference.active)
                 for widget in (self.positioning_angle, self.motion_ack, self.step, self.step_units_menu,
                                self.reconnect_motor_button, self.enable_motion_button):
-                    widget.configure(state="disabled" if busy or moving or self.preview else "normal")
+                    self.app._set_widget_state(widget, 'disabled' if busy or moving or self.preview else 'normal')
                 for widget in (self.left_button, self.right_button):
-                    widget.configure(state="normal" if ready and not busy and not moving and not self.preview else "disabled")
+                    self.app._set_widget_state(widget, 'normal' if ready and (not busy) and (not moving) and (not self.preview) else 'disabled')
         finally:
             self._updating_controls = False
             if self._controls_pending:
@@ -279,9 +282,9 @@ class RotaryCalibrationWindow:
                 "input_mode": self.sensor["input_mode"]}
 
     def start_capture(self):
-        guard = None
-        handle = None
         try:
+            if self.persistence_busy or self.app.engine.busy is not None:
+                raise ValueError("Wait for calibration/hardware persistence")
             if self.capture or not self.sensor or not self.latest or time.monotonic() - self.latest[0] > 1:
                 raise ValueError("Wait for fresh connected sensor readings")
             if not self.acknowledged.get():
@@ -305,7 +308,27 @@ class RotaryCalibrationWindow:
             capture_mode = self.capture_mode.get()
             if capture_mode not in ("Sensor + motor", "Sensor only"):
                 raise ValueError("Select a supported capture mode")
+            role, approach = self.role.get(), self.approach.get()
+            self.persistence_busy = True
+            self.status.configure(text="Preparing calibration recording...")
+            def prepare():
+                self._prepare_capture(context, motor_frame, capture_mode, instrument, resolution,
+                                      supply, angle, repeat, duration, role, approach)
+            if not self.app._submit_lifecycle("calibration recording setup", prepare):
+                self.persistence_busy = False
+            self._controls()
+        except Exception as exc:
+            self.status.configure(text="Capture blocked: " + str(exc))
+
+    def _prepare_capture(self, context, motor_frame, capture_mode, instrument, resolution,
+                         supply, angle, repeat, duration, role, approach):
+        guard = None
+        recorder = None
+        try:
             guard = SensorOnlyCaptureGuard(self.app) if capture_mode == "Sensor only" else RawMotorCaptureGuard(self.app)
+            if capture_mode == "Sensor + motor":
+                self.app._validate_live_motion_config()
+                self.app._revalidate_hardware_identity()
             if self.session_dir is None:
                 root = Path(self.app.system_config["logging"]["output_directory"])
                 if not root.is_absolute():
@@ -330,31 +353,46 @@ class RotaryCalibrationWindow:
                 write_json_atomic(self.session_dir / "session_metadata.json", self.session_metadata)
             raw_path = self.session_dir / "raw_samples.csv"
             write_json_atomic(self.session_dir / "calibration_motion_events.json", {"events": self.positioning_events})
-            new_file = not raw_path.exists()
-            handle = raw_path.open("a", newline="", encoding="utf-8")
-            writer = csv.DictWriter(handle, fieldnames=SAMPLE_FIELDS, extrasaction="ignore")
-            if new_file:
-                writer.writeheader()
+            if not raw_path.exists():
+                with raw_path.open("x", newline="", encoding="utf-8") as handle:
+                    csv.writer(handle).writerow(SAMPLE_FIELDS)
+            recorder = CSVRecorder(raw_path, 100, lambda exc: None, max_pending_rows=8192)
+            recorder.start()
             mode = self.sensor["input_mode"]
-            metadata = {"point_id": len(self.points) + 1, "role": self.role.get(),
-                        "reference_angle_deg": angle, "repeat": repeat, "approach": self.approach.get(),
+            metadata = {"point_id": len(self.points) + 1, "role": role,
+                        "reference_angle_deg": angle, "repeat": repeat, "approach": approach,
                         "input_mode": mode, "unit": "V/V" if mode == "Voltage ratio" else "V",
                         "capture_mode": capture_mode,
                         "motor_reference_id": getattr(guard, "reference_id", None),
                         "motor_coordinate_frame": motor_frame,
                         "machine_zero_verified": bool(self.app.reference_manager.verified),
                         "positioning_reference_basis": "operator_confirmed_calibration_only" if self.positioning_reference else "none"}
-            self.capture = {"guard": guard, "handle": handle, "writer": writer, "samples": [],
-                            "metadata": metadata, "start": time.monotonic(), "duration": duration}
-            self.acknowledged.set(False)
-            self.app._refresh_motion_controls()
-            self._controls()
+            capture = {"guard": guard, "recorder": recorder, "samples": [],
+                       "metadata": metadata, "start": time.monotonic(), "duration": duration}
+            self.app.ui_message_queue.put(("calibration_prepared", self, capture, None))
         except Exception as exc:
-            if handle:
-                handle.close()
+            if recorder:
+                try: recorder.finish(1)
+                except Exception: pass
             if guard:
-                guard.close()
-            self.status.configure(text="Capture blocked: " + str(exc))
+                if recorder is not None and recorder.thread.is_alive():
+                    self.pending_capture_cleanup = {"guard":guard,"recorder":recorder}
+                else:
+                    guard.close()
+            self.app.ui_message_queue.put(("calibration_prepared", self, None, str(exc)))
+            raise
+
+    def _capture_ready(self, capture, error):
+        self.persistence_busy = False
+        if error:
+            self.status.configure(text="Capture blocked: " + error)
+        else:
+            self.capture = capture
+            self.acknowledged.set(False)
+            if self.closing:
+                self.cancel_capture("Window closed during recording setup")
+        self.app._refresh_motion_controls()
+        self._controls()
 
     def _record_sample(self, sample):
         capture = self.capture
@@ -377,8 +415,7 @@ class RotaryCalibrationWindow:
                    if capture["metadata"]["capture_mode"] == "Sensor only" else ("stationary_raw_turns" if feedback else "invalid"),
                "hub_serial": self.sensor["hub_serial"],
                "measured_supply_v": self.session_metadata["measured_supply_v"]}
-        capture["writer"].writerow(row)
-        capture["handle"].flush()
+        capture["recorder"].append([row.get(name) for name in SAMPLE_FIELDS])
         capture["samples"].append(row)
         if feedback_error:
             raise feedback_error
@@ -393,7 +430,17 @@ class RotaryCalibrationWindow:
         capture, self.capture = self.capture, None
         if not capture:
             return
+        self.persistence_busy = True
+        self.status.configure(text="Saving calibration point...")
+        # The capture guard retains observation ownership until durability finishes.
+        if not self.app._submit_lifecycle("calibration point finalization", lambda: self._save_capture(capture, failure)):
+            self.capture = capture
+            self.persistence_busy = False
+
+    def _save_capture(self, capture, failure):
+        message = None
         try:
+            capture["recorder"].finish(timeout_s=3.0)
             point = summarise_hold(capture["samples"], capture["metadata"], failure=failure)
             self.points.append(point)
             write_table(self.session_dir / "points.csv", POINT_FIELDS, self.points)
@@ -401,21 +448,28 @@ class RotaryCalibrationWindow:
             message = (f"Point {point['point_id']}: {point['samples']} samples. "
                        + (("Recorded sensor only; motor turns excluded from conversion fit." if point.get("capture_mode") == "Sensor only"
                            else "Recorded; ready for next position.") if point["valid"] else "EXCLUDED: " + point["reason"]))
-            self.status.configure(text=message)
-            self.path_label.configure(text=str(self.session_dir))
-            self._show_points()
-            self.result.configure(text="Points changed. Fit again to update the provisional report.")
             # Do not leave an old report looking like it includes newer points.
             write_json_atomic(self.session_dir / "calibration_report.json", {
                 "status": "fit_required_points_changed", "metadata": self.session_metadata,
                 "point_count": len(self.points), "motor_control_changed": False})
         except Exception as exc:
-            self.status.configure(text="Saving point failed; raw file retained: " + str(exc))
+            message = "Saving point failed; raw file retained: " + str(exc)
         finally:
-            capture["handle"].close()
-            capture["guard"].close()
-            self.app._refresh_motion_controls()
-            self._controls()
+            if not capture["recorder"].thread.is_alive():
+                capture["guard"].close()
+            else:
+                message = (message or "Persistence blocked") + "; recorder and observation ownership retained."
+                self.pending_capture_cleanup = capture
+            self.app.ui_message_queue.put(("calibration_saved", self, message))
+
+    def _capture_saved(self, message):
+        self.persistence_busy = False
+        self.status.configure(text=message)
+        self.path_label.configure(text=str(self.session_dir))
+        self._show_points()
+        self.result.configure(text="Points changed. Fit again to update the provisional report.")
+        self.app._refresh_motion_controls()
+        self._controls()
 
     def _show_points(self):
         self.table.configure(state="normal")
@@ -429,6 +483,14 @@ class RotaryCalibrationWindow:
         self.table.configure(state="disabled")
 
     def fit(self):
+        if self.persistence_busy or self.capture:
+            return
+        self.persistence_busy = True
+        if not self.app._submit_lifecycle("calibration fit", self._fit_worker):
+            self.persistence_busy = False
+        self._controls()
+
+    def _fit_worker(self):
         try:
             model = fit_calibration(self.points)
             write_json_atomic(self.session_dir / "calibration_report.json", {
@@ -448,12 +510,12 @@ class RotaryCalibrationWindow:
             else:
                 message += model.get("motor_conversion_fit_error", "Motor conversion unavailable: insufficient paired raw-turn points.") + "\n"
             message += "No automatic acceptance or changes to EAST control/calibration. Assess protractor resolution."
-            self.result.configure(text=message)
+            self.app.ui_message_queue.put(("calibration_fit", self, message))
         except Exception as exc:
-            self.result.configure(text="Fit blocked: " + str(exc))
+            self.app.ui_message_queue.put(("calibration_fit", self, "Fit blocked: " + str(exc)))
 
     def new_session(self):
-        if self.capture or self.app is not None and self.app.motion_coordinator.owner is not None:
+        if self.persistence_busy or self.capture or self.app is not None and self.app.motion_coordinator.owner is not None:
             return
         self.suspend_positioning("New calibration session")
         self.positioning_reference = None
@@ -467,9 +529,13 @@ class RotaryCalibrationWindow:
     def _positioning_event(self, action, **details):
         event = {"timestamp": datetime.now().astimezone().isoformat(), "action": action, **details}
         self.positioning_events.append(event)
-        if self.session_dir is not None:
-            write_json_atomic(self.session_dir / "calibration_motion_events.json", {"events": self.positioning_events})
-        self.app.state_store.append_event("rotary_calibration_positioning", event)
+        path = self.session_dir / "calibration_motion_events.json" if self.session_dir is not None else None
+        events = list(self.positioning_events)
+        def persist():
+            if path is not None:
+                write_json_atomic(path, {"events": events})
+            self.app.state_store.append_event("rotary_calibration_positioning", event)
+        self.app._submit_lifecycle("calibration positioning audit", persist)
 
     def _motor_frame(self):
         app = self.app
@@ -488,7 +554,7 @@ class RotaryCalibrationWindow:
         if self.last_motor_uptime is not None and uptime is not None and uptime < self.last_motor_uptime:
             self.motor_epoch += 1
             self.cancel_capture("Controller uptime reset; motor coordinate frame changed")
-            app.reference_manager.invalidate("Controller reset detected during rotary calibration")
+            app.reference_manager.invalidate_local("Controller reset detected during rotary calibration")
             self.suspend_positioning("Controller reset detected")
         self.last_motor_uptime = uptime
         return f"connection-{app.odrive_connection_generation}-epoch-{self.motor_epoch}"
@@ -564,6 +630,12 @@ class RotaryCalibrationWindow:
                     self.reader = current.subscribe()
                     if hasattr(self, "mode"):
                         self.mode.set(current.mode)
+            pending = self.pending_capture_cleanup
+            if pending is not None and pending["recorder"].done.is_set() and not pending["recorder"].thread.is_alive():
+                # All I/O has exited. Releasing a passive observation cannot arm.
+                pending["guard"].close()
+                self.pending_capture_cleanup = None
+                self.status.configure(text="Failed calibration recording retired; raw files remain incomplete. Retry after checking storage.")
             self._motor_frame()
             self._update_positioning()
             self._controls()
@@ -637,7 +709,7 @@ class RotaryCalibrationWindow:
                 self.status.configure(text=f"Capturing stationary point: {elapsed:.1f} / {self.capture['duration']:g} s. Motor steps blocked.")
                 if elapsed >= self.capture["duration"]:
                     self._finish_capture()
-            if self.closing and self.reader is None:
+            if self.closing and self.reader is None and not self.persistence_busy and self.pending_capture_cleanup is None:
                 self.closed = True
                 self.window.destroy()
         except Exception as exc:

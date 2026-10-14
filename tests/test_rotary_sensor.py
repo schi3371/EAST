@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from east_core import CSV_COLUMNS, ROTARY_RUN_COLUMNS, load_tester_config
+from east_core import CSV_COLUMNS, ROTARY_RUN_COLUMNS, MOTOR_TIMING_COLUMNS, load_tester_config
 from east_rotary_sensor import RotaryCalibration, RotaryError, RotaryReader, RotarySensorService
 from test_strain_sequence import gui_method
 
@@ -356,6 +356,8 @@ class ConnectRetryTests(unittest.TestCase):
     def app(self):
         from east_reference import FeedbackSnapshot
         app=Mock()
+        app.csv_recorder=None
+        app.engine=SimpleNamespace(busy=None)
         app.system_config=load_tester_config()
         app.monitor_error=None
         app.feedback_retry_pending=False
@@ -387,6 +389,8 @@ class ConnectRetryTests(unittest.TestCase):
 
     def test_connect_retry_connects_all_devices_without_disconnecting_live_odrive(self):
         app=Mock()
+        app.csv_recorder=None
+        app.engine=SimpleNamespace(busy=None)
         for name in ("strain_thread","data_collection_thread","neutral_thread","manual_step_thread",
                      "continuous_thread","recovery_thread","stop_worker","disconnect_worker",
                      "cleanup_thread"): setattr(app,name,None)
@@ -397,7 +401,7 @@ class ConnectRetryTests(unittest.TestCase):
         app.startup_block_reason=None
         app.process_lock.held=True
         app._reuse_live_odrive_connection.return_value=True
-        gui_method("connect_system")(app)
+        gui_method("_connect_system_worker")(app)
         app.connect_rotary_sensor.assert_called_once()
         app._ensure_load_cell.assert_called_once()
         app.safe_idle_motor.assert_not_called()
@@ -408,6 +412,8 @@ class ConnectRetryTests(unittest.TestCase):
 class NormalGuiIntegrationTests(unittest.TestCase):
     def test_missing_rotary_blocks_start_before_motor_ownership_or_motion(self):
         app=Mock()
+        app.csv_recorder=None
+        app.engine=SimpleNamespace(busy=None)
         app.odrive_controller=object()
         app.reference_manager.verified=True
         app.reference_manager.angle_from_position.return_value=0
@@ -426,10 +432,16 @@ class NormalGuiIntegrationTests(unittest.TestCase):
 
     def test_joined_rows_identify_reused_samples_without_inventing_samples(self):
         app=Mock()
+        app.csv_recorder=None
+        app.engine=SimpleNamespace(busy=None)
         app.system_config=load_tester_config()
         app.empty_machine_tare=SimpleNamespace(offset_v_per_v=0)
         app.get_feedback.return_value=SimpleNamespace(position_turns=3,velocity_turns_s=0,
-            active_errors=0,captured_monotonic_s=time.monotonic())
+            active_errors=0,captured_monotonic_s=time.monotonic(),
+            position_started_monotonic_s=None, position_finished_monotonic_s=None,
+            velocity_started_monotonic_s=None, velocity_finished_monotonic_s=None,
+            capture_started_monotonic_s=None, capture_duration_s=None,
+            transport_queue_wait_s=None, lock_wait_s=None)
         app.reference_manager.angle_from_position.return_value=0
         params=SimpleNamespace(commanded_afo_speed_deg_s=5,commanded_afo_acceleration_deg_s2=100,
             min_angle_deg=10,max_angle_deg=10,cycles=3,file_prefix="test",operator="SC",afo_id="EMPTY",
@@ -453,7 +465,7 @@ class NormalGuiIntegrationTests(unittest.TestCase):
         method=gui_method("log_strain_data",datetime=datetime,time=time,plot_window_open=False)
         method(app,0.00001,1)
         method(app,0.00001,1)
-        names=CSV_COLUMNS+ROTARY_RUN_COLUMNS
+        names=CSV_COLUMNS+ROTARY_RUN_COLUMNS+MOTOR_TIMING_COLUMNS
         first,second=[dict(zip(names,row)) for row in app.strain_data_buffer]
         self.assertEqual(len(app.strain_data_buffer[0]),len(names))
         self.assertTrue(first["Rotary New Sample Since Previous Row"])
@@ -464,6 +476,8 @@ class NormalGuiIntegrationTests(unittest.TestCase):
 
     def test_rotary_failure_during_motion_uses_existing_idle_cleanup(self):
         app=Mock()
+        app.csv_recorder=None
+        app.engine=SimpleNamespace(busy=None)
         app.system_config=load_tester_config()
         app.run_motion_token="token"
         app.test_stop_event=threading.Event()

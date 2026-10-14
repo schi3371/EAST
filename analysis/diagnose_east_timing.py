@@ -81,28 +81,61 @@ def open_real(config, include_sensor):
 
 
 def run(config, duration_s, interval_s, real_hardware=False, include_sensor=False,
-        max_capture_s=None, sensor_recording=None):
-    device, sensor = open_real(config, include_sensor) if real_hardware else (
-        MockDevice(), MockSensor() if include_sensor else None)
-    adapter = ODriveAdapter(device, config["hardware"]["odrive_axis"] if real_hardware else 0,
-                            idle_state=1, closed_loop_state=8)
-    from east_runtime import CSVRecorder
-    recorder = None
+        max_capture_s=None, sensor_recording=None, rotary_recording=None):
+    if sensor_recording and not include_sensor:
+        raise ValueError("--sensor-recording requires --with-sensor")
+    sensor = recorder = rotary = rotary_stop = rotary_thread = hardware_lock = None
+    rotary_statistics = None
     recording_errors = []
-    if sensor_recording:
-        if not include_sensor:
-            raise ValueError("--sensor-recording requires --with-sensor")
-        with Path(sensor_recording).open("x", newline="", encoding="utf-8") as handle:
-            import csv
-            csv.writer(handle).writerow(["host_monotonic_s", "voltage_ratio", "mode"])
-        recorder = CSVRecorder(sensor_recording, 100, lambda exc: recording_errors.append(str(exc)))
-        recorder.start()
     durations = defaultdict(list)
     errors = []
     positions = []
-    next_read = time.monotonic()
-    deadline = next_read + duration_s
     try:
+        if real_hardware:
+            from east_reference import ProcessLock, runtime_state_directory
+            hardware_lock = ProcessLock(runtime_state_directory() / "hardware.lock")
+            hardware_lock.acquire()
+        device, sensor = open_real(config, include_sensor) if real_hardware else (
+            MockDevice(), MockSensor() if include_sensor else None)
+        adapter = ODriveAdapter(device, config["hardware"]["odrive_axis"] if real_hardware else 0,
+                                idle_state=1, closed_loop_state=8)
+        from east_runtime import CSVRecorder
+        if sensor_recording:
+            if not include_sensor:
+                raise ValueError("--sensor-recording requires --with-sensor")
+            with Path(sensor_recording).open("x", newline="", encoding="utf-8") as handle:
+                import csv
+                csv.writer(handle).writerow(["host_monotonic_s", "voltage_ratio", "mode"])
+            recorder = CSVRecorder(sensor_recording, 100, lambda exc: recording_errors.append(str(exc)))
+            recorder.start()
+        if rotary_recording:
+            from east_rotary_sensor import RotarySensorService, RotaryReader, RotaryRecording
+            import threading
+            rotary = RotarySensorService(config["rotary_sensor"], Path(__file__).resolve().parents[1])
+            if real_hardware:
+                rotary.connect()
+                deadline = time.monotonic() + 8
+                while rotary.reader.latest is None and not rotary.reader.error and time.monotonic() < deadline:
+                    time.sleep(.01)
+                if rotary.reader.latest is None:
+                    raise RuntimeError(rotary.reader.error or "Rotary channel delivered no samples")
+            else:
+                reader = RotaryReader(config["rotary_sensor"]["hub_serial"], "Voltage ratio")
+                reader.accepting = True
+                reader.metadata = {"input_mode":"Voltage ratio", "interval_ms":8, "hub_serial":750256}
+                rotary.reader = reader
+                rotary_stop = threading.Event()
+                def emit():
+                    while not rotary_stop.is_set():
+                        reader._sample(None, .39772982090527514)
+                        rotary_stop.wait(.008)
+                rotary_thread = threading.Thread(target=emit, name="diagnostic-simulated-rotary", daemon=True)
+                rotary_thread.start()
+            # Diagnostic recording preserves low-rate/out-of-range raw events.
+            # Normal test startup still uses the original strict measurement gate.
+            rotary.recording = RotaryRecording(rotary.reader, rotary.calibration, rotary_recording, time.monotonic())
+        next_read = time.monotonic()
+        deadline = next_read + duration_s
         while time.monotonic() < deadline:
             try:
                 snapshot = adapter.snapshot(max_capture_duration_s=max_capture_s)
@@ -118,17 +151,40 @@ def run(config, duration_s, interval_s, real_hardware=False, include_sensor=Fals
                         recorder.append((time.monotonic(), ratio, "REAL READ-ONLY" if real_hardware else "SIMULATED"))
                     durations["sensor_read_s"].append(time.monotonic() - started)
             except Exception as exc:
-                errors.append({"at_monotonic_s": time.monotonic(), "error": str(exc)})
+                rejected = getattr(exc, "snapshot", None)
+                if rejected is not None:
+                    durations["lock_wait_s"].append(rejected.lock_wait_s)
+                    durations["snapshot_s"].append(rejected.capture_duration_s)
+                    for name, (started, finished) in rejected.property_brackets_monotonic_s.items():
+                        durations[f"{name}_s"].append(finished-started)
+                errors.append({"at_monotonic_s":time.monotonic(),"error":str(exc),
+                               "rejected_snapshot":rejected.to_dict() if rejected is not None else None})
             next_read = max(next_read + interval_s, time.monotonic())
             time.sleep(max(0.0, min(next_read - time.monotonic(), deadline - time.monotonic())))
+    except Exception as exc:
+        errors.append({"phase":"setup/acquisition", "at_monotonic_s":time.monotonic(), "error":str(exc)})
     finally:
         if recorder:
-            recorder.finish()
+            try: recorder.finish()
+            except Exception as exc: recording_errors.append(str(exc))
+        if rotary_stop:
+            rotary_stop.set()
+            rotary_thread.join(1)
+        if rotary:
+            try: rotary_statistics = rotary.finish_recording()
+            except Exception as exc:
+                rotary_statistics = rotary.last_recording_statistics
+                recording_errors.append(str(exc))
+            try:
+                if real_hardware: rotary.shutdown()
+            except Exception as exc: recording_errors.append(str(exc))
         if sensor is not None:
             sensor.close()
+        if hardware_lock is not None:
+            hardware_lock.release()
     gaps = [later - earlier for earlier, later in zip(positions, positions[1:])]
     return {"mode": "REAL READ-ONLY" if real_hardware else "SIMULATED / NO HARDWARE",
-            "sensor_enabled": include_sensor, "sensor_recording_errors": recording_errors,
+            "rotary_recording_statistics": rotary_statistics, "sensor_enabled": include_sensor, "sensor_recording_errors": recording_errors,
             "capture_evaluation_limit_s": max_capture_s, "production_limits_changed": False, "requested_interval_s": interval_s,
             "sample_count": len(positions), "error_count": len(errors), "errors": errors,
             "actual_rate_hz": ((len(positions) - 1) / (positions[-1] - positions[0])
@@ -148,6 +204,8 @@ def main(argv=None):
                         help="Diagnostic evaluation only; does not modify production config")
     parser.add_argument("--sensor-recording", type=Path,
                         help="Bounded asynchronous Bridge CSV recording (original host timestamps)")
+    parser.add_argument("--rotary-recording", type=Path,
+                        help="Independent raw P3022 event CSV, using accepted profile; simulate unless --real-hardware")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if args.duration <= 0 or args.interval_ms <= 0 or (args.capture_limit_ms is not None and args.capture_limit_ms <= 0):
@@ -156,7 +214,7 @@ def main(argv=None):
         parser.error("duration and interval must be positive")
     result = run(load_tester_config(), args.duration, args.interval_ms / 1000.0,
                  args.real_hardware, args.with_sensor,
-                 args.capture_limit_ms / 1000 if args.capture_limit_ms else None, args.sensor_recording)
+                 args.capture_limit_ms / 1000 if args.capture_limit_ms else None, args.sensor_recording, args.rotary_recording)
     text = json.dumps(result, indent=2)
     if args.output:
         args.output.write_text(text + "\n", encoding="utf-8")
