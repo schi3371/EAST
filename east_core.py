@@ -58,6 +58,16 @@ CSV_COLUMNS = [
 ]
 
 
+ROTARY_RUN_COLUMNS = [
+    "Rotary Voltage Ratio (V/V)", "Measured Fixture Angle (deg)",
+    "Rotary Sample Timestamp ISO 8601", "Rotary Sample Host Monotonic Time (s)",
+    "Rotary Sample Age (s)", "Rotary Sample Index", "Rotary Connection ID",
+    "Rotary New Sample Since Previous Row", "Rotary Sample Valid",
+    "Rotary Sample Status", "Rotary Calibration ID", "Rotary Event Rate (Hz)",
+    "ODrive Feedback Host Monotonic Time (s)",
+]
+
+
 @dataclass(frozen=True)
 class TestParameters:
     """A validated snapshot of all operator-entered values for one test run."""
@@ -236,7 +246,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
 
     required_sections = {
         "hardware", "motion", "controller", "load_cell", "torque",
-        "acquisition", "logging", "reference", "test_presets",
+        "acquisition", "logging", "reference", "test_presets", "rotary_sensor",
     }
     missing = sorted(required_sections.difference(config))
     if missing:
@@ -269,6 +279,20 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         raise ValueError("lever_arm_m must be positive")
     if len(config["torque"]["force_angle_polynomial_deg"]) != 3:
         raise ValueError("force_angle_polynomial_deg must contain three coefficients")
+    rotary = config["rotary_sensor"]
+    for key in ("target_interval_ms", "stale_after_ms", "minimum_startup_samples", "minimum_event_rate_hz"):
+        value = float(rotary[key])
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"rotary_sensor.{key} must be finite and positive")
+    if (not isinstance(rotary["hub_serial"], int) or rotary["hub_serial"] <= 0
+            or rotary["hub_port"] != 0 or rotary["channel"] != 0
+            or rotary["input_mode"] != "Voltage ratio"):
+        raise ValueError("Rotary sensor requires an explicit HUB0007 serial, port/channel 0 and voltage-ratio mode")
+    if not math.isfinite(float(rotary["range_margin_deg"])) or rotary["range_margin_deg"] < 0:
+        raise ValueError("Rotary range margin must be finite and non-negative")
+    profile_path = Path(rotary["calibration_profile"])
+    if profile_path.is_absolute() or ".." in profile_path.parts:
+        raise ValueError("Rotary calibration profile must be a bundled relative path")
     reference = config["reference"]
     for key in (
         "feedback_poll_interval_ms", "feedback_stale_after_ms", "checkpoint_interval_ms",

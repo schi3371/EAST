@@ -4,6 +4,12 @@ EAST controls the motorised benchtop tester and records sagittal-plane AFO angle
 
 This repository is research software. The 2.055 AFO-degrees-per-ODrive-turn mechanical conversion is accepted. Load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those remaining checks are complete.
 
+## Rotary measurement integration — EAST 1.7.0
+
+The main Connect action now connects the rotary sensor alongside the ODrive and load-cell interface. Normal GUI tests require the accepted sensor calibration and fresh, valid sensor data. Measured fixture angle is displayed and logged alongside the existing motor-derived angle. The event-driven reader requests 8 ms (125 Hz), reports the actual rate, and records every delivered event in a separate rotary-sample CSV. The motor conversion, machine zero, tare and torque geometry calculation remain unchanged.
+
+See [rotary integration and Windows bench verification](docs/ROTARY_SENSOR_INTEGRATION.md). The bundled profile records the independently reported negative-angle rechecks without treating sensor-derived values as new fit references. Windows/hardware verification is pending.
+
 ## Hardware assumptions
 
 - ODrive S1 serial number `3943355F3231`, axis 0
@@ -27,7 +33,7 @@ The conversion uses the configured `afo_degrees_per_odrive_turn` value. `axis0.c
 
 The accepted conversion is 2.055 AFO degrees per ODrive turn. This value is used consistently for commanded motion, ODrive-derived angle, and ODrive-derived velocity.
 
-The CSV angle and converted velocity use this same accepted value. Comparing them with the command checks controller execution; an independent angular reference remains useful for end-to-end verification of physical AFO speed and ROM.
+The ODrive-derived CSV angle and converted velocity use this same accepted value; the new measured fixture angle uses the independent rotary calibration. Comparing them with the command checks controller execution; an independent angular reference remains useful for end-to-end verification of physical AFO speed and ROM.
 
 The current commanded-speed range is 0.1-20 deg/s. Acceleration remains an editable commanded parameter in the range 0.1-100 deg/s^2; no acceleration value is yet validated as a final protocol setting. A test is blocked unless the full commanded ROM provides at least 5 deg of calculated constant-speed travel:
 

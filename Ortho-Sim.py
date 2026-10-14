@@ -33,6 +33,7 @@ from odrive.enums import (
 
 from east_core import (
     CSV_COLUMNS,
+    ROTARY_RUN_COLUMNS,
     EmptyMachineTare,
     afo_acceleration_to_odrive_turns_s2,
     afo_degrees_to_odrive_turns,
@@ -55,6 +56,7 @@ from east_core import (
     write_json_atomic,
 )
 from east_odrive import ODriveAdapter
+from east_rotary_sensor import RotarySensorService, RotaryError
 from east_reference import (
     AtomicStateStore,
     FeedbackError,
@@ -86,7 +88,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.6.0-calibration-positioning"
+APP_VERSION = "1.7.0-rotary-measurement"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -133,6 +135,9 @@ class MyInterface:
         self.odrive_adapter = None
         self.hardware_fingerprint = None
         self.voltage_ratio_input = None
+        self.rotary_sensor = RotarySensorService(self.system_config["rotary_sensor"], resource_path("."))
+        self.last_rotary_logged_key = None
+        self.rotary_samples_file_name = None
         self.empty_machine_tare = None
         self.protocol_display_to_key = {
             "Custom": "custom",
@@ -325,8 +330,18 @@ class MyInterface:
         controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
 
+        connection_panel = ctk.CTkFrame(controls, fg_color="transparent")
+        connection_panel.grid(row=0, column=0, sticky="ew", padx=10)
+        connection_panel.grid_columnconfigure(0, weight=1)
+        self.rotary_status_label = ctk.CTkLabel(connection_panel,
+            text="Measured Fixture Angle: — | sensor disconnected", anchor="w", justify="left",
+            wraplength=390, text_color=AMBER, font=("Arial", 12, "bold"))
+        self.rotary_status_label.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        self.rotary_reconnect_button = ctk.CTkButton(connection_panel, text="Reconnect Sensor",
+            command=self.connect_rotary_sensor, width=110)
+        self.rotary_reconnect_button.grid(row=2, column=0, sticky="w", pady=(0, 6))
         self.status_label = ctk.CTkLabel(
-            controls,
+            connection_panel,
             text="DISCONNECTED",
             text_color=RED,
             font=("Arial", 13, "bold"),
@@ -1067,6 +1082,7 @@ class MyInterface:
             state=(
                 "normal"
                 if connected and verified and tare_ready and idle_ui and not self.manual_mode.get()
+                and self.rotary_sensor.measurement()["valid"]
                 else "disabled"
             )
         )
@@ -1511,6 +1527,68 @@ class MyInterface:
             "progress": self._mark_control_health,
         }
 
+    def connect_rotary_sensor(self):
+        if self.strain_test_active or self.motion_coordinator.owner is not None:
+            self.update_terminal("Sensor reconnect is blocked while a test/capture/movement is active.\n")
+            return
+        try:
+            self.rotary_sensor.connect()
+            serial = self.system_config["rotary_sensor"]["hub_serial"]
+            self.update_terminal(f"Connecting rotary sensor: HUB0007 {serial}, port 0, voltage ratio.\n")
+        except Exception as exc:
+            self.update_terminal(f"Rotary connection failed: {exc}\n")
+
+    def _poll_rotary_sensor(self):
+        reader = self.rotary_sensor.reader
+        if reader:
+            for _ in range(200):
+                try:
+                    kind, payload = reader.events.get_nowait()
+                except queue.Empty:
+                    break
+                if kind in ("progress", "error"):
+                    self.update_terminal(f"ROTARY SENSOR: {payload}\n")
+                elif kind == "connected":
+                    self.update_terminal(
+                        f"Rotary channel attached; requested {payload['requested_interval_ms']} ms, "
+                        f"configured {payload['interval_ms']} ms; waiting for sample-rate check.\n")
+        value = self.rotary_sensor.measurement()
+        if value["valid"]:
+            text = (f"Measured Fixture Angle: {value['angle_deg']:+.3f}°\n"
+                    f"Sensor ready | {value['achieved_rate_hz']:.1f} Hz | "
+                    f"age {value['sample_age_s']*1000:.1f} ms")
+        else:
+            text = "Measured Fixture Angle: unavailable\n"+value["reason"]
+        self.rotary_status_label.configure(text=text, text_color=GREEN if value["valid"] else AMBER)
+        self.rotary_reconnect_button.configure(state="disabled" if self.strain_test_active
+            or self.motion_coordinator.owner is not None else "normal")
+        if self.strain_test_active and not value["valid"] and not self.test_stop_event.is_set():
+            self.acquisition_error = "Rotary sensor: "+value["reason"]
+            self.test_stop_event.set()
+            self.safe_idle_motor(self.acquisition_error, token=self.run_motion_token)
+        self._refresh_motion_controls()
+
+    def _test_feedback(self):
+        self.rotary_sensor.measurement(require=True)
+        return self.get_feedback()
+
+    def _ensure_load_cell(self):
+        if self.voltage_ratio_input is not None:
+            try:
+                if self.voltage_ratio_input.getAttached():
+                    return self.voltage_ratio_input
+            except Exception:
+                pass
+            try:
+                self.voltage_ratio_input.close()
+            except Exception:
+                pass
+        self.voltage_ratio_input = self._open_load_cell()
+        serial = self.voltage_ratio_input.getDeviceSerialNumber()
+        if self.empty_machine_tare and serial != self.empty_machine_tare.phidget_serial_number:
+            self.invalidate_empty_machine_tare("connected load-cell interface changed")
+        return self.voltage_ratio_input
+
     def connect_system(self):
         active_threads = [
             getattr(self, name, None)
@@ -1655,6 +1733,13 @@ class MyInterface:
             self.update_terminal(f"Error connecting to ODrive: {exc}\n")
             self.set_status("ERROR", RED)
         finally:
+            # Sensor acquisition is independent of ODrive zero/reconnect recovery.
+            self.connect_rotary_sensor()
+            try:
+                self._ensure_load_cell()
+                self.update_terminal("Load-cell interface connected.\n")
+            except Exception as exc:
+                self.update_terminal(f"Load-cell connection failed: {exc}\n")
             self.update_reference_display()
 
     def disconnect_odrive(self):
@@ -1910,6 +1995,7 @@ class MyInterface:
         except queue.Empty:
             pass
 
+        self._poll_rotary_sensor()
         self.update_manual_position_display()
         try:
             self.master.after(50, self._drain_ui_queues)
@@ -2343,6 +2429,10 @@ class MyInterface:
                 
                 if self.rotary_calibration is not None:
                     self.rotary_calibration.shutdown()
+                self.rotary_sensor.shutdown()
+                if self.voltage_ratio_input is not None:
+                    self.voltage_ratio_input.close()
+                    self.voltage_ratio_input = None
 
                 # Close the plot window safely
                 self.close_plot_window()
@@ -2424,6 +2514,12 @@ class MyInterface:
                 "'Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}' before starting. "
                 "Do not redefine machine zero.\n"
             )
+            return
+
+        try:
+            self.rotary_sensor.measurement(require=True)
+        except RotaryError as exc:
+            self.update_terminal(f"Test blocked: rotary sensor {exc}\n")
             return
 
         if self.manual_mode.get():
@@ -2509,7 +2605,7 @@ class MyInterface:
             if snapshot.active_errors:
                 raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
-            self.voltage_ratio_input = self._open_load_cell()
+            self.voltage_ratio_input = self._ensure_load_cell()
             connected_phidget_serial = self.voltage_ratio_input.getDeviceSerialNumber()
             tare_valid, tare_reason = validate_empty_machine_tare(
                 self.empty_machine_tare,
@@ -2537,7 +2633,7 @@ class MyInterface:
             self.metadata_file_name = str(metadata_path)
             with open(self.strain_file_name, mode="x", newline="", encoding="utf-8") as file:
                 writer = csv.writer(file)
-                writer.writerow(CSV_COLUMNS)
+                writer.writerow(CSV_COLUMNS + ROTARY_RUN_COLUMNS)
 
             self.run_metadata = make_run_metadata(
                 parameters,
@@ -2548,7 +2644,14 @@ class MyInterface:
                 tare_metadata=self.empty_machine_tare.to_dict(),
                 preset_metadata=preset_metadata,
             )
+            self.run_metadata["schema_version"] = 3
             self.run_metadata["software"]["gui_version"] = APP_VERSION
+            self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
+            self.run_metadata["rotary_sensor"] = self.rotary_sensor.metadata()
+            self.run_metadata["rotary_sensor"]["raw_samples_file"] = Path(self.rotary_samples_file_name).name
+            self.run_metadata["rotary_sensor"]["join_method"] = "Latest delivered sample at load-cell read; age and sequence recorded; no interpolation"
+            self.run_metadata["torque_angle_source"] = "ODrive-derived AFO angle; existing geometry calculation unchanged"
+            self.run_metadata["plot_angle_source"] = "Measured Fixture Angle from calibrated rotary sensor"
             self.run_metadata["cycle_definition"] = (
                 "Cycle 0: startup to positive endpoint. Each numbered cycle: "
                 "positive to negative to positive endpoint, with both sweeps settled. "
@@ -2585,6 +2688,8 @@ class MyInterface:
             self.weight_filter = MovingAverageFilter(filter_window)
             self.torque_filter = MovingAverageFilter(filter_window)
             self.test_started_monotonic = time.monotonic()
+            self.last_rotary_logged_key = None
+            self.rotary_sensor.start_recording(self.rotary_samples_file_name, self.test_started_monotonic)
             self.data_collection_thread = threading.Thread(
                 target=self.continuous_strain_read, name="strain-acquisition"
             )
@@ -2601,6 +2706,15 @@ class MyInterface:
                 f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
         except Exception as exc:
+            # Cancel and idle before waiting for any recording cleanup.
+            self.test_stop_event.set()
+            self.safe_idle_motor("test initialization error", token=self.run_motion_token)
+            try:
+                statistics = self.rotary_sensor.finish_recording()
+                if self.run_metadata is not None:
+                    self.run_metadata["rotary_sensor"]["recording_statistics"] = statistics
+            except Exception as recording_error:
+                self.update_terminal(f"Rotary cleanup failed: {recording_error}\n")
             self.strain_test_active = False
             self.test_stop_event.set()
             token = self.run_motion_token
@@ -2707,7 +2821,7 @@ class MyInterface:
                     "Fixture is away from machine zero. Return to machine zero before taring."
                 )
 
-            device = self._open_load_cell()
+            device = self._ensure_load_cell()
             sample_count = int(self.system_config["load_cell"]["tare_samples"])
             samples = []
             self.update_terminal(
@@ -2739,11 +2853,8 @@ class MyInterface:
             self.update_terminal(f"Empty-machine tare failed: {exc}\n")
             CTkMessagebox(title="Tare Not Captured", message=str(exc))
         finally:
-            if device is not None:
-                try:
-                    device.close()
-                except Exception:
-                    pass
+            # Keep the one main Bridge channel connected; normal Start never tares.
+            pass
 
     def get_current_weight(self):
         """Get the current weight reading from the scale in grams"""
@@ -2772,6 +2883,10 @@ class MyInterface:
                 tare_offset = self.empty_machine_tare.offset_v_per_v
                 wall_time = datetime.now().astimezone()
                 monotonic_time = time.monotonic()
+                rotary = self.rotary_sensor.measurement(require=True)
+                rotary_sample = rotary["sample"]
+                rotary_key = (rotary_sample[4], rotary_sample[3])
+                rotary_new_sample = rotary_key != self.last_rotary_logged_key
                 snapshot = self.get_feedback()
                 current_pos_turns = snapshot.position_turns
                 relative_angle = self.reference_manager.angle_from_position(current_pos_turns)
@@ -2835,7 +2950,21 @@ class MyInterface:
                     f"{velocity_turns_s:.8f}",
                     f"{afo_velocity_deg_s:.6f}",
                     snapshot.active_errors,
+                    f"{rotary_sample[2]:.12g}",
+                    f"{rotary['angle_deg']:.8f}",
+                    rotary_sample[1],
+                    f"{rotary_sample[0]:.9f}",
+                    f"{rotary['sample_age_s']:.9f}",
+                    rotary_sample[3],
+                    rotary_sample[4],
+                    rotary_new_sample,
+                    rotary["valid"],
+                    rotary["sample_status"],
+                    self.rotary_sensor.calibration.profile["calibration_id"],
+                    f"{rotary['achieved_rate_hz']:.3f}",
+                    f"{snapshot.captured_monotonic_s:.9f}",
                 ]
+                self.last_rotary_logged_key = rotary_key
                 self.strain_data_buffer.append(data_row)
                 if len(self.strain_data_buffer) >= self.system_config["acquisition"]["csv_flush_rows"]:
                     with open(self.strain_file_name, mode="a", newline="", encoding="utf-8") as file:
@@ -2849,7 +2978,7 @@ class MyInterface:
                 if plot_window_open:
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:
-                        self.plot_data_queue.put((relative_angle, avg_torque))
+                        self.plot_data_queue.put((rotary["angle_deg"], avg_torque))
                         self.plot_update_counter = 0
                 
                 # Update terminal less frequently (every 20th sample)
@@ -2882,6 +3011,7 @@ class MyInterface:
                 raise RuntimeError("Test motion ownership was not acquired")
             if self.test_stop_event.is_set():
                 raise TestStopped()
+            self.rotary_sensor.measurement(require=True)
             self.enter_closed_loop(token)
             mapping = self.reference_manager.require_verified()
             self.update_terminal(
@@ -2969,6 +3099,14 @@ class MyInterface:
                     final_status = "error"
                     suffix = "data acquisition thread did not stop within 2 seconds"
                     final_error = f"{final_error}; {suffix}" if final_error else suffix
+            try:
+                rotary_stats = self.rotary_sensor.finish_recording()
+                if self.run_metadata is not None:
+                    self.run_metadata["rotary_sensor"]["recording_statistics"] = rotary_stats
+            except Exception as exc:
+                self.acquisition_error = str(exc)
+                if self.run_metadata is not None:
+                    self.run_metadata["rotary_sensor"]["recording_statistics"] = self.rotary_sensor.last_recording_statistics
             final_status, final_error = reconcile_run_outcome(
                 candidate_completed=candidate_completed,
                 stop_requested=stop_was_requested or self.operator_stop_requested,
@@ -2976,12 +3114,7 @@ class MyInterface:
                 current_status=final_status,
                 current_error=final_error,
             )
-            try:
-                if self.voltage_ratio_input is not None:
-                    self.voltage_ratio_input.close()
-            except Exception:
-                pass
-            self.voltage_ratio_input = None
+            # The shared Bridge remains connected between normal tests.
             if token is not None:
                 self.motion_coordinator.release(token)
             if self.run_motion_token == token:
@@ -3011,7 +3144,7 @@ class MyInterface:
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive disconnected during motion")
         self.motion_phase = phase
-        snapshot = self.get_feedback()
+        snapshot = self._test_feedback()
         actual_distance_deg = abs(odrive_turns_to_afo_degrees(
             float(target_turns) - snapshot.position_turns, self.system_config
         ))
@@ -3053,7 +3186,7 @@ class MyInterface:
         self._submit_position(token, target_turns)
         try:
             wait_for_settle(
-                self.get_feedback,
+                self._test_feedback,
                 target_turns=float(target_turns),
                 tolerance_turns=tolerance_turns,
                 velocity_limit_turns_s=velocity_limit_turns_s,
@@ -3119,6 +3252,7 @@ class MyInterface:
             self.acquisition_error = f"data acquisition error: {exc}"
             self.update_terminal(f"Error reading strain data: {exc}\n")
             self.test_stop_event.set()
+            self.safe_idle_motor("data acquisition error", token=self.run_motion_token)
         finally:
             if self.strain_data_buffer:
                 try:
@@ -3230,7 +3364,7 @@ class MyInterface:
         )
         canvas.create_text(
             width / 2, height - 22,
-            text="ODrive-Derived AFO Angle (degrees)", fill=TEXT,
+            text="Measured Fixture Angle (degrees)", fill=TEXT,
             font=("Arial", 9, "bold"), tags="plot",
         )
         canvas.create_text(

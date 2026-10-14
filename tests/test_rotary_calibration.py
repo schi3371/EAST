@@ -238,150 +238,6 @@ class SensorOnlyCaptureTests(unittest.TestCase):
         self.assertEqual(model["motor_conversion_point_count"], 3)
 
 
-class RotaryReaderTests(unittest.TestCase):
-    def reader_class(self):
-        # Load only the worker, without requiring GUI libraries for offline tests.
-        path = Path(__file__).resolve().parents[1] / "east_rotary_gui.py"
-        tree = ast.parse(path.read_text())
-        worker = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "RotaryReader")
-        namespace = dict(queue=queue, threading=threading, time=time, datetime=datetime, math=math)
-        exec(compile(ast.Module(body=[worker], type_ignores=[]), str(path), "exec"), namespace)
-        return namespace["RotaryReader"]
-
-    def test_exact_hub_address_mode_and_close(self):
-        for mode, module, constructor in (
-            ("Voltage ratio", "Phidget22.Devices.VoltageRatioInput", "VoltageRatioInput"),
-            ("Voltage", "Phidget22.Devices.VoltageInput", "VoltageInput"),
-        ):
-            reader = self.reader_class()(750256, mode)
-            channel = self.channel()
-            channel.getDeviceSKU.return_value = constructor + "_PORT"
-            reader.stop.wait = Mock(return_value=True)
-            channel.getVoltageRatio.return_value = 0.5
-            channel.getVoltage.return_value = 2.5
-            fake = SimpleNamespace(**{constructor: Mock(return_value=channel)})
-            with patch.dict("sys.modules", {module: fake}):
-                reader._run()
-            channel.setDeviceSerialNumber.assert_called_once_with(750256)
-            channel.setHubPort.assert_called_once_with(0)
-            channel.setIsHubPortDevice.assert_called_once_with(True)
-            channel.close.assert_called_once()
-            events = []
-            while not reader.events.empty():
-                events.append(reader.events.get_nowait())
-            readings = [value for kind, value in events if kind == "sample"]
-            self.assertEqual(len(readings), 1)
-            metadata = next(value for kind, value in events if kind == "connected")
-            self.assertEqual(metadata["sku"], "HUB0007")
-            self.assertEqual(metadata["channel_sku"], constructor + "_PORT")
-            self.assertEqual(readings[0][2], 0.5 if mode == "Voltage ratio" else 2.5)
-            self.assertEqual([kind for kind, _ in events if kind != "progress"], ["connected", "sample", "closed"])
-            channel.setOnVoltageRatioChangeHandler.assert_not_called()
-            channel.setOnVoltageChangeHandler.assert_not_called()
-
-    def test_attachment_failure_closes_channel_and_reports_error(self):
-        reader = self.reader_class()(750256, "Voltage ratio")
-        channel = Mock()
-        channel.openWaitForAttachment.side_effect = RuntimeError("missing hub")
-        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-            reader._run()
-        events = list(reader.events.queue)
-        error = next(value for kind, value in events if kind == "error")
-        self.assertIn("Opening hub 750256", error)
-        self.assertIn("missing hub", error)
-        self.assertFalse(any(kind == "connected" for kind, _ in events))
-        channel.close.assert_called_once()
-
-
-    def channel(self):
-        channel = Mock()
-        channel.getDeviceSKU.return_value = "VoltageRatioInput_PORT"
-        channel.getHub.return_value.getDeviceSKU.return_value = "HUB0007"
-        channel.getHub.return_value.getDeviceSerialNumber.return_value = 750256
-        channel.getDeviceSerialNumber.return_value = 750256
-        channel.getHubPort.return_value = 0
-        channel.getIsHubPortDevice.return_value = True
-        channel.getMinDataInterval.return_value = 1
-        channel.getMaxDataInterval.return_value = 60000
-        channel.getVoltageRatio.return_value = 0.5
-        return channel
-
-    def test_wrong_parent_hub_or_address_is_rejected_before_reading(self):
-        for mismatch in ("hub_sku", "hub_serial", "channel_serial", "port", "port_device"):
-            with self.subTest(mismatch=mismatch):
-                reader = self.reader_class()(750256, "Voltage ratio")
-                channel = self.channel()
-                if mismatch == "hub_sku":
-                    channel.getHub.return_value.getDeviceSKU.return_value = "HUB0000"
-                elif mismatch == "hub_serial":
-                    channel.getHub.return_value.getDeviceSerialNumber.return_value = 123
-                elif mismatch == "channel_serial":
-                    channel.getDeviceSerialNumber.return_value = 123
-                elif mismatch == "port":
-                    channel.getHubPort.return_value = 1
-                else:
-                    channel.getIsHubPortDevice.return_value = False
-                fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-                with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-                    reader._run()
-                events = list(reader.events.queue)
-                self.assertTrue(any(kind == "error" for kind, _ in events))
-                self.assertFalse(any(kind == "connected" for kind, _ in events))
-                channel.getVoltageRatio.assert_not_called()
-                channel.close.assert_called_once()
-
-    def test_initial_unknown_value_is_retried_before_connection(self):
-        reader = self.reader_class()(750256, "Voltage ratio")
-        unknown = RuntimeError("first value unavailable")
-        unknown.code = 51
-        channel = self.channel()
-        channel.getVoltageRatio.side_effect = [unknown, 0.5]
-        reader.stop.wait = Mock(side_effect=[False, True])
-        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-            reader._run()
-        events = list(reader.events.queue)
-        self.assertFalse(any(kind == "error" for kind, _ in events))
-        self.assertEqual(sum(kind == "sample" for kind, _ in events), 1)
-        channel.close.assert_called_once()
-
-    def test_getter_failure_is_reported_without_false_connection(self):
-        reader = self.reader_class()(750256, "Voltage ratio")
-        channel = self.channel()
-        channel.getVoltageRatio.side_effect = RuntimeError("driver read failed")
-        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-            reader._run()
-        events = list(reader.events.queue)
-        self.assertIn("driver read failed", next(value for kind, value in events if kind == "error"))
-        self.assertFalse(any(kind == "connected" for kind, _ in events))
-        channel.close.assert_called_once()
-
-    def test_cancel_during_attachment_prevents_configuration_or_reading(self):
-        reader = self.reader_class()(750256, "Voltage ratio")
-        channel = self.channel()
-        channel.openWaitForAttachment.side_effect = lambda _timeout: reader.stop.set()
-        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-            reader._run()
-        channel.getVoltageRatio.assert_not_called()
-        self.assertFalse(any(kind == "connected" for kind, _ in list(reader.events.queue)))
-        channel.close.assert_called_once()
-
-    def test_stationary_values_are_sampled_without_change_callbacks(self):
-        reader = self.reader_class()(750256, "Voltage ratio")
-        channel = self.channel()
-        reader.stop.wait = Mock(side_effect=[False, False, True])
-        fake = SimpleNamespace(VoltageRatioInput=Mock(return_value=channel))
-        with patch.dict("sys.modules", {"Phidget22.Devices.VoltageRatioInput": fake}):
-            reader._run()
-        values = [value[2] for kind, value in list(reader.events.queue) if kind == "sample"]
-        self.assertEqual(values, [0.5, 0.5, 0.5])
-        self.assertEqual(channel.getVoltageRatio.call_count, 3)
-        channel.setOnVoltageRatioChangeHandler.assert_not_called()
-
-
 class RotaryConnectionUiTests(unittest.TestCase):
     def window(self):
         path = Path(__file__).resolve().parents[1] / "east_rotary_gui.py"
@@ -499,6 +355,28 @@ class RotaryConnectionUiTests(unittest.TestCase):
             reader.events.put(("sample", (time.monotonic(), "test", 0.5)))
         window._tick()
         self.assertEqual(reader.events.qsize(), 50)
+
+    def test_closing_shared_window_unsubscribes_without_stopping_sensor_or_reattaching(self):
+        window,reader=self.window()
+        window._shared_sensor=SimpleNamespace(reader=reader)
+        window.app.motion_coordinator.owner=None
+        reader.unsubscribe=Mock()
+        type(window).close(window)
+        reader.unsubscribe.assert_called_once()
+        self.assertFalse(reader.stop.is_set())
+        self.assertIsNone(window.reader)
+        window._tick()
+        self.assertTrue(window.closed)
+        window.window.destroy.assert_called_once()
+
+    def test_main_connection_is_observed_without_a_second_phidget_channel(self):
+        window,old_reader=self.window()
+        window.reader=None
+        physical=SimpleNamespace(stop=threading.Event(),subscribe=Mock(return_value=old_reader))
+        window._shared_sensor=SimpleNamespace(reader=physical)
+        window._tick()
+        physical.subscribe.assert_called_once()
+        self.assertIs(window.reader,old_reader)
         window.window.after.assert_called_once()
 
 

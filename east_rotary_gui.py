@@ -17,119 +17,14 @@ from east_rotary_calibration import (
 )
 
 
-class RotaryReader:
-    """Open/read/close the selected hub only in this worker; no Tk calls."""
-    CONNECT_TIMEOUT_S = 8.0
-
-    def __init__(self, serial, mode):
-        self.serial, self.mode = serial, mode
-        self.events = queue.Queue()
-        self.stop = threading.Event()
-        self.phase = "Starting sensor worker"
-        self.started_monotonic = None
-        self.timed_out = False
-        self.thread = threading.Thread(target=self._run, name="rotary-sensor-reader", daemon=True)
-
-    def start(self):
-        self.started_monotonic = time.monotonic()
-        self.thread.start()
-
-    def _progress(self, phase):
-        self.phase = phase
-        self.events.put(("progress", phase))
-
-    def _run(self):
-        channel = None
-        try:
-            self._progress("Loading Phidget driver")
-            # Address the hub explicitly; never open the load-cell Bridge.
-            if self.mode == "Voltage ratio":
-                from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
-                channel = VoltageRatioInput()
-            elif self.mode == "Voltage":
-                from Phidget22.Devices.VoltageInput import VoltageInput
-                channel = VoltageInput()
-            else:
-                raise ValueError("Unsupported sensor input mode")
-            channel.setDeviceSerialNumber(self.serial)
-            channel.setHubPort(0)
-            channel.setIsHubPortDevice(True)
-            channel.setChannel(0)
-
-            def error(_channel, *details):
-                self.events.put(("error", "Sensor disconnected/error: " + str(details)))
-                self.stop.set()
-
-            channel.setOnDetachHandler(error)
-            channel.setOnErrorHandler(error)
-            self._progress(f"Opening hub {self.serial}, port 0, {self.mode} (4-second attachment timeout)")
-            channel.openWaitForAttachment(4000)
-            if self.stop.is_set():
-                return
-            self._progress("Checking attached hub and configuring sampling")
-            # A built-in analog channel identifies itself as VoltageRatioInput_PORT
-            # or VoltageInput_PORT. Validate its parent hub, not the channel SKU.
-            channel_sku = channel.getDeviceSKU()
-            hub = channel.getHub()
-            sku = hub.getDeviceSKU()
-            hub_serial = hub.getDeviceSerialNumber()
-            if not sku.startswith("HUB0007"):
-                raise RuntimeError(f"Expected parent HUB0007, received {sku}; no calibration acquired")
-            if (hub_serial != self.serial or channel.getDeviceSerialNumber() != self.serial
-                    or channel.getHubPort() != 0 or not channel.getIsHubPortDevice()):
-                raise RuntimeError("Attached sensor does not match the selected hub serial and analog port 0; no calibration acquired")
-            interval = max(channel.getMinDataInterval(), min(100, channel.getMaxDataInterval()))
-            channel.setDataInterval(interval)
-            if self.mode == "Voltage ratio":
-                channel.setVoltageRatioChangeTrigger(0.0)
-                get_reading = channel.getVoltageRatio
-            else:
-                channel.setVoltageChangeTrigger(0.0)
-                get_reading = channel.getVoltage
-            self._progress("Waiting for the first sensor reading")
-            metadata = {"hub_serial": hub_serial, "sku": sku, "channel_sku": channel_sku,
-                        "interval_ms": interval, "input_mode": self.mode}
-            attached_at = time.monotonic()
-            connected = False
-            while not self.stop.is_set():
-                try:
-                    value = get_reading()
-                except Exception as exc:
-                    # Phidget's first value can be UNKNOWNVAL (0x33) immediately
-                    # after attachment. Retry only this initial, documented state.
-                    if not connected and getattr(exc, "code", None) == 0x33 and time.monotonic() - attached_at < 3:
-                        self.stop.wait(0.1)
-                        continue
-                    raise
-                if self.stop.is_set():
-                    break
-                if not math.isfinite(value):
-                    raise ValueError("Sensor returned a non-finite reading")
-                if not connected:
-                    self.events.put(("connected", metadata))
-                    connected = True
-                    self.phase = "Reading sensor"
-                self.events.put(("sample", (time.monotonic(),
-                    datetime.now().astimezone().isoformat(timespec="milliseconds"), value)))
-                # Explicit reads produce stationary samples even when no change
-                # callback arrives. Wait is interruptible for disconnect/shutdown.
-                if self.stop.wait(interval / 1000.0):
-                    break
-        except Exception as exc:
-            self.events.put(("error", f"{self.phase}: {type(exc).__name__}: {exc}"))
-        finally:
-            if channel is not None:
-                try:
-                    channel.close()
-                except Exception as exc:
-                    self.events.put(("error", "Sensor close failed: " + str(exc)))
-            self.events.put(("closed", None))
+from east_rotary_sensor import RotaryReader
 
 
 class RotaryCalibrationWindow:
     def __init__(self, master, app, *, preview=False):
         self.app, self.preview = app, preview
         self.reader = None
+        self._shared_sensor = getattr(app, "rotary_sensor", None) if not preview else None
         self.sensor = None
         self.latest = None
         self.capture = None
@@ -167,7 +62,7 @@ class RotaryCalibrationWindow:
             "Use separate Validation points to check the fitted calibration.\n"
             "Sensor only captures remain available without motor zero; motor turns are unverified and excluded from its fit.\n"
             "Sensor + motor captures record stationary raw turns without requiring machine zero or load-cell tare.\n"
-            "No sensor fit is applied to motor control, machine zero, tare or strain-test angles."
+            "New fits remain provisional. Normal tests use the separately accepted sensor profile; motor control, machine zero and tare are unchanged."
         )
         ctk.CTkLabel(panel, text=instructions, wraplength=720, justify="left", anchor="w",
                      text_color="#334155").grid(row=1, column=0, columnspan=3, sticky="ew", pady=8)
@@ -191,7 +86,7 @@ class RotaryCalibrationWindow:
         self.angle = self._entry(panel, 6, 0, "Independent angle from 90° (deg)", "0")
         self.repeat = self._entry(panel, 6, 1, "Repeat number", "1")
         self.duration = self._entry(panel, 6, 2, "Stationary hold (seconds)", "10")
-        self.instrument = self._entry(panel, 8, 0, "Independent angle instrument", "Trojan square/protractor")
+        self.instrument = self._entry(panel, 8, 0, "Independent angle instrument", "WOLF WDAM425 angle finder")
         self.resolution = self._entry(panel, 8, 1, "Reference graduation spacing (deg)", "")
         ctk.CTkLabel(panel, text="Point purpose").grid(row=8, column=2, sticky="w")
         self.role = ctk.StringVar(value="Calibration")
@@ -305,7 +200,7 @@ class RotaryCalibrationWindow:
             if hasattr(self, "capture_mode_menu"):
                 self.capture_mode_menu.configure(state="disabled" if busy else "normal")
             self.connect_button.configure(state="normal" if not active and not self.preview else "disabled")
-            self.disconnect_button.configure(state="normal" if active else "disabled")
+            self.disconnect_button.configure(state="normal" if active and not moving else "disabled")
             self.capture_button.configure(state="normal" if self.sensor and not busy and not self.preview else "disabled")
             self.cancel_button.configure(state="normal" if busy else "disabled")
             self.fit_button.configure(state="normal" if self.points and not busy else "disabled")
@@ -331,9 +226,16 @@ class RotaryCalibrationWindow:
             if serial <= 0:
                 raise ValueError("Hub serial must be positive")
             self.sensor, self.latest = None, None
-            self.reader = RotaryReader(serial, self.mode.get())
+            if self._shared_sensor:
+                if serial != self._shared_sensor.config["hub_serial"]:
+                    raise ValueError("Use the configured hub serial; replacement sensors require a matching calibration profile")
+                physical_reader = self._shared_sensor.connect(self.mode.get())
+                self.reader = physical_reader.subscribe()
+            else:
+                self.reader = RotaryReader(serial, self.mode.get())
             self._sensor_status(f"Connecting hub {serial}, port 0 as {self.mode.get()}...")
-            self.reader.start()
+            if not self._shared_sensor:
+                self.reader.start()
             self._controls()
         except Exception as exc:
             if self.reader is not None and not self.reader.thread.is_alive():
@@ -347,6 +249,9 @@ class RotaryCalibrationWindow:
             self.app.update_terminal("ROTARY SENSOR: " + message + "\n")
 
     def disconnect(self):
+        if self.app is not None and self.app.strain_test_active:
+            self._sensor_status("Stop the normal test before disconnecting the sensor")
+            return
         self.cancel_capture("Sensor disconnected by operator")
         if self.reader:
             self.reader.stop.set()
@@ -411,7 +316,7 @@ class RotaryCalibrationWindow:
                     "capture_modes": "Recorded per point; sensor-only motor turns are unverified observations",
                     "software_version": self.app.system_config["software_version"],
                     "accepted_motor_conversion": self.app.system_config["motion"]["afo_degrees_per_odrive_turn"],
-                    "timestamp_basis": "host callback arrival; not validated for dynamic speed",
+                    "timestamp_basis": "host arrival of delivered sensor events; not hardware-synchronised",
                     "reference_angle_basis": "independent operator measurement, not EAST command/derived angle",
                 }
                 write_json_atomic(self.session_dir / "session_metadata.json", self.session_metadata)
@@ -640,6 +545,15 @@ class RotaryCalibrationWindow:
         if self.closed:
             return
         try:
+            if getattr(self, "_shared_sensor", None) and not self.closing:
+                current = self._shared_sensor.reader
+                if current and (self.reader is None or self.reader.source is not current) and not current.stop.is_set():
+                    if self.reader:
+                        self.cancel_capture("Rotary connection changed")
+                        self.reader.unsubscribe()
+                    self.reader = current.subscribe()
+                    if hasattr(self, "mode"):
+                        self.mode.set(current.mode)
             self._motor_frame()
             self._update_positioning()
             self._controls()
@@ -689,13 +603,20 @@ class RotaryCalibrationWindow:
                     self._controls()
             if (self.reader and self.reader.started_monotonic is not None
                     and not self.reader.thread.is_alive()):
+                if getattr(self, "_shared_sensor", None):
+                    self.reader.unsubscribe()
                 self.reader = None
                 self.sensor, self.latest = None, None
                 self._controls()
             fresh = self.latest and time.monotonic() - self.latest[0] <= 1
             if fresh and self.sensor:
                 unit = "V/V" if self.sensor["input_mode"] == "Voltage ratio" else "V"
-                self.live_label.configure(text=f"Raw sensor: {self.latest[2]:.8f} {unit} — uncalibrated")
+                text = f"Raw sensor: {self.latest[2]:.8f} {unit}"
+                if getattr(self, "_shared_sensor", None):
+                    accepted = self._shared_sensor.measurement()
+                    if accepted["valid"]:
+                        text += f"\nAccepted measured angle: {accepted['angle_deg']:+.3f}°"
+                self.live_label.configure(text=text)
             else:
                 self.live_label.configure(text="Sensor reading unavailable / stale")
             if self.capture:
@@ -723,7 +644,14 @@ class RotaryCalibrationWindow:
         if self.app is not None and self.app.motion_coordinator.owner == "rotary-calibration-step":
             self.app.stop_logging()
         self.closing = True
-        self.disconnect()
+        if self._shared_sensor:
+            self.cancel_capture("Calibration window closed")
+            if self.reader:
+                self.reader.unsubscribe()
+            self.reader = None
+            self.sensor, self.latest = None, None
+        else:
+            self.disconnect()
 
     def shutdown(self):
         """Used by EAST shutdown: preserve partial hold and wait for sensor cleanup."""
@@ -731,6 +659,9 @@ class RotaryCalibrationWindow:
         if self.positioning_reference is not None:
             self.positioning_reference.suspend()
         self.closed = True
+        if self.reader and self._shared_sensor:
+            self.reader.unsubscribe()
+            self.reader = None
         if self.reader:
             self.reader.stop.set()
             self.reader.thread.join(timeout=5.0)

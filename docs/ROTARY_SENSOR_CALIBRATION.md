@@ -1,8 +1,10 @@
 # Independent P3022 calibration in EAST
 
-Version: EAST 1.6.0-calibration-positioning. This is a stationary, empty-fixture
-measurement workflow. It does not apply a calibration to motor control or replace
-angles in strain-test CSV files.
+Version: EAST 1.7.0-rotary-measurement. This calibration window is a stationary,
+empty-fixture workflow. New fits do not automatically replace the accepted
+measurement profile or change motor control. Normal tests now use a separate
+accepted profile and append measured angles to their CSVs. See
+[rotary integration](ROTARY_SENSOR_INTEGRATION.md).
 
 ## What is measured
 
@@ -168,7 +170,8 @@ A new folder is created under the configured EAST log directory:
 
 The timestamps are host callback arrival times. This stationary workflow is not
 validated for dynamic speed measurement. It does not alter load-cell calibration,
-tare, machine zero, 2.055, strain-test output or the existing motion limits.
+tare, machine zero, 2.055 or the existing motion limits. Version 1.7.0 separately
+adds the accepted calibrated measurement to normal test output.
 
 Older voltage CSVs remain usable as raw electrical-response, noise and rollover
 evidence. Vout divided by contemporaneous VCC can estimate a ratio, but one

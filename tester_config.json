@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.6.0-calibration-positioning",
+  "software_version": "1.7.0-rotary-measurement",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -77,7 +77,11 @@
   },
   "torque": {
     "lever_arm_m": 0.4792,
-    "force_angle_polynomial_deg": [-0.0328, -1.0013, 90.272],
+    "force_angle_polynomial_deg": [
+      -0.0328,
+      -1.0013,
+      90.272
+    ],
     "geometry_status": "provisional; verify dimensions and polynomial experimentally"
   },
   "acquisition": {
@@ -109,5 +113,17 @@
       "speed_deg_s": 5.0,
       "acceleration_deg_s2": 100.0
     }
+  },
+  "rotary_sensor": {
+    "hub_serial": 750256,
+    "hub_port": 0,
+    "channel": 0,
+    "input_mode": "Voltage ratio",
+    "target_interval_ms": 8,
+    "stale_after_ms": 100,
+    "minimum_startup_samples": 16,
+    "minimum_event_rate_hz": 100,
+    "range_margin_deg": 0.25,
+    "calibration_profile": "calibration/rotary_P3022_20261014.json"
   }
 }

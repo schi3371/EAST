@@ -44,6 +44,7 @@ class StrainSequenceTests(unittest.TestCase):
         app.run_parameters = SimpleNamespace(commanded_afo_speed_deg_s=1,
                                              commanded_afo_acceleration_deg_s2=100)
         app.get_feedback.return_value = SimpleNamespace(position_turns=-10 / 2.055)
+        app._test_feedback.side_effect = app.get_feedback
         app.latest_feedback = app.get_feedback.return_value
         app._powered_wait_requirements.return_value = {}
         method = gui_method("command_position_and_wait", wait_for_settle=wait)
@@ -62,6 +63,8 @@ class StrainSequenceTests(unittest.TestCase):
         app.operator_stop_requested = False
         app.acquisition_error = None
         app.completed_cycles = 0
+        app.run_metadata = {"rotary_sensor": {}}
+        app.rotary_sensor.finish_recording.return_value = {}
         app.run_parameters = SimpleNamespace(min_angle_deg=10, max_angle_deg=10, cycles=3,
                                             commanded_afo_speed_deg_s=1,
                                             commanded_afo_acceleration_deg_s2=100)

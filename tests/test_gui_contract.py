@@ -2,7 +2,7 @@ import ast
 import unittest
 from pathlib import Path
 
-from east_core import CSV_COLUMNS
+from east_core import CSV_COLUMNS, ROTARY_RUN_COLUMNS
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -63,7 +63,7 @@ class GuiContractTests(unittest.TestCase):
             and isinstance(node.value, ast.List)
         ]
         self.assertEqual(len(main_rows), 1)
-        self.assertEqual(len(main_rows[0].elts), len(CSV_COLUMNS))
+        self.assertEqual(len(main_rows[0].elts), len(CSV_COLUMNS) + len(ROTARY_RUN_COLUMNS))
 
         diagnostic_tree = ast.parse(
             (PROJECT_DIR / "Testing Scripts" / "afo-strain-test-script.py").read_text(

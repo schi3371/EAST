@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.6.0-calibration-positioning-preview"
+APP_VERSION = "1.7.0-rotary-measurement-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -153,8 +153,17 @@ class EastGuiPreview:
         controls.grid_columnconfigure(0, weight=1)
         self.controls = controls
 
+        connection_panel = ctk.CTkFrame(controls, fg_color="transparent")
+        connection_panel.grid(row=0, column=0, sticky="ew", padx=10)
+        connection_panel.grid_columnconfigure(0, weight=1)
+        self.rotary_status = ctk.CTkLabel(connection_panel, anchor="w", justify="left", wraplength=390,
+            text="Measured Fixture Angle: — | sensor disconnected (PREVIEW)", text_color=AMBER,
+            font=("Arial", 12, "bold"))
+        self.rotary_status.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        ctk.CTkButton(connection_panel, text="Reconnect Sensor", width=110,
+            command=lambda: self._log("Preview sensor reconnect only; no hardware access.")).grid(row=2, column=0, sticky="w", pady=(0, 6))
         self.status = ctk.CTkLabel(
-            controls,
+            connection_panel,
             text="PREVIEW / NO HARDWARE",
             text_color="#0369a1",
             font=("Arial", 13, "bold"),
@@ -646,6 +655,7 @@ class EastGuiPreview:
 
     def _mock_connect(self) -> None:
         self.connected = True
+        self.rotary_status.configure(text="Measured Fixture Angle: +0.004° (SIMULATED)\nSensor ready | 125 Hz simulated", text_color=GREEN)
         self.reference_verified = False
         self.tare_valid = False
         self.tare_fixture_id = None
@@ -878,7 +888,7 @@ class EastGuiPreview:
         canvas.create_text(
             width / 2,
             height - 18,
-            text="ODrive-Derived AFO Angle (degrees)",
+            text="Measured Fixture Angle (degrees)",
             fill=TEXT,
         )
         canvas.create_text(18, height / 2, text="Torque (Nm)", fill=TEXT, angle=90)

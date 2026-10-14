@@ -130,6 +130,7 @@ try:
         # Add all files from images directory
         f"--add-data", f"{cur_dir}/images/*;images/",
         f"--add-data", f"{cur_dir}/tester_config.json;.",
+        f"--add-data", f"{cur_dir}/calibration/rotary_P3022_20261014.json;calibration",
         
         # Required imports for ODrive
         "--hidden-import", "fibre",
@@ -140,11 +141,16 @@ try:
         "--hidden-import", "east_core",
         "--hidden-import", "east_odrive",
         "--hidden-import", "east_reference",
+        "--hidden-import", "east_rotary_sensor",
+        "--hidden-import", "east_rotary_gui",
+        "--hidden-import", "east_rotary_calibration",
+        "--hidden-import", "east_calibration_motion",
         
         # Required imports for Phidget
         "--hidden-import", "Phidget22",
         "--hidden-import", "Phidget22.PhidgetException",
         "--hidden-import", "Phidget22.Devices.VoltageRatioInput",
+        "--hidden-import", "Phidget22.Devices.VoltageInput",
         
         # NumPy related imports and configurations
         "--hidden-import", "numpy",
