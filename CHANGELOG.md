@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.8.0-supervised-execution — 2026-10-15
+
+- Move connection, test preparation, tare, zero saving and calibration persistence
+  off Tk; add a bounded lifecycle service and one prioritised ODrive transport owner.
+- Cancel pending motion at Stop, retain blocked transport ownership, and recover
+  stopped monitors or lost connections only after conflicting workers retire.
+- Preserve actual idle observations independently of subsequent diagnostics/disk
+  failures; fix the cached-idle/closed-loop arming handoff race.
+- Separate acquisition from bounded CSV/fsync workers; append motor timing/age
+  provenance while preserving existing columns, timestamps and filename behaviour.
+- Add a directly visible blocked-shutdown isolation exit with physical acknowledgements.
+- Add read-only timing diagnostics, service integration tests and offline soak checks.
+- Keep 2.055, accepted rotary calibration, torque geometry, 150/250 ms production
+  budgets and disabled automatic continuity/watchdog configuration unchanged.
+- **Windows physical behaviour NOT TESTED.** See
+  [execution architecture](docs/EXECUTION_ARCHITECTURE.md) and
+  [Windows bench checklist](docs/bench-tests/EAST_EXECUTION_BENCH_TEST_2026-10-15.md).
+
+
 ## 1.7.3-safe-recovery
 
 - Recheck cancellation inside ODrive transport access so a target or arming request queued behind another Fibre call is rejected after Stop; already executing transport calls remain uninterruptible.

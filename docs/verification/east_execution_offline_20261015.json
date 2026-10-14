@@ -1,0 +1,125 @@
+{
+  "application_version": "1.8.0-supervised-execution",
+  "implementation_commit": "3486fe0",
+  "diagnostic_baseline_commit": "4b4f160",
+  "physical_behaviour": "NOT TESTED",
+  "hardware_automatically_opened": false,
+  "root_test_suite": {
+    "python_3_14": {
+      "tests": 240,
+      "result": "PASS"
+    },
+    "python_3_11_venv": {
+      "tests": 240,
+      "result": "PASS"
+    }
+  },
+  "compilation": "PASS",
+  "complete_branch_diff_check": "PASS",
+  "soak": {
+    "mode": "SIMULATED / NO HARDWARE",
+    "iterations": 300,
+    "completed": 240,
+    "operator_stop_sequences": 60,
+    "rows_persisted": 900,
+    "errors": [],
+    "maximum_transport_pending": 1,
+    "maximum_recording_pending": 1,
+    "remaining_workers": [],
+    "coordinate_continuity_automatically_restored": false,
+    "physical_behaviour": "NOT TESTED"
+  },
+  "headless_diagnostic_smoke": {
+    "mode": "SIMULATED / NO HARDWARE",
+    "rotary_recording_statistics": {
+      "delivered_samples": 22,
+      "invalid_samples": 0,
+      "achieved_event_rate_hz": 89.62925498882835,
+      "maximum_inter_sample_gap_s": 0.011910167,
+      "tied_timestamp_events": 0,
+      "recording_error": null
+    },
+    "sensor_enabled": true,
+    "sensor_recording_errors": [],
+    "capture_evaluation_limit_s": null,
+    "production_limits_changed": false,
+    "requested_interval_s": 0.008,
+    "sample_count": 32,
+    "error_count": 0,
+    "errors": [],
+    "actual_rate_hz": 124.19915345652696,
+    "gap_s": {
+      "count": 31,
+      "median": 0.007998292334377766,
+      "p95": 0.00949577079154551,
+      "p99": 0.01052189553156495,
+      "maximum": 0.010826833080500364
+    },
+    "latency_s": {
+      "active_errors_s": {
+        "count": 32,
+        "median": 2.0815059542655945e-07,
+        "p95": 3.5180710256099696e-07,
+        "p99": 4.6128872781991975e-07,
+        "maximum": 5.00120222568512e-07
+      },
+      "current_state_s": {
+        "count": 32,
+        "median": 1.2526288628578186e-07,
+        "p95": 2.085696905851364e-07,
+        "p99": 2.3735687136650092e-07,
+        "maximum": 2.50060111284256e-07
+      },
+      "disarm_reason_s": {
+        "count": 32,
+        "median": 3.3387914299964905e-07,
+        "p95": 5.977693945169448e-07,
+        "p99": 1.1549238115549097e-06,
+        "maximum": 1.3746321201324463e-06
+      },
+      "lock_wait_s": {
+        "count": 32,
+        "median": 1.6256235539913177e-06,
+        "p95": 4.830933175981044e-06,
+        "p99": 5.658152513206006e-06,
+        "maximum": 5.916692316532135e-06
+      },
+      "position_s": {
+        "count": 32,
+        "median": 5.62518835067749e-07,
+        "p95": 1.4543067663908004e-06,
+        "p99": 2.5348225608468076e-06,
+        "maximum": 2.9997900128364563e-06
+      },
+      "sensor_read_s": {
+        "count": 32,
+        "median": 8.687376976013184e-06,
+        "p95": 2.0553520880639552e-05,
+        "p99": 5.870818626135595e-05,
+        "maximum": 7.54999928176403e-05
+      },
+      "snapshot_s": {
+        "count": 32,
+        "median": 0.00018154154531657696,
+        "p95": 0.00045323108788579696,
+        "p99": 0.0008928202092647559,
+        "maximum": 0.0010577919892966747
+      },
+      "uptime_s": {
+        "count": 32,
+        "median": 3.0421651899814606e-06,
+        "p95": 1.4040130190551276e-05,
+        "p99": 1.890543382614851e-05,
+        "maximum": 1.912470906972885e-05
+      },
+      "velocity_s": {
+        "count": 32,
+        "median": 4.163011908531189e-07,
+        "p95": 1.0063638910651205e-06,
+        "p99": 1.454195007681847e-06,
+        "maximum": 1.5832483768463135e-06
+      }
+    }
+  },
+  "native_gui_rendering": "NOT VERIFIED: a Mac native smoke attempt exited 134 without diagnostic output; integration uses fake widgets"
+}
