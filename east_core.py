@@ -65,6 +65,7 @@ ROTARY_RUN_COLUMNS = [
     "Rotary New Sample Since Previous Row", "Rotary Sample Valid",
     "Rotary Sample Status", "Rotary Calibration ID", "Rotary Event Rate (Hz)",
     "ODrive Feedback Host Monotonic Time (s)",
+    "Rotary Sample Host Monotonic Time (ns)", "Rotary Timestamp Tied With Previous Event",
 ]
 
 

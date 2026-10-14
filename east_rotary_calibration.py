@@ -13,6 +13,7 @@ SAMPLE_FIELDS = (
     "motor_feedback_valid", "hub_serial", "measured_supply_v",
     "capture_mode", "motor_reference_id", "motor_feedback_status",
     "motor_coordinate_frame", "machine_zero_verified", "positioning_reference_basis",
+    "sensor_host_monotonic_ns", "sensor_timestamp_tied",
 )
 POINT_FIELDS = (
     "point_id", "role", "reference_angle_deg", "repeat", "approach", "input_mode",

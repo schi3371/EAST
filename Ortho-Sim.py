@@ -88,7 +88,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.7.0-rotary-measurement"
+APP_VERSION = "1.7.1-compact-gui"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -137,6 +137,7 @@ class MyInterface:
         self.voltage_ratio_input = None
         self.rotary_sensor = RotarySensorService(self.system_config["rotary_sensor"], resource_path("."))
         self.last_rotary_logged_key = None
+        self.last_rotary_notice = None
         self.rotary_samples_file_name = None
         self.empty_machine_tare = None
         self.protocol_display_to_key = {
@@ -330,18 +331,8 @@ class MyInterface:
         controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
 
-        connection_panel = ctk.CTkFrame(controls, fg_color="transparent")
-        connection_panel.grid(row=0, column=0, sticky="ew", padx=10)
-        connection_panel.grid_columnconfigure(0, weight=1)
-        self.rotary_status_label = ctk.CTkLabel(connection_panel,
-            text="Measured Fixture Angle: — | sensor disconnected", anchor="w", justify="left",
-            wraplength=390, text_color=AMBER, font=("Arial", 12, "bold"))
-        self.rotary_status_label.grid(row=1, column=0, sticky="ew", pady=(0, 5))
-        self.rotary_reconnect_button = ctk.CTkButton(connection_panel, text="Reconnect Sensor",
-            command=self.connect_rotary_sensor, width=110)
-        self.rotary_reconnect_button.grid(row=2, column=0, sticky="w", pady=(0, 6))
         self.status_label = ctk.CTkLabel(
-            connection_panel,
+            controls,
             text="DISCONNECTED",
             text_color=RED,
             font=("Arial", 13, "bold"),
@@ -468,18 +459,6 @@ class MyInterface:
         button_frame = ctk.CTkFrame(controls, fg_color=PANEL, corner_radius=0)
         button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         button_frame.grid_columnconfigure((0, 1), weight=1)
-        self.parameter_summary_label = ctk.CTkLabel(
-            button_frame,
-            text="",
-            text_color=MUTED,
-            font=("Arial", 11, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=390,
-        )
-        self.parameter_summary_label.grid(
-            row=0, column=0, columnspan=2, padx=5, pady=(0, 3), sticky="ew"
-        )
         button_defs = (
             ("Connect", GREEN, "#15803d", self.connect_system),
             ("Start", BLUE, "#1d4ed8", self.start_strain_test),
@@ -498,9 +477,9 @@ class MyInterface:
                 font=("Arial", 13, "bold"),
             )
             if index == 2:
-                button.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+                button.grid(row=1, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
             else:
-                button.grid(row=1, column=index, padx=5, pady=3, sticky="ew")
+                button.grid(row=0, column=index, padx=5, pady=3, sticky="ew")
             self.buttons.append(button)
         self.update_parameter_summary()
 
@@ -597,28 +576,6 @@ class MyInterface:
             row=4, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew"
         )
         machine_zero_frame.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkLabel(
-            machine_zero_frame,
-            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
-            font=("Arial", 14, "bold"),
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 2), sticky="ew")
-        ctk.CTkLabel(
-            machine_zero_frame,
-            text=(
-                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
-                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
-                "to make small adjustments until the fixture is aligned with the square. Then "
-                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
-                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
-            ),
-            font=("Arial", 10),
-            text_color=TEXT,
-            anchor="w",
-            justify="left",
-            wraplength=390,
-        ).grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
         self.reference_status_label = ctk.CTkLabel(
             machine_zero_frame,
             text="Machine zero: SETUP REQUIRED",
@@ -629,7 +586,7 @@ class MyInterface:
             wraplength=390,
         )
         self.reference_status_label.grid(
-            row=2, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew"
+            row=0, column=0, columnspan=2, padx=8, pady=(8, 5), sticky="ew"
         )
         self.reference_action_button = ctk.CTkButton(
             machine_zero_frame,
@@ -640,20 +597,20 @@ class MyInterface:
             state="disabled",
             height=34,
         )
-        self.reference_action_button.grid(row=3, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
+        self.reference_action_button.grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
 
         self.neutral_button = ctk.CTkButton(
             machine_zero_frame,
             text="Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}",
             command=self.return_to_machine_zero,
-            fg_color="#0f766e",
-            hover_color="#115e59",
+            fg_color=GREEN,
+            hover_color="#15803d",
             corner_radius=8,
             height=34,
             font=("Arial", 12, "bold"),
         )
         self.neutral_button.grid(
-            row=3, column=1, padx=(4, 8), pady=(0, 8), sticky="ew"
+            row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="ew"
         )
 
         tare_frame = ctk.CTkFrame(manual_control_frame, fg_color="#ecfdf5", corner_radius=8)
@@ -769,21 +726,7 @@ class MyInterface:
         self.status_label.configure(text=text, text_color=colour)
 
     def update_parameter_summary(self, _event=None):
-        def entered(entry):
-            return entry.get().strip() or "?"
-
-        cycles = entered(self.cycles_input)
-        speed = entered(self.speed_input)
-        acceleration = entered(self.acceleration_input)
-        minimum = entered(self.min_angle_input)
-        maximum = entered(self.max_angle_input)
-        self.parameter_summary_label.configure(
-            text=(
-                f"Commanded: {cycles} cycles | {speed}\N{DEGREE SIGN}/s | "
-                f"{acceleration}\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO} | "
-                f"-{minimum}\N{DEGREE SIGN} to +{maximum}\N{DEGREE SIGN}"
-            )
-        )
+        """Keep active/pending protocol status current without a duplicate summary."""
         self.update_protocol_status()
 
     @staticmethod
@@ -1533,6 +1476,7 @@ class MyInterface:
             return
         try:
             self.rotary_sensor.connect()
+            self.last_rotary_notice = None
             serial = self.system_config["rotary_sensor"]["hub_serial"]
             self.update_terminal(f"Connecting rotary sensor: HUB0007 {serial}, port 0, voltage ratio.\n")
         except Exception as exc:
@@ -1553,15 +1497,14 @@ class MyInterface:
                         f"Rotary channel attached; requested {payload['requested_interval_ms']} ms, "
                         f"configured {payload['interval_ms']} ms; waiting for sample-rate check.\n")
         value = self.rotary_sensor.measurement()
-        if value["valid"]:
-            text = (f"Measured Fixture Angle: {value['angle_deg']:+.3f}°\n"
-                    f"Sensor ready | {value['achieved_rate_hz']:.1f} Hz | "
-                    f"age {value['sample_age_s']*1000:.1f} ms")
-        else:
-            text = "Measured Fixture Angle: unavailable\n"+value["reason"]
-        self.rotary_status_label.configure(text=text, text_color=GREEN if value["valid"] else AMBER)
-        self.rotary_reconnect_button.configure(state="disabled" if self.strain_test_active
-            or self.motion_coordinator.owner is not None else "normal")
+        notice = "ready" if value["valid"] else value["reason"]
+        if notice != self.last_rotary_notice:
+            if value["valid"]:
+                self.update_terminal(f"Rotary sensor ready: {value['achieved_rate_hz']:.1f} delivered Hz; "
+                    "accepted calibration loaded.\n")
+            else:
+                self.update_terminal(f"Rotary sensor not ready: {notice}\n")
+            self.last_rotary_notice = notice
         if self.strain_test_active and not value["valid"] and not self.test_stop_event.is_set():
             self.acquisition_error = "Rotary sensor: "+value["reason"]
             self.test_stop_event.set()
@@ -1589,6 +1532,32 @@ class MyInterface:
             self.invalidate_empty_machine_tare("connected load-cell interface changed")
         return self.voltage_ratio_input
 
+    def _reuse_live_odrive_connection(self):
+        """Reuse a healthy live adapter; never restore a lost machine-zero mapping."""
+        if (self.odrive_adapter is None or self.monitor_error or self.feedback_retry_pending
+                or self.monitor_thread is None or not self.monitor_thread.is_alive()):
+            return False
+        try:
+            previous = self.get_feedback()
+            current = self._read_adapter_feedback()
+            self._revalidate_hardware_identity()
+            current.validate(now_monotonic_s=time.monotonic(),
+                max_age_s=self.system_config["reference"]["feedback_stale_after_ms"]/1000)
+            if (current.active_errors or current.current_state != int(AXIS_STATE_IDLE)
+                    or current.disarm_reason != previous.disarm_reason
+                    or previous.system_uptime is None or current.system_uptime is None
+                    or current.system_uptime < previous.system_uptime):
+                return False
+            velocity_limit = self.system_config["reference"]["stationary_velocity_limit_deg_s"]
+            factor = self.system_config["motion"]["afo_degrees_per_odrive_turn"]
+            if (abs(current.velocity_turns_s*factor) > velocity_limit
+                    or abs(current.position_turns-previous.position_turns)*factor
+                    > self.system_config["motion"]["position_tolerance_deg"]):
+                return False
+            return True
+        except Exception:
+            return False
+
     def connect_system(self):
         active_threads = [
             getattr(self, name, None)
@@ -1608,6 +1577,15 @@ class MyInterface:
             self.update_terminal(
                 f"Hardware controls are blocked: {self.startup_block_reason or 'process lock unavailable'}\n"
             )
+            return
+        if self._reuse_live_odrive_connection():
+            self.connect_rotary_sensor()
+            try:
+                self._ensure_load_cell()
+            except Exception as exc:
+                self.update_terminal(f"Load-cell connection failed: {exc}\n")
+            self.update_terminal("Connect retry reused the live ODrive session; machine zero was not changed.\n")
+            self.update_reference_display()
             return
         if self.rotary_calibration is not None and not self.rotary_calibration.closed:
             self.rotary_calibration.suspend_positioning("ODrive reconnect requested")
@@ -2963,6 +2941,8 @@ class MyInterface:
                     self.rotary_sensor.calibration.profile["calibration_id"],
                     f"{rotary['achieved_rate_hz']:.3f}",
                     f"{snapshot.captured_monotonic_s:.9f}",
+                    rotary_sample[5],
+                    rotary_sample[6],
                 ]
                 self.last_rotary_logged_key = rotary_key
                 self.strain_data_buffer.append(data_row)

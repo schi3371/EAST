@@ -80,6 +80,14 @@ class RotaryCalibrationWindow:
         self.new_button = ctk.CTkButton(panel, text="New Calibration Session", command=self.new_session,
                                        fg_color="#64748b")
         self.new_button.grid(row=4, column=2, sticky="ew", padx=4, pady=8)
+        if self._shared_sensor:
+            # The main green Connect owns all hardware in the normal application.
+            self.connect_button.grid_remove()
+            self.disconnect_button.grid_remove()
+            self.new_button.grid_configure(column=0, columnspan=3)
+            self.serial.delete(0, "end")
+            self.serial.insert(0, str(self._shared_sensor.config["hub_serial"]))
+            self.mode_menu.configure(values=["Voltage ratio"])
         self.live_label = ctk.CTkLabel(panel, text="Sensor not connected", font=("Arial", 17, "bold"),
                                       text_color="#0f172a", anchor="w")
         self.live_label.grid(row=5, column=0, columnspan=3, sticky="ew", pady=5)
@@ -192,7 +200,7 @@ class RotaryCalibrationWindow:
             moving = self.app is not None and self.app.motion_coordinator.owner is not None
             active = self.reader is not None
             for widget in (self.serial, self.mode_menu):
-                widget.configure(state="disabled" if active or self.points else "normal")
+                widget.configure(state="disabled" if active or self.points or getattr(self, "_shared_sensor", None) else "normal")
             for widget in (self.angle, self.repeat, self.duration, self.role_menu, self.approach_menu, self.ack):
                 widget.configure(state="disabled" if busy else "normal")
             for widget in (self.instrument, self.resolution, self.supply):
@@ -359,6 +367,8 @@ class RotaryCalibrationWindow:
             feedback_error = exc
         mode = capture["metadata"]["input_mode"]
         row = {**capture["metadata"], "host_monotonic_s": sample[0], "host_timestamp_iso": sample[1],
+               "sensor_host_monotonic_ns": sample[5] if len(sample)>5 else None,
+               "sensor_timestamp_tied": sample[6] if len(sample)>6 else None,
                "raw_reading": sample[2], "sensor_valid": reading_valid(sample[2], mode),
                "motor_position_turns": feedback.position_turns if feedback else None,
                "motor_velocity_turns_s": feedback.velocity_turns_s if feedback else None,

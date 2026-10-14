@@ -4,6 +4,12 @@ EAST controls the motorised benchtop tester and records sagittal-plane AFO angle
 
 This repository is research software. The 2.055 AFO-degrees-per-ODrive-turn mechanical conversion is accepted. Load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those remaining checks are complete.
 
+## Compact GUI and timestamp handling — EAST 1.7.1
+
+Use the main green Connect button for all hardware. A healthy live ODrive connection is reused on retries, preserving its existing zero state. The extra top sensor panel and duplicate commanded-settings summary are removed; connection/measurement issues appear in the Session Terminal. The machine-zero section contains its status and full-width Set/Return buttons, with setup instructions in the popup.
+
+Delivered rotary events now retain integer nanosecond timestamps and flag equal host timestamps rather than treating them as a fault. See [angle-reference behaviour](docs/ANGLE_REFERENCE_BEHAVIOUR.md) for counter persistence, reset conditions, sensor zero and current recovery limitations.
+
 ## Rotary measurement integration — EAST 1.7.0
 
 The main Connect action now connects the rotary sensor alongside the ODrive and load-cell interface. Normal GUI tests require the accepted sensor calibration and fresh, valid sensor data. Measured fixture angle is displayed and logged alongside the existing motor-derived angle. The event-driven reader requests 8 ms (125 Hz), reports the actual rate, and records every delivered event in a separate rotary-sample CSV. The motor conversion, machine zero, tare and torque geometry calculation remain unchanged.

@@ -17,6 +17,7 @@ ROTARY_CSV_COLUMNS = [
     "Sensor Host Monotonic Time (s)", "Sensor Sample Index", "Sensor Connection ID",
     "Rotary Voltage Ratio (V/V)", "Measured Fixture Angle (deg)",
     "Rotary Sample Valid", "Rotary Sample Status", "Rotary Calibration ID",
+    "Sensor Host Monotonic Time (ns)", "Sensor Timestamp Tied With Previous Event",
 ]
 
 
@@ -100,6 +101,7 @@ class RotaryReader:
         self.samples = 0
         self.first_sample_time = None
         self.maximum_gap_s = 0.0
+        self.timestamp_ties = 0
         self.arrivals = deque(maxlen=256)
         self.listeners = []
         self.accepting = False
@@ -147,28 +149,35 @@ class RotaryReader:
         with self.lock:
             if not self.accepting or self.stop.is_set():
                 return
-            timestamp = time.monotonic()
+            timestamp_ns = time.monotonic_ns()
+            timestamp = timestamp_ns / 1_000_000_000
+            tied = False
             if self.latest:
-                gap = timestamp-self.latest[0]
-                if gap <= 0:
-                    self._failure("Non-increasing rotary sample timestamps")
+                gap_ns = timestamp_ns-self.latest[5]
+                if gap_ns < 0:
+                    self._failure(f"Rotary host clock moved backwards: {timestamp_ns} < {self.latest[5]} ns")
                     return
+                tied = gap_ns == 0
+                self.timestamp_ties += int(tied)
+                gap = gap_ns / 1_000_000_000
                 self.maximum_gap_s = max(self.maximum_gap_s, gap)
             self.samples += 1
             if self.first_sample_time is None:
                 self.first_sample_time = timestamp
-            self.arrivals.append(timestamp)
+            self.arrivals.append(timestamp_ns)
             self.latest = (timestamp, datetime.now().astimezone().isoformat(timespec="microseconds"),
-                           float(value), self.samples, self.connection_id)
+                           float(value), self.samples, self.connection_id, timestamp_ns, tied)
             self._emit("sample", self.latest)
             if not math.isfinite(float(value)) or not 0 <= float(value) <= (1.0 if self.mode == "Voltage ratio" else 5.3):
                 self._failure("Invalid rotary reading; original event retained")
 
     def snapshot(self):
         with self.lock:
-            rate = ((len(self.arrivals)-1)/(self.arrivals[-1]-self.arrivals[0])
-                    if len(self.arrivals) > 1 else 0.0)
-            return self.latest, dict(self.metadata or {}), self.error, self.samples, rate
+            span = self.arrivals[-1]-self.arrivals[0] if self.arrivals else 0
+            rate = (len(self.arrivals)-1)*1_000_000_000/span if len(self.arrivals)>1 and span>0 else 0.0
+            metadata = dict(self.metadata or {})
+            metadata["timestamp_tie_count"] = self.timestamp_ties
+            return self.latest, metadata, self.error, self.samples, rate
 
     def _run(self):
         channel = None
@@ -223,6 +232,9 @@ class RotaryReader:
                     "requested_interval_ms": self.requested_interval_ms, "interval_ms": actual_interval,
                     "minimum_interval_ms": minimum, "maximum_interval_ms": maximum,
                     "connection_id": self.connection_id, "change_trigger": 0.0,
+                    "host_clock": time.get_clock_info("monotonic").implementation,
+                    "host_clock_resolution_s": time.get_clock_info("monotonic").resolution,
+                    "timestamp_units": "integer host monotonic nanoseconds plus seconds for joining",
                     "timestamp_basis": "host arrival of Phidget change event; not hardware-synchronised"}
                 self.accepting = True
                 self._emit("connected", dict(self.metadata))
@@ -252,7 +264,9 @@ class RotaryRecording:
         self.error = None
         self.count = self.invalid_count = 0
         self.first = self.last = None
+        self.first_ns = self.last_ns = None
         self.maximum_gap_s = 0.0
+        self.timestamp_ties = 0
         self.handle = Path(path).open("x", newline="", encoding="utf-8")
         self.writer = csv.writer(self.handle)
         self.writer.writerow(ROTARY_CSV_COLUMNS)
@@ -274,15 +288,18 @@ class RotaryRecording:
                 if kind != "sample" or sample[0] < self.started:
                     continue
                 angle, valid, reason = self.calibration.evaluate(sample[2])
-                if self.last is not None:
-                    self.maximum_gap_s = max(self.maximum_gap_s, sample[0]-self.last)
+                if self.last_ns is not None:
+                    self.maximum_gap_s = max(self.maximum_gap_s, (sample[5]-self.last_ns)/1_000_000_000)
                 self.first = sample[0] if self.first is None else self.first
                 self.last = sample[0]
+                self.first_ns = sample[5] if self.first_ns is None else self.first_ns
+                self.last_ns = sample[5]
                 self.count += 1
+                self.timestamp_ties += int(sample[6])
                 self.invalid_count += int(not valid)
                 self.writer.writerow([sample[1], f"{sample[0]-self.started:.9f}", f"{sample[0]:.9f}",
                     sample[3], sample[4], repr(sample[2]), "" if angle is None else f"{angle:.8f}",
-                    valid, reason, self.calibration.profile["calibration_id"]])
+                    valid, reason, self.calibration.profile["calibration_id"], sample[5], sample[6]])
                 if self.count % 100 == 0:
                     self.handle.flush()
         except Exception as exc:
@@ -309,9 +326,10 @@ class RotaryRecording:
 
     def statistics(self):
         return {"delivered_samples": self.count, "invalid_samples": self.invalid_count,
-                "achieved_event_rate_hz": (self.count-1)/(self.last-self.first)
-                    if self.count > 1 and self.last > self.first else None,
+                "achieved_event_rate_hz": (self.count-1)*1_000_000_000/(self.last_ns-self.first_ns)
+                    if self.count > 1 and self.last_ns > self.first_ns else None,
                 "maximum_inter_sample_gap_s": self.maximum_gap_s,
+                "tied_timestamp_events": self.timestamp_ties,
                 "recording_error": self.error}
 
 

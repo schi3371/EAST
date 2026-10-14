@@ -1,4 +1,4 @@
-# Rotary sensor measurement in EAST 1.7.0
+# Rotary sensor measurement in EAST 1.7.1
 
 The P3022 is an independent measurement channel in normal GUI tests. It does not
 command the motor, establish machine zero, tare the load cell, correct the 2.055
@@ -34,16 +34,16 @@ printed serial or detect every mechanical mounting change electronically.
 ## Connection and acquisition
 
 The main Connect action attempts the ODrive, load-cell Bridge and rotary sensor.
-The sensor remains independent of ODrive reconnect/zero recovery. **Reconnect
-Sensor** retries only the sensor channel, without resetting machine zero or tare.
+The sensor remains independent of ODrive reconnect/zero recovery. The main green **Connect** button also retries the sensor. An already healthy
+ODrive adapter is reused; that retry does not tear down its existing session.
 The Bridge channel is shared by tare and normal tests and remains connected
 between successful tests.
 
 The main application owns one rotary channel. The calibration window subscribes
-to its events. Closing that window does not disconnect the main sensor. Explicit
-Disconnect Sensor closes the channel and blocks normal Start. Connection changes
-are blocked during active normal tests/capture/movement. Voltage mode remains a
-diagnostic option in calibration; normal tests require voltage-ratio mode.
+to its events. Closing that window does not disconnect the main sensor. The normal calibration window has no separate Connect/Disconnect Sensor
+buttons; use the main green Connect. Connection changes
+are blocked during active normal tests/capture/movement. The shared calibration window follows the configured voltage-ratio mode.
+The standalone sensor logger retains voltage mode for electrical diagnostics.
 
 EAST requests an 8 ms interval (125 Hz), clamps to the attached channel's reported
 minimum/maximum and reads back the actual configured interval. Trigger is zero.
@@ -64,8 +64,8 @@ enclosure/E-stop, motion limits and timeouts remain active.
 
 ## Display and output
 
-The main display shows **Measured Fixture Angle**, delivered event rate and sample
-age. The Plot tab uses measured fixture angle on its x-axis. Torque remains the
+Sensor readiness/issues appear in the Session Terminal, and the calibration
+window shows its raw/calibrated readings. The extra top sensor panel is removed. The Plot tab uses measured fixture angle on its x-axis. Torque remains the
 existing calculation using ODrive-derived angle, explicitly identified in JSON.
 
 Each GUI run produces:
@@ -83,6 +83,8 @@ The main load-cell loop may reuse a sensor event or miss intermediate events.
 `Rotary New Sample Since Previous Row` and the event index disclose reuse; the
 separate sensor file retains intermediate events. No interpolation is performed.
 Timestamps describe host callback arrival, not hardware-synchronised sampling.
+Version 1.7.1 retains integer nanosecond timestamps and flags equal arrival
+timestamps without inventing times; tied-event counts appear in run metadata.
 Invalid sensor events remain in the independent stream even when the test fails.
 Existing CSV columns remain in their original order, with rotary fields appended.
 The legacy hardware diagnostic CLI retains its motor-only schema; use the GUI
@@ -97,7 +99,7 @@ checks before the normal speed tests.
 1. Pull this version, restart source-based EAST, and close other programs using
    the HUB0007 port. Existing executables require rebuilding.
 2. Press Connect. Verify hub 750256, ratio mode, requested/configured 8 ms and
-   live angle/rate/age. No fixture motion should occur from connection alone.
+   the Session Terminal sensor-ready rate and the calibration-window angle. No fixture motion should occur from connection alone.
 3. Verify the fixture physically at 90° using the square/angle finder. Compare
    displayed sensor angle without taring or redefining its calibration. Establish
    normal machine zero and capture the empty-machine tare as usual.

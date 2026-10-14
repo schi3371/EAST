@@ -32,7 +32,8 @@ class GuiContractTests(unittest.TestCase):
         }
         self.assertTrue(expected_labels.issubset(displayed_strings))
         self.assertIn('"acceleration_deg_s2": self.acceleration_input.get()', source)
-        self.assertTrue(any(value.startswith("Commanded:") for value in displayed_strings))
+        self.assertFalse(any(value.startswith("Commanded:") for value in displayed_strings))
+        self.assertNotIn("parameter_summary_label", source)
 
     def test_preview_matches_main_input_labels(self):
         source = (

@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.7.0-rotary-measurement-preview"
+APP_VERSION = "1.7.1-compact-gui-preview"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT_DIR / "images"
 
@@ -153,17 +153,8 @@ class EastGuiPreview:
         controls.grid_columnconfigure(0, weight=1)
         self.controls = controls
 
-        connection_panel = ctk.CTkFrame(controls, fg_color="transparent")
-        connection_panel.grid(row=0, column=0, sticky="ew", padx=10)
-        connection_panel.grid_columnconfigure(0, weight=1)
-        self.rotary_status = ctk.CTkLabel(connection_panel, anchor="w", justify="left", wraplength=390,
-            text="Measured Fixture Angle: — | sensor disconnected (PREVIEW)", text_color=AMBER,
-            font=("Arial", 12, "bold"))
-        self.rotary_status.grid(row=1, column=0, sticky="ew", pady=(0, 5))
-        ctk.CTkButton(connection_panel, text="Reconnect Sensor", width=110,
-            command=lambda: self._log("Preview sensor reconnect only; no hardware access.")).grid(row=2, column=0, sticky="w", pady=(0, 6))
         self.status = ctk.CTkLabel(
-            connection_panel,
+            controls,
             text="PREVIEW / NO HARDWARE",
             text_color="#0369a1",
             font=("Arial", 13, "bold"),
@@ -300,19 +291,6 @@ class EastGuiPreview:
         buttons.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
         buttons.grid_columnconfigure((0, 1), weight=1)
 
-        self.parameter_summary = ctk.CTkLabel(
-            buttons,
-            text="",
-            text_color=MUTED,
-            font=("Arial", 11, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=390,
-        )
-        self.parameter_summary.grid(
-            row=0, column=0, columnspan=2, padx=5, pady=(0, 3), sticky="ew"
-        )
-
         button_defs = [
             ("Connect", GREEN, "#15803d", self._mock_connect),
             ("Start", BLUE, "#1d4ed8", self._mock_start),
@@ -331,9 +309,9 @@ class EastGuiPreview:
                 font=("Arial", 13, "bold"),
             )
             if index == 2:
-                button.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+                button.grid(row=1, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
             else:
-                button.grid(row=1, column=index, padx=5, pady=3, sticky="ew")
+                button.grid(row=0, column=index, padx=5, pady=3, sticky="ew")
             self.action_buttons.append(button)
         self.action_buttons[1].configure(state="disabled")
         self._update_parameter_summary()
@@ -417,28 +395,6 @@ class EastGuiPreview:
         machine_zero = ctk.CTkFrame(manual, fg_color="#fff7ed", corner_radius=8)
         machine_zero.grid(row=4, column=0, columnspan=3, padx=6, pady=(4, 6), sticky="ew")
         machine_zero.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkLabel(
-            machine_zero,
-            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
-            font=("Arial", 14, "bold"),
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, columnspan=2, padx=8, pady=(8, 2), sticky="ew")
-        ctk.CTkLabel(
-            machine_zero,
-            text=(
-                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
-                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
-                "to make small adjustments until the fixture is aligned with the square. Then "
-                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
-                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
-            ),
-            font=("Arial", 10),
-            text_color=TEXT,
-            justify="left",
-            anchor="w",
-            wraplength=390,
-        ).grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
         self.reference_status = ctk.CTkLabel(
             machine_zero,
             text="Machine zero: SETUP REQUIRED\nNo hardware in preview",
@@ -447,7 +403,7 @@ class EastGuiPreview:
             justify="left",
             anchor="w",
         )
-        self.reference_status.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 5))
+        self.reference_status.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 5))
         self.reference_button = ctk.CTkButton(
             machine_zero,
             text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
@@ -457,17 +413,17 @@ class EastGuiPreview:
             state="disabled",
             height=34,
         )
-        self.reference_button.grid(row=3, column=0, padx=(8, 4), pady=(0, 8), sticky="ew")
+        self.reference_button.grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
         ctk.CTkButton(
             machine_zero,
             text="Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}",
             command=self._mock_return_neutral,
-            fg_color="#0f766e",
-            hover_color="#115e59",
+            fg_color=GREEN,
+            hover_color="#15803d",
             corner_radius=8,
             height=34,
             font=("Arial", 12, "bold"),
-        ).grid(row=3, column=1, padx=(4, 8), pady=(0, 8), sticky="ew")
+        ).grid(row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="ew")
 
         tare = ctk.CTkFrame(manual, fg_color="#ecfdf5", corner_radius=8)
         tare.grid(row=5, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
@@ -545,18 +501,6 @@ class EastGuiPreview:
         self.terminal.see("end")
 
     def _update_parameter_summary(self, _event=None) -> None:
-        def entered(entry: ctk.CTkEntry) -> str:
-            return entry.get().strip() or "?"
-
-        self.parameter_summary.configure(
-            text=(
-                f"Commanded: {entered(self.cycles_input)} cycles | "
-                f"{entered(self.speed_input)}\N{DEGREE SIGN}/s | "
-                f"{entered(self.acceleration_input)}\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO} | "
-                f"-{entered(self.min_angle_input)}\N{DEGREE SIGN} to "
-                f"+{entered(self.max_angle_input)}\N{DEGREE SIGN}"
-            )
-        )
         self._update_protocol_status()
 
     def _motion_values(self) -> dict[str, str]:
@@ -655,7 +599,6 @@ class EastGuiPreview:
 
     def _mock_connect(self) -> None:
         self.connected = True
-        self.rotary_status.configure(text="Measured Fixture Angle: +0.004° (SIMULATED)\nSensor ready | 125 Hz simulated", text_color=GREEN)
         self.reference_verified = False
         self.tare_valid = False
         self.tare_fixture_id = None
@@ -843,8 +786,8 @@ class EastGuiPreview:
             panel,
             text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
             command=set_neutral,
-            fg_color="#0f766e",
-            hover_color="#115e59",
+            fg_color=GREEN,
+            hover_color="#15803d",
             height=36,
         ).pack(fill="x", padx=16, pady=(12, 6))
         ctk.CTkButton(

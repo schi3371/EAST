@@ -28,7 +28,7 @@ def configured_reader(mode="Voltage ratio"):
 
 
 def deliver(reader, values, start=10.0, interval=0.008):
-    with patch("east_rotary_sensor.time.monotonic", side_effect=[start+i*interval for i in range(len(values))]):
+    with patch("east_rotary_sensor.time.monotonic_ns", side_effect=[round((start+i*interval)*1_000_000_000) for i in range(len(values))]):
         for value in values:
             reader._sample(None, value)
 
@@ -195,6 +195,36 @@ class DeliveredReaderTests(unittest.TestCase):
         self.assertFalse(reader.stop.is_set())
         self.assertFalse(any(kind=="sample" for kind,_ in subscription.events.queue))
 
+    def test_equal_host_timestamps_retain_distinct_events_without_fault(self):
+        reader=configured_reader()
+        with patch("east_rotary_sensor.time.monotonic_ns",side_effect=[10_000_000_000,10_000_000_000,10_008_000_000]):
+            for value in (0.4,0.4001,0.4002): reader._sample(None,value)
+        samples=[p for kind,p in reader.events.queue if kind=="sample"]
+        self.assertEqual([p[3] for p in samples],[1,2,3])
+        self.assertEqual(samples[0][5],samples[1][5])
+        self.assertTrue(samples[1][6])
+        self.assertFalse(reader.stop.is_set())
+        self.assertIsNone(reader.error)
+        self.assertEqual(reader.snapshot()[1]["timestamp_tie_count"],1)
+
+    def test_nanosecond_timestamps_survive_float_precision_loss(self):
+        reader=configured_reader()
+        with patch("east_rotary_sensor.time.monotonic_ns",side_effect=[10**18,10**18+1]):
+            reader._sample(None,0.4)
+            reader._sample(None,0.4)
+        self.assertFalse(reader.stop.is_set())
+        self.assertEqual(reader.latest[5],10**18+1)
+        self.assertFalse(reader.latest[6])
+        self.assertGreater(reader.snapshot()[4],0)
+
+    def test_actual_backwards_host_clock_is_still_a_fault(self):
+        reader=configured_reader()
+        with patch("east_rotary_sensor.time.monotonic_ns",side_effect=[10_000_000_000,9_999_999_999]):
+            reader._sample(None,0.4)
+            reader._sample(None,0.4)
+        self.assertTrue(reader.stop.is_set())
+        self.assertIn("clock moved backwards",reader.error)
+
 
 class SharedServiceTests(unittest.TestCase):
     def setUp(self):
@@ -297,6 +327,80 @@ class SharedServiceTests(unittest.TestCase):
             self.assertEqual(rows[1]["Rotary Voltage Ratio (V/V)"],"0.0")
             self.assertEqual(self.service.last_recording_statistics["invalid_samples"],1)
 
+    def test_recording_preserves_timestamp_ties_and_counts_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"rotary.csv"
+            with patch("east_rotary_sensor.time.monotonic",return_value=self.now):
+                self.service.start_recording(path,self.now)
+            with patch("east_rotary_sensor.time.monotonic_ns",side_effect=[10_128_000_000,10_128_000_000,10_136_000_000]):
+                for value in (0.4,0.4001,0.4002): self.reader._sample(None,value)
+            statistics=self.service.finish_recording()
+            with path.open() as handle: rows=list(csv.DictReader(handle))
+            self.assertEqual(len(rows),3)
+            self.assertEqual(rows[0]["Sensor Host Monotonic Time (ns)"],rows[1]["Sensor Host Monotonic Time (ns)"])
+            self.assertNotEqual(rows[0]["Sensor Sample Index"],rows[1]["Sensor Sample Index"])
+            self.assertEqual(rows[1]["Sensor Timestamp Tied With Previous Event"],"True")
+            self.assertEqual(statistics["tied_timestamp_events"],1)
+
+    def test_startup_burst_with_no_elapsed_time_is_not_a_false_rate_pass(self):
+        reader=configured_reader()
+        self.service.reader=reader
+        with patch("east_rotary_sensor.time.monotonic_ns",return_value=10_000_000_000):
+            for _ in range(16): reader._sample(None,0.39774)
+        self.assertFalse(self.service.measurement(now=10)["valid"])
+        self.assertEqual(reader.snapshot()[4],0)
+        self.assertFalse(reader.stop.is_set())
+
+
+class ConnectRetryTests(unittest.TestCase):
+    def app(self):
+        from east_reference import FeedbackSnapshot
+        app=Mock()
+        app.system_config=load_tester_config()
+        app.monitor_error=None
+        app.feedback_retry_pending=False
+        app.monitor_thread.is_alive.return_value=True
+        previous=FeedbackSnapshot(time.monotonic()-0.02,"time",7.288,0,0,1,system_uptime=1000)
+        current=FeedbackSnapshot(time.monotonic(),"time",7.288,0,0,1,system_uptime=1000.02)
+        app.get_feedback.return_value=previous
+        app._read_adapter_feedback.return_value=current
+        return app,current
+
+    def reuse(self,app):
+        return gui_method("_reuse_live_odrive_connection",time=time,AXIS_STATE_IDLE=1)(app)
+
+    def test_healthy_live_connection_reuse_does_not_restore_or_redefine_zero(self):
+        app,current=self.app()
+        self.assertTrue(self.reuse(app))
+        app.reference_manager.establish_at_physical_neutral.assert_not_called()
+        app.reference_manager.invalidate.assert_not_called()
+        app.safe_idle_motor.assert_not_called()
+
+    def test_reset_fault_motion_and_missing_uptime_do_not_qualify_for_reuse(self):
+        from dataclasses import replace
+        for fields in ({"system_uptime":0},{"system_uptime":None},{"active_errors":1},
+                       {"current_state":8},{"position_turns":0},{"velocity_turns_s":1}):
+            with self.subTest(fields=fields):
+                app,current=self.app()
+                app._read_adapter_feedback.return_value=replace(current,**fields)
+                self.assertFalse(self.reuse(app))
+
+    def test_connect_retry_connects_all_devices_without_disconnecting_live_odrive(self):
+        app=Mock()
+        for name in ("strain_thread","data_collection_thread","neutral_thread","manual_step_thread",
+                     "continuous_thread","recovery_thread"): setattr(app,name,None)
+        app.strain_test_active=False
+        app.motion_coordinator.owner=None
+        app.startup_block_reason=None
+        app.process_lock.held=True
+        app._reuse_live_odrive_connection.return_value=True
+        gui_method("connect_system")(app)
+        app.connect_rotary_sensor.assert_called_once()
+        app._ensure_load_cell.assert_called_once()
+        app.safe_idle_motor.assert_not_called()
+        app._stop_feedback_monitor.assert_not_called()
+        app.rotary_calibration.suspend_positioning.assert_not_called()
+
 
 class NormalGuiIntegrationTests(unittest.TestCase):
     def test_missing_rotary_blocks_start_before_motor_ownership_or_motion(self):
@@ -323,7 +427,8 @@ class NormalGuiIntegrationTests(unittest.TestCase):
             fixture_id="fixture",calibration_id="load",test_type="empty_machine_baseline")
         app.run_parameters=params
         app.run_metadata={"protocol":{"preset_display_name":"Custom","preset_version":None,"preset_modified":False}}
-        sample=(time.monotonic(),"sample-time",0.41310826,42,"connection-a")
+        stamp=time.monotonic_ns()
+        sample=(stamp/1e9,"sample-time",0.41310826,42,"connection-a",stamp,False)
         app.rotary_sensor.measurement.return_value={"sample":sample,"angle_deg":5.5639,
             "sample_age_s":0.001,"valid":True,"sample_status":"within_fit_range","achieved_rate_hz":125}
         app.rotary_sensor.calibration.profile={"calibration_id":"rotary"}
