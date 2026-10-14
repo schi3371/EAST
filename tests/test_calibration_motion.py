@@ -22,6 +22,7 @@ class CalibrationMotionTests(unittest.TestCase):
             feedback_retry_pending=False, monitor_error=None, motion_coordinator=MotionCoordinator(),
             operator_input=Mock(), fixture_id_input=Mock(), reference_manager=Mock(),
             empty_machine_tare=None, _validate_live_motion_config=Mock(),
+            _write_runtime_checkpoint=Mock(),
             _revalidate_hardware_identity=Mock(), get_feedback=Mock(side_effect=lambda: self.feedback))
         app.operator_input.get.return_value = "SC"
         app.fixture_id_input.get.return_value = "fixture"

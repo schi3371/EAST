@@ -18,6 +18,14 @@ The maximum motion timeout is 60 seconds and the existing 5-second timeout margi
 
 ## Mandatory pre-run checks
 
+For EAST 1.7.2, first verify this stop/checkpoint fix on the Windows lab computer with the enclosure closed, physical E-stop accessible and no AFO mounted:
+
+1. With the fixture stationary, connect and check ODrive/rotary/load-cell status, machine-zero validity, tare and idle indication. Do not redefine machine zero to work around an error.
+2. Command one short, slow empty-machine movement within the existing travel limit. Press Stop; confirm the GUI remains responsive, no new target is sent, and ODrive idle is actually observed. If `IDLE UNCONFIRMED` appears or movement persists, use the physical E-stop and do not restart.
+3. Repeat the empty-machine 1 deg/s test, then 5 deg/s, preserving their CSVs, rotary CSVs, metadata and session-terminal/diagnostic output. Confirm row timestamps have no synthetic catch-up bursts, both runs finalize, and speed is checked independently before any AFO test.
+
+The software cannot bound an individual blocked ODrive/Fibre property access; a timeout reported after that access returns is not proof that the motor stopped within the timeout. Stop-worker ownership remains held while such a call is stalled. Do not use these offline checks as evidence of Windows hardware behavior.
+
 - Confirm the physical E-stop resets the ODrive and is reachable throughout the run.
 - Confirm the enclosure/door interlock works and the movement envelope is clear.
 - Confirm the ODrive serial, Phidget channel/serial, fixture ID, AFO ID, and calibration ID.

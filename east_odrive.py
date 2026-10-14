@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -65,14 +66,36 @@ class ODriveAdapter:
         self.idle_state = int(idle_state)
         self.closed_loop_state = int(closed_loop_state)
         self.io_lock = threading.RLock()
+        self.last_lock_wait_s = 0.0
+        self.last_transport_duration_s = 0.0
+
+    @contextmanager
+    def _locked_io(self, timeout_s: float = 1.0):
+        started = time.monotonic()
+        if not self.io_lock.acquire(timeout=timeout_s):
+            self.last_lock_wait_s = time.monotonic() - started
+            raise FeedbackError(f"ODrive I/O lock unavailable after {self.last_lock_wait_s:.3f} s")
+        self.last_lock_wait_s = time.monotonic() - started
+        try:
+            yield
+        finally:
+            self.io_lock.release()
 
     def snapshot(
         self,
         include_phase: bool = False,
         max_capture_duration_s: Optional[float] = None,
+        lock_timeout_s: Optional[float] = None,
     ) -> FeedbackSnapshot:
         capture_started = time.monotonic()
-        with self.io_lock:
+        wait_s = lock_timeout_s if lock_timeout_s is not None else max_capture_duration_s
+        wait_s = 1.0 if wait_s is None else max(0.0, wait_s)
+        if not self.io_lock.acquire(timeout=wait_s):
+            self.last_lock_wait_s = time.monotonic() - capture_started
+            raise FeedbackError(f"ODrive I/O lock unavailable after {self.last_lock_wait_s:.3f} s")
+        try:
+            lock_acquired = time.monotonic()
+            self.last_lock_wait_s = lock_acquired - capture_started
             position = _finite_float(self.axis.pos_vel_mapper.pos_rel, "ODrive position")
             velocity = _finite_float(self.axis.pos_vel_mapper.vel, "ODrive velocity")
             active_errors = int(self.axis.active_errors)
@@ -85,7 +108,10 @@ class ODriveAdapter:
                 value = _read_path(self.device, "rs485_encoder_group0.raw")
                 if value is not None:
                     raw_phase = _finite_float(value, "RS485 encoder raw phase")
-        capture_finished = time.monotonic()
+        finally:
+            capture_finished = time.monotonic()
+            self.last_transport_duration_s = capture_finished - lock_acquired
+            self.io_lock.release()
         snapshot = FeedbackSnapshot(
             captured_monotonic_s=capture_finished,
             captured_at=utc_now_iso(),
@@ -109,7 +135,7 @@ class ODriveAdapter:
     ) -> Dict[str, Any]:
         """Fail closed unless the live axis matches EAST's relative-frame model."""
         missing = object()
-        with self.io_lock:
+        with self._locked_io():
             absolute = _read_path(
                 self.axis, "controller.config.absolute_setpoints", missing
             )
@@ -165,7 +191,7 @@ class ODriveAdapter:
 
     def fingerprint(self) -> HardwareFingerprint:
         """Read identity and frame-relevant configuration without changing hardware."""
-        with self.io_lock:
+        with self._locked_io():
             serial = _read_path(self.device, "serial_number", "unknown")
             firmware = ".".join(
                 str(_read_path(self.device, name, "?"))
@@ -200,7 +226,7 @@ class ODriveAdapter:
     def read_only_report(self, include_phase: bool = True) -> Dict[str, Any]:
         snapshot = self.snapshot(include_phase=include_phase)
         fingerprint = self.fingerprint()
-        with self.io_lock:
+        with self._locked_io():
             pos_abs = _read_path(self.axis, "pos_vel_mapper.pos_abs")
             report = {
                 "snapshot": snapshot.to_dict(),
@@ -265,7 +291,7 @@ class ODriveAdapter:
         )
         if velocity <= 0 or acceleration <= 0 or controller_limit < velocity:
             raise ValueError("Trajectory limits must be positive and internally consistent")
-        with self.io_lock:
+        with self._locked_io():
             self.axis.controller.config.control_mode = int(control_mode)
             self.axis.controller.config.input_mode = int(input_mode)
             self.axis.trap_traj.config.vel_limit = velocity
@@ -275,7 +301,7 @@ class ODriveAdapter:
 
     def command_position(self, target_turns: float) -> None:
         target = _finite_float(target_turns, "target position")
-        with self.io_lock:
+        with self._locked_io():
             self.axis.controller.input_pos = target
 
     def enter_closed_loop_holding_current(
@@ -302,7 +328,7 @@ class ODriveAdapter:
         self.validate_motion_capabilities(expected_mapper_scale, mapper_scale_tolerance)
         if cancelled():
             raise RuntimeError("Motion was cancelled before arming")
-        with self.io_lock:
+        with self._locked_io():
             current = _finite_float(self.axis.pos_vel_mapper.pos_rel, "ODrive position")
             # Setpoint is loaded before arming so closed loop cannot jump to a stale target.
             self.axis.controller.input_pos = current
@@ -336,16 +362,35 @@ class ODriveAdapter:
         )
 
     def request_idle(self, timeout_s: float = 1.0) -> IdleResult:
+        lock_started = time.monotonic()
+        deadline = lock_started + timeout_s
+        if not self.io_lock.acquire(timeout=max(0.0, deadline - lock_started)):
+            self.last_lock_wait_s = time.monotonic() - lock_started
+            return IdleResult(False, False, None, None, "idle request timed out waiting for ODrive I/O lock")
+        self.last_lock_wait_s = time.monotonic() - lock_started
+        transport_started = None
         try:
-            with self.io_lock:
-                self.axis.requested_state = self.idle_state
+            if time.monotonic() >= deadline:
+                return IdleResult(False, False, None, None, "idle request deadline expired before transport write")
+            transport_started = time.monotonic()
+            self.axis.requested_state = self.idle_state
         except Exception as exc:
             return IdleResult(False, False, None, None, f"idle request failed: {exc}")
-        deadline = time.monotonic() + timeout_s
+        finally:
+            if transport_started is not None:
+                self.last_transport_duration_s = time.monotonic() - transport_started
+            self.io_lock.release()
+        # Fibre property calls do not expose a per-call deadline here. A blocked
+        # call must retain its worker and ownership; elapsed checks only reject
+        # its result after it returns.
+        if time.monotonic() >= deadline:
+            return IdleResult(True, False, None, None, "idle transport write exceeded deadline; idle unconfirmed")
         last: Optional[FeedbackSnapshot] = None
         try:
             while time.monotonic() < deadline:
-                last = self.snapshot()
+                last = self.snapshot(lock_timeout_s=max(0.0, deadline - time.monotonic()))
+                if time.monotonic() >= deadline:
+                    break
                 if last.current_state == self.idle_state:
                     return IdleResult(
                         True,
@@ -370,10 +415,10 @@ class ODriveAdapter:
         timeout = _finite_float(timeout_s, "watchdog timeout")
         if timeout <= 0:
             raise ValueError("Watchdog timeout must be positive")
-        with self.io_lock:
+        with self._locked_io():
             self.axis.config.watchdog_timeout = timeout
             self.axis.config.enable_watchdog = bool(enabled)
 
     def feed_watchdog(self) -> None:
-        with self.io_lock:
+        with self._locked_io():
             self.axis.watchdog_feed()

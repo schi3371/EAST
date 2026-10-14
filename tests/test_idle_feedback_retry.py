@@ -104,7 +104,7 @@ class IdleFeedbackRetryTests(unittest.TestCase):
 
     def test_adapter_raises_typed_timeout_without_command(self):
         device=Device();adapter=ODriveAdapter(device,0,idle_state=1,closed_loop_state=8)
-        with patch('east_odrive.time.monotonic',side_effect=[10,10.266]):
+        with patch('east_odrive.time.monotonic',side_effect=[10,10,10.266]):
             with self.assertRaises(FeedbackAcquisitionTimeout) as error:
                 adapter.snapshot(max_capture_duration_s=.15)
         self.assertAlmostEqual(error.exception.snapshot.capture_duration_s,.266)
@@ -116,10 +116,12 @@ class MonitorIntegrationTests(unittest.TestCase):
         coordinator=MotionCoordinator()
         if owner:coordinator.acquire(owner)
         app=SimpleNamespace(system_config=load_tester_config(),feedback_lock=threading.RLock(),
+                            stop_worker_lock=threading.Lock(),
                             latest_feedback=sample(), expected_axis_state=expected,
                             expected_disarm_reason=None, feedback_retry_pending=False,
                             motion_coordinator=coordinator, monitor_stop_event=Mock(),
                             odrive_adapter=Mock(), state_store=Mock(), reference_manager=Mock(),
+                            checkpoint_writer=Mock(), _request_coordinated_stop=Mock(),
                             test_stop_event=threading.Event(), neutral_stop_event=threading.Event(),
                             continuous_stop_event=threading.Event(), ui_message_queue=queue.Queue(),
                             _mark_control_health=Mock(),monitor_error=None)
@@ -137,8 +139,8 @@ class MonitorIntegrationTests(unittest.TestCase):
         app.odrive_adapter.request_idle.assert_not_called()
         self.assertFalse(app.feedback_retry_pending)
         self.assertIsNone(app.monitor_error)
-        app.state_store.append_event.assert_called_once()
-        checkpoints=app.reference_manager.write_checkpoint.call_args_list
+        app.checkpoint_writer.submit_event.assert_called_once()
+        checkpoints=app.checkpoint_writer.submit.call_args_list
         self.assertEqual(len(checkpoints),1)
         self.assertIs(checkpoints[0].args[1],fresh)
         messages=list(app.ui_message_queue.queue)
@@ -149,27 +151,27 @@ class MonitorIntegrationTests(unittest.TestCase):
         for expected,owner in ((8,None),(None,'manual-step')):
             with self.subTest(expected=expected,owner=owner):
                 app=self.run_monitor([FeedbackAcquisitionTimeout(sample(10.266,.266))],expected,owner)
-                app.reference_manager.invalidate.assert_called_once()
-                app.odrive_adapter.request_idle.assert_called_once()
-                self.assertTrue(app.test_stop_event.is_set())
-                self.assertEqual(app.state_store.append_event.call_count,0)
+                app._request_coordinated_stop.assert_called_once()
+                self.assertTrue(app._request_coordinated_stop.call_args.kwargs['fault'])
+                app.odrive_adapter.request_idle.assert_not_called()
+                self.assertEqual(app.checkpoint_writer.submit_event.call_count,0)
 
     def test_repeated_latency_faults_without_publishing_late_samples(self):
         app=self.run_monitor([FeedbackAcquisitionTimeout(sample(at,.266)) for at in (10.266,10.55,10.85)])
-        app.reference_manager.invalidate.assert_called_once()
-        self.assertEqual(app.state_store.append_event.call_count,2)
-        app.reference_manager.write_checkpoint.assert_not_called()
+        app._request_coordinated_stop.assert_called_once()
+        self.assertEqual(app.checkpoint_writer.submit_event.call_count,2)
+        app.checkpoint_writer.submit.assert_not_called()
         self.assertEqual(app.latest_feedback.captured_monotonic_s,10)
 
     def test_changed_fresh_feedback_faults_without_publishing(self):
         app=self.run_monitor([FeedbackAcquisitionTimeout(sample(10.266,.266)),sample(10.3,system_uptime=1)])
-        app.reference_manager.invalidate.assert_called_once()
+        app._request_coordinated_stop.assert_called_once()
         self.assertEqual(app.latest_feedback.captured_monotonic_s,10)
 
     def test_other_feedback_failure_is_not_retried(self):
         app=self.run_monitor([FeedbackError('USB read failed')])
-        app.reference_manager.invalidate.assert_called_once()
-        app.state_store.append_event.assert_not_called()
+        app._request_coordinated_stop.assert_called_once()
+        app.checkpoint_writer.submit_event.assert_not_called()
 
     def test_motor_enable_and_position_submission_blocked_during_retry(self):
         app=SimpleNamespace(feedback_retry_pending=True,odrive_adapter=Mock(),motion_coordinator=Mock())

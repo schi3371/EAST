@@ -559,6 +559,7 @@ class MotionCoordinator:
         self._owner_token: Optional[MotionToken] = None
         self._stopping = False
         self._motor_idle_confirmed = True
+        self._cleanup_pending = False
 
     @property
     def owner(self) -> Optional[str]:
@@ -569,6 +570,11 @@ class MotionCoordinator:
     def motor_idle_confirmed(self) -> bool:
         with self._lock:
             return self._motor_idle_confirmed
+
+    @property
+    def stopping(self) -> bool:
+        with self._lock:
+            return self._stopping
 
     @property
     def active_token(self) -> Optional[MotionToken]:
@@ -603,19 +609,29 @@ class MotionCoordinator:
                 return token
 
     def request_stop(self) -> int:
-        # Taking the same gate as submit_command guarantees that every command
-        # already in progress completes before stop is latched, and no command
-        # can be submitted after the latch.
-        with self._command_gate:
-            with self._lock:
-                self._stopping = True
-                self._motor_idle_confirmed = False
-                return self._generation
+        # Latch without waiting for a transport call already inside the command
+        # gate. A queued command rechecks this flag before it can be submitted.
+        with self._lock:
+            self._stopping = True
+            self._motor_idle_confirmed = False
+            return self._generation
+
+    def begin_async_stop(self) -> None:
+        with self._lock:
+            self._cleanup_pending = True
+            self._stopping = True
+            self._motor_idle_confirmed = False
+
+    def complete_async_stop(self) -> None:
+        with self._lock:
+            self._cleanup_pending = False
+            if self._motor_idle_confirmed and self._owner_token is None:
+                self._stopping = False
 
     def confirm_motor_idle(self) -> None:
         with self._lock:
             self._motor_idle_confirmed = True
-            if self._owner_token is None:
+            if self._owner_token is None and not self._cleanup_pending:
                 self._stopping = False
 
     def confirm_idle(self) -> None:
@@ -643,7 +659,7 @@ class MotionCoordinator:
             with self._lock:
                 if self._owner_token == token:
                     self._owner_token = None
-                    if self._motor_idle_confirmed:
+                    if self._motor_idle_confirmed and not self._cleanup_pending:
                         self._stopping = False
 
 

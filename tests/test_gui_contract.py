@@ -281,7 +281,8 @@ class GuiContractTests(unittest.TestCase):
             for node in ast.walk(stop_function)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         }
-        self.assertIn("safe_idle_motor", calls)
+        self.assertIn("_request_coordinated_stop", calls)
+        self.assertNotIn("safe_idle_motor", calls)
         self.assertNotIn("return_to_neutral", calls)
         assignments = {
             target.attr
@@ -304,7 +305,8 @@ class GuiContractTests(unittest.TestCase):
         functions = {
             node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
         }
-        close_source = ast.get_source_segment(source, functions["on_close"])
+        close_source = ast.get_source_segment(source, functions["_poll_shutdown_ready"])
+        cleanup_source = ast.get_source_segment(source, functions["_shutdown_cleanup_worker"])
         safe_idle_source = ast.get_source_segment(source, functions["safe_idle_motor"])
 
         for worker in (
@@ -316,8 +318,8 @@ class GuiContractTests(unittest.TestCase):
             "recovery_thread",
         ):
             self.assertIn(f'"{worker}"', close_source)
-        self.assertIn("continuity_ready", close_source)
-        self.assertIn("self.motion_coordinator.owner is None", close_source)
+        self.assertIn("motor_idle_confirmed", close_source)
+        self.assertIn("persist_idle_continuity_checkpoint", cleanup_source)
         self.assertIn('self.ui_message_queue.put(("reference",))', safe_idle_source)
 
 

@@ -227,7 +227,7 @@ class ReferenceTests(unittest.TestCase):
         coordinator.release(token)
         self.assertEqual(coordinator.active_token, replacement)
 
-    def test_stop_and_target_submission_are_serialized(self):
+    def test_stop_latches_during_inflight_command_and_blocks_later_targets(self):
         coordinator = MotionCoordinator()
         token = coordinator.acquire("test")
         command_entered = threading.Event()
@@ -255,11 +255,11 @@ class ReferenceTests(unittest.TestCase):
         stop_thread = threading.Thread(target=stop)
         stop_thread.start()
         time.sleep(0.02)
-        self.assertFalse(stop_finished.is_set())
+        self.assertTrue(stop_finished.is_set())
         release_command.set()
         command_thread.join(1.0)
         stop_thread.join(1.0)
-        self.assertEqual(events, ["command-start", "command-end", "stop-latched"])
+        self.assertEqual(events, ["command-start", "stop-latched", "command-end"])
         with self.assertRaises(MotionConflictError):
             coordinator.submit_command(token, lambda: events.append("late-command"))
         self.assertNotIn("late-command", events)

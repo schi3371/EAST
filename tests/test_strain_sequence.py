@@ -1,6 +1,7 @@
 """Execute the GUI worker methods offline without importing GUI/hardware drivers."""
 import ast
 from pathlib import Path
+import threading
 from threading import Event
 from types import SimpleNamespace
 import unittest
@@ -18,7 +19,7 @@ def gui_method(name, **overrides):
     source = Path(__file__).resolve().parents[1] / "Ortho-Sim.py"
     tree = ast.parse(source.read_text())
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
-    namespace = dict(vars(east_core), TestStopped=TestStopped,
+    namespace = dict(vars(east_core), TestStopped=TestStopped, threading=threading,
                      MotionConflictError=MotionConflictError, MotionState=MotionState)
     namespace.update(overrides)
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
@@ -71,6 +72,15 @@ class StrainSequenceTests(unittest.TestCase):
         app.reference_manager.require_verified.return_value = SimpleNamespace(neutral_position_turns=0)
         app.reference_manager.target_for_angle.side_effect = lambda angle: angle / 2.055
         app.data_collection_thread.is_alive.return_value = False
+        app.stop_worker = None
+        app.failure_metadata_worker = None
+        app.run_motion_token = "token"
+        app.motion_coordinator.motor_idle_confirmed = True
+        def request_stop(*args, **kwargs):
+            app.stop_worker = Mock()
+            app.stop_worker.is_alive.return_value = False
+            app.stop_result = SimpleNamespace(confirmed=True)
+        app._request_coordinated_stop.side_effect = request_stop
         moves = []
         def move(target, phase, token, **kwargs):
             moves.append((app.current_cycle, phase, target))
@@ -96,7 +106,7 @@ class StrainSequenceTests(unittest.TestCase):
                 app, moves = self.run_sequence(failure)
                 self.assertEqual(app.completed_cycles, 0)
                 self.assertEqual(len(moves), 3)
-                app.safe_idle_motor.assert_called_once()
+                app._request_coordinated_stop.assert_called_once()
                 app.observe_post_idle_neutral.assert_not_called()
                 self.assertNotEqual(app.finalize_run.call_args.args[0], "completed")
 

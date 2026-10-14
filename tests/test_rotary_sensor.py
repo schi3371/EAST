@@ -388,7 +388,8 @@ class ConnectRetryTests(unittest.TestCase):
     def test_connect_retry_connects_all_devices_without_disconnecting_live_odrive(self):
         app=Mock()
         for name in ("strain_thread","data_collection_thread","neutral_thread","manual_step_thread",
-                     "continuous_thread","recovery_thread"): setattr(app,name,None)
+                     "continuous_thread","recovery_thread","stop_worker","disconnect_worker",
+                     "cleanup_thread"): setattr(app,name,None)
         app.strain_test_active=False
         app.motion_coordinator.owner=None
         app.startup_block_reason=None
@@ -409,6 +410,10 @@ class NormalGuiIntegrationTests(unittest.TestCase):
         app.reference_manager.verified=True
         app.reference_manager.angle_from_position.return_value=0
         app.system_config=load_tester_config()
+        app.stop_worker=None
+        app.run_finalized=True
+        app.run_metadata=None
+        app.disconnect_worker=None
         app.rotary_sensor.measurement.side_effect=RotaryError("disconnected")
         gui_method("start_strain_test", plot_window_open=False,RotaryError=RotaryError)(app)
         app.motion_coordinator.acquire.assert_not_called()
@@ -465,9 +470,17 @@ class NormalGuiIntegrationTests(unittest.TestCase):
         app.rotary_sensor.measurement.side_effect=RotaryError("stale")
         app.rotary_sensor.finish_recording.return_value={}
         app.data_collection_thread.is_alive.return_value=False
+        app.stop_worker=None
+        app.failure_metadata_worker=None
+        app.motion_coordinator.motor_idle_confirmed=True
+        def request_stop(*args, **kwargs):
+            app.stop_worker=Mock()
+            app.stop_worker.is_alive.return_value=False
+            app.stop_result=SimpleNamespace(confirmed=True)
+        app._request_coordinated_stop.side_effect=request_stop
         gui_method("strain_test_control")(app)
         app.enter_closed_loop.assert_not_called()
-        app.safe_idle_motor.assert_called_once()
+        app._request_coordinated_stop.assert_called_once()
         self.assertEqual(app.finalize_run.call_args.args[0],"error")
         app.motion_coordinator.release.assert_called_once_with("token")
 

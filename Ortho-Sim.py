@@ -56,6 +56,7 @@ from east_core import (
     write_json_atomic,
 )
 from east_odrive import ODriveAdapter
+from east_runtime import CheckpointWriter, write_worker_diagnostics
 from east_rotary_sensor import RotarySensorService, RotaryError
 from east_reference import (
     AtomicStateStore,
@@ -88,7 +89,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.7.1-compact-gui"
+APP_VERSION = "1.7.2-responsive-stop"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -163,6 +164,19 @@ class MyInterface:
         self.monitor_stop_event = threading.Event()
         self.watchdog_stop_event = threading.Event()
         self.finalize_lock = threading.Lock()
+        self.stop_worker_lock = threading.Lock()
+        self.stop_worker = None
+        self.stop_token = None
+        self.stop_result = None
+        self.stop_started_monotonic = None
+        self.stop_diagnostic_recorded = False
+        self.checkpoint_writer = None
+        self.failure_metadata_worker = None
+        self.shutdown_worker = None
+        self.shutdown_requested = False
+        self.disconnect_worker = None
+        self.acquisition_overruns = 0
+        self.maximum_acquisition_lateness_s = 0.0
         self.run_finalized = True
         self.operator_stop_requested = False
         self.acquisition_done_event = threading.Event()
@@ -198,6 +212,7 @@ class MyInterface:
         self.continuous_motion_token = None
         self.strain_thread = None
         self.data_collection_thread = None
+        self.cleanup_thread = None
         self.neutral_thread = None
         self.manual_step_thread = None
         self.continuous_thread = None
@@ -1015,6 +1030,8 @@ class MyInterface:
         idle_ui = (
             not self.strain_test_active
             and not self.feedback_retry_pending
+            and (self.stop_worker is None or not self.stop_worker.is_alive())
+            and (self.disconnect_worker is None or not self.disconnect_worker.is_alive())
             and self.motion_coordinator.owner is None
             and self.motion_coordinator.motor_idle_confirmed
         )
@@ -1063,9 +1080,21 @@ class MyInterface:
         prior = self.monitor_thread
         if prior and prior.is_alive() and prior is not threading.current_thread():
             prior.join(timeout=1.0)
+        if prior and prior.is_alive():
+            raise RuntimeError("Previous feedback monitor is still running")
+        prior_writer = self.checkpoint_writer
+        if prior_writer is not None and not prior_writer.stop(timeout_s=0.1):
+            raise RuntimeError("Previous checkpoint writer is still running")
         self.monitor_stop_event = threading.Event()
         self.monitor_error = None
         self.feedback_retry_pending = False
+        self.checkpoint_writer = CheckpointWriter(
+            self.reference_manager,
+            lambda exc: self._request_coordinated_stop(
+                f"Checkpoint persistence failed: {exc}", fault=True
+            ),
+        )
+        self.checkpoint_writer.start()
         self.monitor_thread = threading.Thread(
             target=self._feedback_monitor_loop,
             name="odrive-feedback-monitor",
@@ -1077,8 +1106,12 @@ class MyInterface:
         self.monitor_stop_event.set()
         thread = self.monitor_thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=1.5)
-        self.monitor_thread = None
+            thread.join(timeout=0.2 if threading.current_thread() is threading.main_thread() else 1.5)
+        if not thread or not thread.is_alive():
+            self.monitor_thread = None
+        writer = self.checkpoint_writer
+        if writer is not None and writer.stop(timeout_s=0.0 if threading.current_thread() is threading.main_thread() else 1.0):
+            self.checkpoint_writer = None
 
     def _start_watchdog_if_enabled(self):
         cfg = self.system_config["reference"]
@@ -1177,7 +1210,7 @@ class MyInterface:
                         raise
                     self.feedback_retry_pending = True
                     # Do not publish or log the late snapshot as measured data.
-                    self.state_store.append_event("idle_feedback_sample_rejected", {
+                    self.checkpoint_writer.submit_event("idle_feedback_sample_rejected", {
                         "duration_s": exc.snapshot.capture_duration_s,
                         "retry": retry.rejected, "motor_reference_changed": False})
                     self.ui_message_queue.put(("terminal", f"Feedback delay while idle: {exc}. "
@@ -1216,40 +1249,21 @@ class MyInterface:
                 if self.expected_axis_state is None:
                     self._mark_control_health()
                 if time.monotonic() >= next_checkpoint:
-                    motion_state = (
-                        MotionState.MOVING
-                        if self.motion_coordinator.owner is not None
-                        else MotionState.IDLE
-                    )
-                    self.reference_manager.write_checkpoint(
-                        motion_state,
-                        snapshot,
-                        clean_shutdown=False,
-                        extra={"motion_owner": self.motion_coordinator.owner},
-                    )
+                    with self.stop_worker_lock:
+                        if not self.motion_coordinator.stopping:
+                            motion_state = (
+                                MotionState.MOVING
+                                if self.motion_coordinator.owner is not None
+                                else MotionState.IDLE
+                            )
+                            self.checkpoint_writer.submit(
+                                motion_state, snapshot,
+                                {"motion_owner": self.motion_coordinator.owner},
+                            )
                     next_checkpoint = time.monotonic() + checkpoint_s
                 self.monitor_stop_event.wait(interval_s)
         except Exception as exc:
-            self.monitor_error = str(exc)
-            self.test_stop_event.set()
-            self.neutral_stop_event.set()
-            self.continuous_stop_event.set()
-            self.motion_coordinator.request_stop()
-            try:
-                self.reference_manager.invalidate(
-                    f"Feedback monitor failure: {exc}", fault=True
-                )
-            except Exception:
-                pass
-            adapter = self.odrive_adapter
-            result = adapter.request_idle(
-                self.system_config["reference"]["idle_confirmation_timeout_s"]
-            ) if adapter else None
-            if result and result.confirmed:
-                self.motion_coordinator.confirm_motor_idle()
-            self.ui_message_queue.put(("terminal", f"SAFETY STOP: {exc}\n"))
-            self.ui_message_queue.put(("status", "FAULT / IDLE REQUESTED", RED))
-            self.ui_message_queue.put(("reference",))
+            self._request_coordinated_stop(f"Feedback monitor failure: {exc}", fault=True)
 
     def _mark_control_health(self):
         with self.control_health_lock:
@@ -1330,6 +1344,14 @@ class MyInterface:
             raise RuntimeError("ODrive is not connected")
         return self.odrive_adapter.read_only_report(include_phase=False)
 
+    def _write_runtime_checkpoint(self, motion_state, snapshot, clean_shutdown=False, extra=None):
+        writer = self.checkpoint_writer
+        if writer is not None:
+            writer.write_and_wait(motion_state, snapshot, clean_shutdown, extra)
+        else:
+            self.reference_manager.write_checkpoint(motion_state, snapshot,
+                                                    clean_shutdown=clean_shutdown, extra=extra)
+
     def safe_idle_motor(self, reason=None, invalidate_reference=False, token=None):
         active_token = self.motion_coordinator.active_token
         if token is not None and active_token not in (None, token):
@@ -1340,7 +1362,7 @@ class MyInterface:
             return None
         self.continuous_movement_active = False
         self.continuous_stop_event.set()
-        if self.movement_timer:
+        if self.movement_timer and threading.current_thread() is threading.main_thread():
             try:
                 self.master.after_cancel(self.movement_timer)
             except Exception:
@@ -1356,18 +1378,17 @@ class MyInterface:
                 self.system_config["reference"]["idle_confirmation_timeout_s"]
             )
             self.motion_phase = "idle"
-            if result.confirmed:
-                self.motion_coordinator.confirm_motor_idle()
             if invalidate_reference or not result.confirmed:
                 self.reference_manager.invalidate(
                     reason or result.detail,
                     fault=not result.confirmed,
                 )
             try:
-                snapshot = self._read_adapter_feedback()
-                with self.feedback_lock:
-                    self.latest_feedback = snapshot
-                self.reference_manager.write_checkpoint(
+                snapshot = self._read_adapter_feedback() if result.confirmed else None
+                if snapshot is not None:
+                    with self.feedback_lock:
+                        self.latest_feedback = snapshot
+                self._write_runtime_checkpoint(
                     MotionState.IDLE if result.confirmed else MotionState.FAULT,
                     snapshot,
                     clean_shutdown=False,
@@ -1379,6 +1400,10 @@ class MyInterface:
                     self.reference_manager.invalidate(
                         f"Runtime-state write failed: {checkpoint_exc}", fault=True
                     )
+                result = type(result)(result.requested, False, result.active_errors,
+                                      result.current_state, f"checkpoint failed: {checkpoint_exc}")
+            if result.confirmed:
+                self.motion_coordinator.confirm_motor_idle()
             if reason:
                 self.update_terminal(
                     f"Motor idle {'confirmed' if result.confirmed else 'NOT CONFIRMED'}: {reason}\n"
@@ -1402,6 +1427,110 @@ class MyInterface:
                 self.ui_message_queue.put(("reference",))
             return None
 
+    def _persist_interim_outcome(self, reason, fault):
+        with self.finalize_lock:
+            if self.run_finalized or self.run_metadata is None or not self.metadata_file_name:
+                return
+            self.run_metadata["run_status"] = "error" if fault else "aborted"
+            self.run_metadata["error"] = reason
+            self.run_metadata["outcome_pending_cleanup"] = True
+            self.run_metadata["idle_confirmation"] = {
+                "confirmed": False,
+                "motion_owner": self.motion_coordinator.owner,
+                "monitor_error": self.monitor_error,
+            }
+            self.run_metadata["sample_count"] = self.sample_count
+            self.run_metadata["acquisition_overruns"] = self.acquisition_overruns
+            self.run_metadata["maximum_acquisition_lateness_s"] = self.maximum_acquisition_lateness_s
+            try:
+                write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
+            except Exception as exc:
+                self.ui_message_queue.put(("terminal", f"RUN ERROR: could not persist incomplete outcome: {exc}\n"))
+
+    def _request_coordinated_stop(self, reason, fault=False):
+        self.test_stop_event.set()
+        self.neutral_stop_event.set()
+        self.continuous_stop_event.set()
+        if self.odrive_adapter is None and self.motion_coordinator.owner is None:
+            self.ui_message_queue.put(("terminal", f"Stop acknowledged; ODrive is not connected: {reason}.\n"))
+            return
+        if fault:
+            self.monitor_error = reason
+            self.acquisition_error = reason if self.strain_test_active else getattr(self, "acquisition_error", None)
+        with self.stop_worker_lock:
+            token = self.motion_coordinator.active_token
+            if self.stop_worker is not None and self.stop_token == token:
+                return
+            if self.stop_worker is not None and self.stop_worker.is_alive():
+                return
+            self.motion_coordinator.begin_async_stop()
+            self.expected_axis_state = None
+            self.expected_disarm_reason = None
+            if self.strain_test_active and self.run_metadata is not None and not self.run_finalized:
+                pending = self.failure_metadata_worker
+                if pending is None or not pending.is_alive():
+                    self.failure_metadata_worker = threading.Thread(
+                        target=self._persist_interim_outcome,
+                        args=(reason, fault), name="east-incomplete-metadata", daemon=True,
+                    )
+                    self.failure_metadata_worker.start()
+            self.stop_token = token
+            self.stop_result = None
+            self.stop_started_monotonic = time.monotonic()
+            self.stop_diagnostic_recorded = False
+            self.stop_worker = threading.Thread(
+                target=self._coordinated_stop_worker,
+                args=(reason, fault), name="east-idle-stop", daemon=True,
+            )
+            self.stop_worker.start()
+        self.ui_message_queue.put(("status", "STOPPING / IDLE UNCONFIRMED", RED))
+        self.ui_message_queue.put(("terminal", f"Stop latched: {reason}; awaiting idle confirmation.\n"))
+
+    def _coordinated_stop_worker(self, reason, fault):
+        try:
+            self.stop_result = self.safe_idle_motor(reason, invalidate_reference=fault)
+            self.ui_message_queue.put((
+                "status",
+                "STOPPED / IDLE" if self.stop_result and self.stop_result.confirmed
+                else "STOPPED / IDLE UNCONFIRMED",
+                AMBER if self.stop_result and self.stop_result.confirmed else RED,
+            ))
+        except Exception as exc:
+            self.stop_result = None
+            self.ui_message_queue.put(("terminal", f"Idle worker failed: {exc}\n"))
+            self.ui_message_queue.put(("status", "STOPPED / IDLE UNCONFIRMED", RED))
+        finally:
+            self.motion_coordinator.complete_async_stop()
+
+    def _diagnose_stalled_workers(self):
+        workers = (self.stop_worker, self.strain_thread, self.data_collection_thread,
+                   self.failure_metadata_worker, self.disconnect_worker, self.shutdown_worker)
+        if (not any(worker is not None and worker.is_alive() for worker in workers)
+                or self.stop_diagnostic_recorded
+                or self.stop_started_monotonic is None
+                or time.monotonic() - self.stop_started_monotonic < 2.0):
+            return
+        self.stop_diagnostic_recorded = True
+        self.set_status("STOPPED / CLEANUP PENDING" if self.motion_coordinator.motor_idle_confirmed
+                        else "STOPPED / IDLE UNCONFIRMED", RED)
+        self.update_terminal("Stop/cleanup is still running; idle or data finalization may be unconfirmed. Use the physical E-stop if motion persists.\n")
+        def write_stacks():
+            try:
+                path = self.state_store.directory / "stalled_workers.log"
+                write_worker_diagnostics(path, [self.stop_worker, self.monitor_thread,
+                    self.strain_thread, self.data_collection_thread,
+                    self.disconnect_worker, self.shutdown_worker,
+                    self.checkpoint_writer.thread if self.checkpoint_writer else None],
+                    f"feedback_age_s={time.monotonic() - self.latest_feedback.captured_monotonic_s if self.latest_feedback else 'unavailable'} "
+                    f"feedback_capture_s={self.latest_feedback.capture_duration_s if self.latest_feedback else 'unavailable'} "
+                    f"odrive_lock_wait_s={self.odrive_adapter.last_lock_wait_s if self.odrive_adapter else 'unavailable'} "
+                    f"odrive_transport_s={self.odrive_adapter.last_transport_duration_s if self.odrive_adapter else 'unavailable'} "
+                    f"checkpoint_disk_s={self.checkpoint_writer.last_disk_duration_s if self.checkpoint_writer else 'unavailable'}")
+                self.ui_message_queue.put(("terminal", f"Worker stack diagnostic: {path}\n"))
+            except Exception as exc:
+                self.ui_message_queue.put(("terminal", f"Worker diagnostics failed: {exc}\n"))
+        threading.Thread(target=write_stacks, name="east-stack-diagnostic", daemon=True).start()
+
     def enter_closed_loop(self, token, allow_unreferenced=False):
         if self.feedback_retry_pending:
             raise FeedbackError("Motor enable blocked while idle feedback is being rechecked")
@@ -1416,7 +1545,7 @@ class MyInterface:
         if snapshot.active_errors:
             raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
         # A durable 'arming' checkpoint must succeed before any enable request.
-        self.reference_manager.write_checkpoint(
+        self._write_runtime_checkpoint(
             MotionState.ARMING,
             snapshot,
             clean_shutdown=False,
@@ -1506,9 +1635,7 @@ class MyInterface:
                 self.update_terminal(f"Rotary sensor not ready: {notice}\n")
             self.last_rotary_notice = notice
         if self.strain_test_active and not value["valid"] and not self.test_stop_event.is_set():
-            self.acquisition_error = "Rotary sensor: "+value["reason"]
-            self.test_stop_event.set()
-            self.safe_idle_motor(self.acquisition_error, token=self.run_motion_token)
+            self._request_coordinated_stop("Rotary sensor: " + value["reason"], fault=True)
         self._refresh_motion_controls()
 
     def _test_feedback(self):
@@ -1564,6 +1691,7 @@ class MyInterface:
             for name in (
                 "strain_thread", "data_collection_thread", "neutral_thread",
                 "manual_step_thread", "continuous_thread", "recovery_thread",
+                "stop_worker", "disconnect_worker", "cleanup_thread",
             )
         ]
         if (
@@ -1578,6 +1706,9 @@ class MyInterface:
                 f"Hardware controls are blocked: {self.startup_block_reason or 'process lock unavailable'}\n"
             )
             return
+        if self.odrive_adapter is not None and not self.motion_coordinator.motor_idle_confirmed:
+            self.update_terminal("Cannot reconnect: ODrive idle has not been confirmed. Use the physical E-stop if motion persists.\n")
+            return
         if self._reuse_live_odrive_connection():
             self.connect_rotary_sensor()
             try:
@@ -1591,8 +1722,8 @@ class MyInterface:
             self.rotary_calibration.suspend_positioning("ODrive reconnect requested")
         self.clear_terminal()
         if self.odrive_adapter is not None:
-            self.safe_idle_motor("reconnect")
-            self._stop_feedback_monitor()
+            self.update_terminal("Existing ODrive session is not reusable. Disconnect with confirmed idle before reconnecting.\n")
+            return
         self.buttons[1].configure(state="disabled")
         self.neutral_button.configure(state="disabled")
         self.set_status("CONNECTING", AMBER)
@@ -1703,13 +1834,12 @@ class MyInterface:
             self.update_terminal(f"Connection timed out: {exc}\n")
             self.set_status("DISCONNECTED", RED)
         except Exception as exc:
-            self.safe_idle_motor("connection/configuration error")
-            self._stop_watchdog(disable=True)
-            self._stop_feedback_monitor()
-            self.odrive_controller = None
-            self.odrive_adapter = None
+            if self.odrive_adapter is not None:
+                self._request_coordinated_stop("connection/configuration error", fault=True)
+            else:
+                self.odrive_controller = None
             self.update_terminal(f"Error connecting to ODrive: {exc}\n")
-            self.set_status("ERROR", RED)
+            self.set_status("ERROR / IDLE UNCONFIRMED" if self.odrive_adapter is not None else "ERROR", RED)
         finally:
             # Sensor acquisition is independent of ODrive zero/reconnect recovery.
             self.connect_rotary_sensor()
@@ -1721,7 +1851,7 @@ class MyInterface:
             self.update_reference_display()
 
     def disconnect_odrive(self):
-        """Disconnect from ODrive safely"""
+        """Request idle promptly, then detach only after background confirmation."""
         if self.motion_coordinator.owner is not None:
             self.stop_logging()
             self.update_terminal(
@@ -1729,49 +1859,47 @@ class MyInterface:
                 "then disconnect again.\n"
             )
             return
+        if self.odrive_adapter is None or (self.disconnect_worker is not None and self.disconnect_worker.is_alive()):
+            return
+        if not self.motion_coordinator.motor_idle_confirmed and (
+            self.stop_worker is None or not self.stop_worker.is_alive()
+        ):
+            self.update_terminal("Disconnect blocked: idle is unconfirmed. Use the physical E-stop if needed.\n")
+            return
+        self._request_coordinated_stop("manual disconnect")
+        self.disconnect_worker = threading.Thread(target=self._disconnect_after_idle_worker,
+                                                  name="east-disconnect", daemon=True)
+        self.disconnect_worker.start()
+
+    def _disconnect_after_idle_worker(self):
         try:
-            if self.odrive_controller:
-                self.neutral_stop_event.set()
-                self.continuous_stop_event.set()
-                idle_result = self.safe_idle_motor("manual disconnect")
-                self._stop_watchdog(disable=True)
-                self._stop_feedback_monitor()
-                continuity_saved = False
-                checkpoint_snapshot = None
-                try:
-                    if idle_result and idle_result.confirmed:
-                        checkpoint_snapshot = self._read_adapter_feedback()
-                    continuity_saved = persist_idle_continuity_checkpoint(
-                        self.reference_manager,
-                        checkpoint_snapshot,
-                        bool(idle_result and idle_result.confirmed),
-                        "manual disconnect",
-                        expected_idle_state=int(AXIS_STATE_IDLE),
-                    )
-                except Exception as exc:
-                    self.update_terminal(
-                        f"Unable to save manual-disconnect continuity evidence: {exc}\n"
-                    )
-                self.odrive_controller = None
-                self.odrive_adapter = None
-                self.hardware_fingerprint = None
-                with self.feedback_lock:
-                    self.latest_feedback = None
-                self.reference_manager.mapping = None
-                self.reference_manager.confidence = ReferenceConfidence.RECOVERY_REQUIRED
-                self.reference_manager.reason = (
-                    "ODrive disconnected; continuity must be proven on reconnect"
-                )
-                self.buttons[1].configure(state="disabled")
-                self.neutral_button.configure(state="disabled")
-                self.set_status("DISCONNECTED", RED)
-                self.update_terminal(
-                    "ODrive disconnected and set to idle state. "
-                    f"Clean continuity checkpoint: {'saved' if continuity_saved else 'not saved'}.\n"
-                )
-                self.update_reference_display()
-        except Exception as e:
-            self.update_terminal(f"Error disconnecting ODrive: {e}\n")
+            stop = self.stop_worker
+            if stop is not None:
+                stop.join()
+            if not self.motion_coordinator.motor_idle_confirmed:
+                raise RuntimeError("ODrive idle was not confirmed; connection retained")
+            self._stop_watchdog(disable=True)
+            self._stop_feedback_monitor()
+            if self.monitor_thread is not None or self.checkpoint_writer is not None:
+                raise RuntimeError("Feedback/checkpoint worker did not exit; connection retained")
+            snapshot = self._read_adapter_feedback()
+            continuity_ready = self.reference_manager.verified and not self.monitor_error
+            continuity_saved = persist_idle_continuity_checkpoint(
+                self.reference_manager, snapshot, continuity_ready, "manual disconnect",
+                expected_idle_state=int(AXIS_STATE_IDLE),
+            )
+            self.odrive_controller = None
+            self.odrive_adapter = None
+            self.hardware_fingerprint = None
+            with self.feedback_lock:
+                self.latest_feedback = None
+            self.reference_manager.mapping = None
+            self.reference_manager.confidence = ReferenceConfidence.RECOVERY_REQUIRED
+            self.reference_manager.reason = "ODrive disconnected; continuity must be proven on reconnect"
+            self.ui_message_queue.put(("disconnected", continuity_saved))
+        except Exception as exc:
+            self.ui_message_queue.put(("terminal", f"Disconnect incomplete: {exc}\n"))
+            self.ui_message_queue.put(("status", "DISCONNECT INCOMPLETE", RED))
 
     def stop_logging(self):
         if self.rotary_calibration is not None and not self.rotary_calibration.closed:
@@ -1779,22 +1907,9 @@ class MyInterface:
         was_active = self.strain_test_active
         if was_active:
             self.operator_stop_requested = True
-        self.test_stop_event.set()
-        self.neutral_stop_event.set()
-        self.continuous_stop_event.set()
-        idle_result = self.safe_idle_motor("operator stop")
-        self.set_status(
-            "STOPPED / IDLE" if idle_result and idle_result.confirmed else "STOPPED / IDLE UNCONFIRMED",
-            AMBER if idle_result and idle_result.confirmed else RED,
-        )
+        self._request_coordinated_stop("operator stop")
         if was_active:
             self.update_terminal("Test stop requested; the data file will be finalized as aborted.\n")
-        else:
-            self.update_terminal(
-                "Motor idle confirmed.\n"
-                if idle_result and idle_result.confirmed
-                else "Motor idle could not be confirmed.\n"
-            )
             
 
 
@@ -1937,7 +2052,7 @@ class MyInterface:
 
     def _drain_ui_queues(self):
         try:
-            while True:
+            for _ in range(100):
                 item = self.ui_message_queue.get_nowait()
                 if item[0] == "terminal":
                     self.update_terminal(item[1])
@@ -1954,6 +2069,18 @@ class MyInterface:
                     self._refresh_motion_controls()
                 elif item[0] == "reference":
                     self.update_reference_display()
+                elif item[0] == "shutdown_ready":
+                    self.close_plot_window()
+                    self.master.quit()
+                    self.master.destroy()
+                    return
+                elif item[0] == "disconnected":
+                    self.buttons[1].configure(state="disabled")
+                    self.neutral_button.configure(state="disabled")
+                    self.set_status("DISCONNECTED", RED)
+                    self.update_terminal("ODrive disconnected after confirmed idle. "
+                                         f"Clean continuity checkpoint: {'saved' if item[1] else 'not saved'}.\n")
+                    self.update_reference_display()
                 elif item[0] == "recovery_motion_finished":
                     self.update_reference_display()
                     if self.recovery_window is not None and self.recovery_window.winfo_exists():
@@ -1967,13 +2094,18 @@ class MyInterface:
             pass
 
         try:
-            while True:
+            plot_changed = False
+            for _ in range(200):
                 angle, torque = self.plot_data_queue.get_nowait()
-                self.update_plot_data(angle, torque)
+                self.update_plot_data(angle, torque, redraw=False)
+                plot_changed = True
         except queue.Empty:
             pass
+        if plot_changed:
+            self.update_plot()
 
         self._poll_rotary_sensor()
+        self._diagnose_stalled_workers()
         self.update_manual_position_display()
         try:
             self.master.after(50, self._drain_ui_queues)
@@ -2132,7 +2264,7 @@ class MyInterface:
     def close_reference_recovery(self):
         self.neutral_stop_event.set()
         if self.motion_coordinator.owner == "reference-recovery-jog":
-            self.safe_idle_motor("machine-zero setup closed")
+            self._request_coordinated_stop("machine-zero setup closed")
         if self.recovery_window is not None:
             try:
                 self.recovery_window.destroy()
@@ -2200,7 +2332,7 @@ class MyInterface:
             )
             if abs(target - self.recovery_origin_turns) > origin_limit + 1e-9:
                 raise ReferenceError("Recovery target exceeds bounded travel")
-            self.reference_manager.write_checkpoint(
+            self._write_runtime_checkpoint(
                 MotionState.MOVING,
                 snapshot,
                 clean_shutdown=False,
@@ -2367,100 +2499,81 @@ class MyInterface:
         response = msg.get()
         
         if response == "Yes":
-            try:
-                # Latch cancellation before stopping the motor. Every worker must
-                # exit before clean continuity evidence can be written.
-                if self.strain_test_active:
-                    self.operator_stop_requested = True
+            if self.shutdown_requested:
+                self.update_terminal("Shutdown is already in progress.\n")
+                return
+            self.shutdown_requested = True
+            if self.strain_test_active:
+                self.operator_stop_requested = True
+            if self.odrive_adapter is not None:
+                self._request_coordinated_stop("application shutdown")
+            else:
                 self.test_stop_event.set()
-                self.neutral_stop_event.set()
-                self.continuous_stop_event.set()
+            self._poll_shutdown_ready()
 
-                idle_result = None
-                if self.odrive_adapter is not None:
-                    idle_result = self.safe_idle_motor("application shutdown")
-                    self._stop_watchdog(disable=True)
+    def _poll_shutdown_ready(self):
+        worker_names = (
+            "stop_worker", "strain_thread", "data_collection_thread", "neutral_thread",
+            "manual_step_thread", "continuous_thread", "recovery_thread",
+            "failure_metadata_worker", "cleanup_thread", "disconnect_worker",
+        )
+        live = [name for name in worker_names if
+                (worker := getattr(self, name, None)) is not None and worker.is_alive()]
+        if live:
+            self.set_status("SHUTDOWN WAITING / IDLE UNCONFIRMED", RED)
+            self.master.after(200, self._poll_shutdown_ready)
+            return
+        if self.odrive_adapter is not None and not self.motion_coordinator.motor_idle_confirmed:
+            self.set_status("SHUTDOWN BLOCKED / IDLE UNCONFIRMED", RED)
+            self.update_terminal("Idle not confirmed. Use the physical E-stop and inspect hardware before closing Python.\n")
+            self.shutdown_requested = False
+            return
+        self.shutdown_worker = threading.Thread(target=self._shutdown_cleanup_worker,
+                                                name="east-shutdown-cleanup", daemon=True)
+        self.shutdown_worker.start()
 
-                deadline = time.monotonic() + 3.0
-                worker_names = (
-                    "strain_thread",
-                    "data_collection_thread",
-                    "neutral_thread",
-                    "manual_step_thread",
-                    "continuous_thread",
-                    "recovery_thread",
-                )
-                for thread_name in worker_names:
-                    thread = getattr(self, thread_name, None)
-                    if thread and thread.is_alive() and thread is not threading.current_thread():
-                        thread.join(timeout=max(0.0, deadline - time.monotonic()))
-                live_workers = [
-                    name
-                    for name in worker_names
-                    if (thread := getattr(self, name, None)) is not None and thread.is_alive()
-                ]
-                if live_workers:
-                    print(
-                        "Shutdown continued with worker(s) still active: "
-                        + ", ".join(live_workers)
-                    )
-                
-                if self.rotary_calibration is not None:
-                    self.rotary_calibration.shutdown()
-                self.rotary_sensor.shutdown()
-                if self.voltage_ratio_input is not None:
-                    self.voltage_ratio_input.close()
-                    self.voltage_ratio_input = None
-
-                # Close the plot window safely
-                self.close_plot_window()
-                
-                # Confirm idle and capture fresh feedback before writing clean continuity evidence.
-                if self.odrive_adapter is not None:
-                    self._stop_feedback_monitor()
-                    snapshot = None
-                    continuity_ready = bool(
-                        idle_result
-                        and idle_result.confirmed
-                        and not live_workers
-                        and self.motion_coordinator.owner is None
-                    )
-                    try:
-                        if continuity_ready:
-                            snapshot = self._read_adapter_feedback()
-                        persist_idle_continuity_checkpoint(
-                            self.reference_manager,
-                            snapshot,
-                            continuity_ready,
-                            "application shutdown",
-                            expected_idle_state=int(AXIS_STATE_IDLE),
-                        )
-                    except Exception as checkpoint_exc:
-                        print(f"Unable to save shutdown continuity evidence: {checkpoint_exc}")
-                    self.odrive_controller = None
-                    self.odrive_adapter = None
-                
-                # Disconnect from Phidget if connected
-                if hasattr(self, 'voltage_ratio_input') and self.voltage_ratio_input:
-                    try:
-                        self.voltage_ratio_input.close()
-                    except Exception:
-                        pass
-                
-                # Destroy the main window
-                self.process_lock.release()
-                self.master.quit()
-                self.master.destroy()
-                
-            except Exception as e:
-                print(f"Error during shutdown: {e}")
-                # Force quit if there's an error
-                self.process_lock.release()
-                self.master.quit()
-                self.master.destroy()
+    def _shutdown_cleanup_worker(self):
+        try:
+            if self.odrive_adapter is not None:
+                self._stop_watchdog(disable=True)
+                self._stop_feedback_monitor()
+                if self.monitor_thread is not None or self.checkpoint_writer is not None:
+                    raise RuntimeError("Feedback/checkpoint worker did not exit")
+                snapshot = self._read_adapter_feedback()
+                continuity_ready = self.reference_manager.verified and not self.monitor_error
+                continuity_saved = persist_idle_continuity_checkpoint(
+                    self.reference_manager, snapshot, continuity_ready, "application shutdown",
+                    expected_idle_state=int(AXIS_STATE_IDLE))
+                if continuity_ready and not continuity_saved:
+                    raise RuntimeError("Clean idle continuity was not persisted")
+            if self.rotary_calibration is not None:
+                self.rotary_calibration.shutdown()
+            self.rotary_sensor.shutdown()
+            if self.voltage_ratio_input is not None:
+                self.voltage_ratio_input.close()
+                self.voltage_ratio_input = None
+            self.odrive_controller = None
+            self.odrive_adapter = None
+            self.process_lock.release()
+            self.ui_message_queue.put(("shutdown_ready",))
+        except Exception as exc:
+            self.shutdown_requested = False
+            self.ui_message_queue.put(("terminal", f"Shutdown incomplete: {exc}. Keep the E-stop accessible.\n"))
+            self.ui_message_queue.put(("status", "SHUTDOWN INCOMPLETE", RED))
 
     def start_strain_test(self):
         """Start the strain test with the current motor settings"""
+        if not self.run_finalized or (self.run_metadata and self.run_metadata.get("outcome_pending_cleanup")):
+            self.update_terminal("Cannot start: previous run outcome or cleanup is not finalized.\n")
+            return
+        if self.disconnect_worker is not None and self.disconnect_worker.is_alive():
+            self.update_terminal("Cannot start while ODrive disconnect is in progress.\n")
+            return
+        if self.stop_worker is not None and (
+            self.stop_worker.is_alive() or not self.motion_coordinator.motor_idle_confirmed
+        ):
+            self.update_terminal("Cannot start: prior stop has not completed with confirmed idle.\n")
+            return
         # Clear the embedded plot for a new run.
         global angle_data, torque_data
         if plot_window_open:
@@ -2559,6 +2672,11 @@ class MyInterface:
         ):
             return
 
+        if self.stop_worker is not None:
+            if self.stop_worker.is_alive() or not self.motion_coordinator.motor_idle_confirmed:
+                self.update_terminal("Cannot start: previous stop has not completed with confirmed idle.\n")
+                return
+            self.stop_worker = None
         self.test_stop_event.clear()
         self.acquisition_error = None
         self.operator_stop_requested = False
@@ -2655,6 +2773,8 @@ class MyInterface:
             self.run_finalized = False
 
             self.strain_data_buffer = []
+            self.acquisition_overruns = 0
+            self.maximum_acquisition_lateness_s = 0.0
             self.plot_update_counter = 0
             self.plot_update_interval = 5
             self.sample_count = 0
@@ -2684,46 +2804,36 @@ class MyInterface:
                 f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
         except Exception as exc:
-            # Cancel and idle before waiting for any recording cleanup.
-            self.test_stop_event.set()
-            self.safe_idle_motor("test initialization error", token=self.run_motion_token)
-            try:
-                statistics = self.rotary_sensor.finish_recording()
-                if self.run_metadata is not None:
-                    self.run_metadata["rotary_sensor"]["recording_statistics"] = statistics
-            except Exception as recording_error:
-                self.update_terminal(f"Rotary cleanup failed: {recording_error}\n")
-            self.strain_test_active = False
-            self.test_stop_event.set()
-            token = self.run_motion_token
-            self.safe_idle_motor("test initialization error", token=token)
-            data_thread = getattr(self, "data_collection_thread", None)
-            if data_thread and data_thread.is_alive():
-                data_thread.join(timeout=2.0)
-            if self.voltage_ratio_input is not None:
-                try:
-                    self.voltage_ratio_input.close()
-                except Exception:
-                    pass
-                self.voltage_ratio_input = None
-            self.set_status("ERROR / IDLE", RED)
+            self._request_coordinated_stop(f"test initialization error: {exc}", fault=True)
             self.update_terminal(f"Error initializing strain test: {exc}\n")
-            if token is not None:
-                self.motion_coordinator.release(token)
-            if self.run_motion_token == token:
-                self.run_motion_token = None
-            self.set_test_inputs_state("normal")
-            self.buttons[0].configure(state="normal")
-            self.manual_mode_toggle.configure(state="normal")
-            if self.odrive_controller:
-                self._refresh_motion_controls()
-            if self.run_metadata is not None and not self.run_finalized:
-                self.completed_cycles = 0
-                self.finalize_run(
-                    "error",
-                    str(exc),
-                    idle_confirmed=self.motion_coordinator.motor_idle_confirmed,
+            if self.strain_thread is None or not self.strain_thread.is_alive():
+                self.cleanup_thread = threading.Thread(
+                    target=self._cleanup_failed_start, args=(str(exc),),
+                    name="east-failed-start-cleanup", daemon=True,
                 )
+                self.cleanup_thread.start()
+
+    def _cleanup_failed_start(self, error):
+        stop = self.stop_worker
+        if stop is not None:
+            stop.join()
+        data = self.data_collection_thread
+        if data is not None and data.is_alive():
+            data.join()
+        try:
+            statistics = self.rotary_sensor.finish_recording()
+            if self.run_metadata is not None:
+                self.run_metadata["rotary_sensor"]["recording_statistics"] = statistics
+        except Exception as exc:
+            self.update_terminal(f"Rotary cleanup failed: {exc}\n")
+        token = self.run_motion_token
+        if token is not None and self.motion_coordinator.motor_idle_confirmed:
+            self.motion_coordinator.release(token)
+            self.run_motion_token = None
+        self.strain_test_active = False
+        if self.run_metadata is not None and not self.run_finalized:
+            self.finalize_run("error", error,
+                              idle_confirmed=self.motion_coordinator.motor_idle_confirmed)
     
 
 
@@ -3066,27 +3176,35 @@ class MyInterface:
             self.test_stop_event.set()
             # Motor idle is requested before waiting for acquisition or closing devices.
             if not idle_confirmed:
-                idle_result = self.safe_idle_motor(final_status, token=token)
+                self._request_coordinated_stop(final_error or final_status,
+                                               fault=final_status == "error")
+                worker = self.stop_worker
+                if worker is not None and worker is not threading.current_thread():
+                    worker.join(timeout=self.system_config["reference"]["idle_confirmation_timeout_s"] + 0.25)
+                idle_result = self.stop_result if worker is not None and not worker.is_alive() else None
                 if not idle_result or not idle_result.confirmed:
                     final_status = "error"
                     suffix = "ODrive idle was not confirmed"
                     final_error = f"{final_error}; {suffix}" if final_error else suffix
                 else:
                     idle_confirmed = True
-            if hasattr(self, "data_collection_thread"):
+            data_alive = False
+            if self.data_collection_thread is not None:
                 self.data_collection_thread.join(timeout=2.0)
-                if self.data_collection_thread.is_alive():
+                data_alive = self.data_collection_thread.is_alive()
+                if data_alive:
                     final_status = "error"
                     suffix = "data acquisition thread did not stop within 2 seconds"
                     final_error = f"{final_error}; {suffix}" if final_error else suffix
-            try:
-                rotary_stats = self.rotary_sensor.finish_recording()
-                if self.run_metadata is not None:
-                    self.run_metadata["rotary_sensor"]["recording_statistics"] = rotary_stats
-            except Exception as exc:
-                self.acquisition_error = str(exc)
-                if self.run_metadata is not None:
-                    self.run_metadata["rotary_sensor"]["recording_statistics"] = self.rotary_sensor.last_recording_statistics
+            if not data_alive:
+                try:
+                    rotary_stats = self.rotary_sensor.finish_recording()
+                    if self.run_metadata is not None:
+                        self.run_metadata["rotary_sensor"]["recording_statistics"] = rotary_stats
+                except Exception as exc:
+                    self.acquisition_error = str(exc)
+                    if self.run_metadata is not None:
+                        self.run_metadata["rotary_sensor"]["recording_statistics"] = self.rotary_sensor.last_recording_statistics
             final_status, final_error = reconcile_run_outcome(
                 candidate_completed=candidate_completed,
                 stop_requested=stop_was_requested or self.operator_stop_requested,
@@ -3094,11 +3212,20 @@ class MyInterface:
                 current_status=final_status,
                 current_error=final_error,
             )
-            # The shared Bridge remains connected between normal tests.
-            if token is not None:
+            # A surviving stop/acquisition worker keeps ownership until it exits.
+            live_cleanup = [thread for thread in (self.stop_worker, self.data_collection_thread,
+                                                  self.failure_metadata_worker)
+                            if thread is not None and thread.is_alive()]
+            if live_cleanup and token is not None:
+                self.cleanup_thread = threading.Thread(
+                    target=self._release_run_ownership_when_workers_exit,
+                    args=(token, live_cleanup, data_alive), name="east-run-cleanup", daemon=True,
+                )
+                self.cleanup_thread.start()
+            elif token is not None:
                 self.motion_coordinator.release(token)
-            if self.run_motion_token == token:
-                self.run_motion_token = None
+                if self.run_motion_token == token:
+                    self.run_motion_token = None
             self.strain_test_active = False
             if final_status == "completed":
                 self.update_terminal(
@@ -3109,6 +3236,41 @@ class MyInterface:
                 final_error,
                 idle_confirmed=idle_confirmed,
             )
+
+    def _release_run_ownership_when_workers_exit(self, token, workers, finish_rotary=False):
+        for worker in workers:
+            worker.join()
+        cleanup_ok = True
+        if finish_rotary:
+            try:
+                statistics = self.rotary_sensor.finish_recording()
+                with self.finalize_lock:
+                    if self.run_metadata is not None:
+                        self.run_metadata["rotary_sensor"]["recording_statistics"] = statistics
+                        write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
+            except Exception as exc:
+                cleanup_ok = False
+                self.ui_message_queue.put(("terminal", f"Delayed rotary cleanup failed: {exc}\n"))
+        if self.motion_coordinator.motor_idle_confirmed:
+            self.motion_coordinator.release(token)
+            if self.run_motion_token == token:
+                self.run_motion_token = None
+            self.ui_message_queue.put(("reference",))
+            if self.run_finalized and cleanup_ok:
+                with self.finalize_lock:
+                    if self.run_metadata is not None:
+                        self.run_metadata["outcome_pending_cleanup"] = False
+                        self.run_metadata["idle_confirmation"]["confirmed"] = True
+                        self.run_metadata["idle_confirmation"]["motion_owner"] = None
+                        try:
+                            write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
+                        except Exception as exc:
+                            cleanup_ok = False
+                            self.run_metadata["outcome_pending_cleanup"] = True
+                            self.ui_message_queue.put(("terminal", f"Cleanup metadata update failed: {exc}\n"))
+                if cleanup_ok:
+                    self.ui_message_queue.put(("inputs", "normal"))
+                    self.ui_message_queue.put(("run_buttons", "normal"))
 
     def command_position_and_wait(
         self,
@@ -3156,7 +3318,7 @@ class MyInterface:
             self.system_config["reference"]["settle_velocity_limit_deg_s"],
             self.system_config,
         )
-        self.reference_manager.write_checkpoint(
+        self._write_runtime_checkpoint(
             MotionState.MOVING,
             snapshot,
             clean_shutdown=False,
@@ -3226,13 +3388,21 @@ class MyInterface:
             while not self.test_stop_event.is_set():
                 voltage_ratio = self.voltage_ratio_input.getVoltageRatio()
                 self.log_strain_data(voltage_ratio, self.current_cycle)
+                now = time.monotonic()
+                lateness = max(0.0, now - next_sample)
+                if lateness >= interval_s:
+                    self.acquisition_overruns += int(lateness / interval_s)
+                    self.maximum_acquisition_lateness_s = max(
+                        self.maximum_acquisition_lateness_s, lateness
+                    )
                 next_sample += interval_s
-                time.sleep(max(0.0, next_sample - time.monotonic()))
+                if next_sample <= now:
+                    next_sample = now + interval_s
+                self.test_stop_event.wait(max(0.0, next_sample - time.monotonic()))
         except Exception as exc:
             self.acquisition_error = f"data acquisition error: {exc}"
             self.update_terminal(f"Error reading strain data: {exc}\n")
-            self.test_stop_event.set()
-            self.safe_idle_motor("data acquisition error", token=self.run_motion_token)
+            self._request_coordinated_stop(self.acquisition_error, fault=True)
         finally:
             if self.strain_data_buffer:
                 try:
@@ -3244,7 +3414,7 @@ class MyInterface:
                     self.strain_data_buffer = []
                 except Exception as exc:
                     self.acquisition_error = f"CSV flush error: {exc}"
-                    self.test_stop_event.set()
+                    self._request_coordinated_stop(self.acquisition_error, fault=True)
                     self.update_terminal(f"SAFETY STOP: {self.acquisition_error}\n")
             self.acquisition_done_event.set()
 
@@ -3252,12 +3422,16 @@ class MyInterface:
         with self.finalize_lock:
             if self.run_finalized or self.run_metadata is None:
                 return
-            self.run_finalized = True
             self.run_metadata["run_status"] = status
             self.run_metadata["completed_at"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
             self.run_metadata["sample_count"] = self.sample_count
             self.run_metadata["completed_cycles"] = self.completed_cycles
             self.run_metadata["error"] = error
+            self.run_metadata["outcome_pending_cleanup"] = (
+                not idle_confirmed or self.motion_coordinator.owner is not None
+            )
+            self.run_metadata["acquisition_overruns"] = self.acquisition_overruns
+            self.run_metadata["maximum_acquisition_lateness_s"] = self.maximum_acquisition_lateness_s
             self.run_metadata["machine_zero_reference_final"] = (
                 self.reference_manager.metadata_snapshot()
             )
@@ -3271,12 +3445,12 @@ class MyInterface:
             self.run_metadata["achieved_average_sample_rate_hz"] = (
                 self.sample_count / duration_s if duration_s > 0 else 0.0
             )
-            try:
-                self.run_metadata["odrive_final_configuration"] = self.odrive_configuration_snapshot()
-            except Exception as exc:
-                self.run_metadata["odrive_final_configuration_error"] = str(exc)
+            self.run_metadata["odrive_final_configuration_error"] = (
+                "Live diagnostic omitted during finalization to avoid blocking run outcome"
+            )
             try:
                 write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
+                self.run_finalized = True
             except Exception as exc:
                 status = "error"
                 self.run_metadata["run_status"] = "error"
@@ -3288,8 +3462,9 @@ class MyInterface:
             colour = GREEN if status == "completed" else AMBER if status == "aborted" else RED
             idle_label = "IDLE" if idle_confirmed else "IDLE UNCONFIRMED"
             self.set_status(f"{status.upper()} / {idle_label}", colour)
-            self.ui_message_queue.put(("inputs", "normal"))
-            self.ui_message_queue.put(("run_buttons", "normal"))
+            if self.run_finalized and self.motion_coordinator.motor_idle_confirmed and self.motion_coordinator.owner is None:
+                self.ui_message_queue.put(("inputs", "normal"))
+                self.ui_message_queue.put(("run_buttons", "normal"))
 
     def stop_strain_test(self):
         """Stop the strain test"""
@@ -3422,7 +3597,7 @@ class MyInterface:
         torque_data = []
         self.plot_canvas = None
 
-    def update_plot_data(self, angle, torque):
+    def update_plot_data(self, angle, torque, redraw=True):
         """Add a data point and redraw from the Tk main thread."""
         global angle_data, torque_data
 
@@ -3434,7 +3609,8 @@ class MyInterface:
                 if len(angle_data) > max_points:
                     angle_data = angle_data[-max_points:]
                     torque_data = torque_data[-max_points:]
-                self.update_plot()
+                if redraw:
+                    self.update_plot()
         except Exception as e:
             self.update_terminal(f"Error updating plot: {str(e)}\n")
 
@@ -3559,7 +3735,7 @@ class MyInterface:
             else:
                 self.enter_closed_loop(token)
             snapshot = self.get_feedback()
-            self.reference_manager.write_checkpoint(
+            self._write_runtime_checkpoint(
                 MotionState.MOVING, snapshot, clean_shutdown=False,
                 extra={"phase": "rotary_calibration_step" if calibration_reference is not None else "manual_step",
                        "target_turns": target, "requested_step": direction * requested, "step_units": units,
@@ -3638,7 +3814,7 @@ class MyInterface:
                 self.motion_coordinator.assert_active(token)
                 snapshot = self.get_feedback()
                 target = self.clamp_manual_target(snapshot.position_turns + increment)
-                self.reference_manager.write_checkpoint(
+                self._write_runtime_checkpoint(
                     MotionState.MOVING,
                     snapshot,
                     clean_shutdown=False,
@@ -3665,7 +3841,7 @@ class MyInterface:
             self.master.after_cancel(self.movement_timer)
             self.movement_timer = None
         if self.motion_coordinator.owner == "manual-continuous":
-            self.safe_idle_motor("continuous manual movement stop requested")
+            self._request_coordinated_stop("continuous manual movement stop requested")
 
     def prepare_manual_motion(self):
         if not self.manual_mode.get():
@@ -3749,7 +3925,7 @@ class MyInterface:
             )
             self.motion_phase = "returning_to_machine_zero"
             snapshot = self.get_feedback()
-            self.reference_manager.write_checkpoint(
+            self._write_runtime_checkpoint(
                 MotionState.MOVING,
                 snapshot,
                 clean_shutdown=False,
@@ -3848,7 +4024,7 @@ class MyInterface:
         else:
             self.neutral_stop_event.set()
             self.stop_continuous_movement()
-            self.safe_idle_motor("manual mode disabled")
+            self._request_coordinated_stop("manual mode disabled")
             # Disable manual controls
             self.left_arrow.configure(state="disabled")
             self.right_arrow.configure(state="disabled")

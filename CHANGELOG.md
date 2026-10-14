@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Moved periodic reference checkpoints and audit events off the ODrive feedback thread; serialized required motion/idle checkpoints through the same bounded writer and fail closed on write/backlog errors without extending freshness limits.
+- Made Stop, rotary faults and shutdown latch cancellation promptly, with one tracked idle worker. Stalled communication leaves idle unconfirmed and motion ownership held until workers exit.
+- Persisted incomplete run outcomes before optional diagnostics; bounded GUI queue batches and plot redraws; recorded skipped acquisition intervals rather than generating catch-up samples.
+- Added asynchronous worker-stack diagnostics and offline contention/persistence regression tests. Windows hardware behavior still requires bench verification.
+
 - Reject isolated over-duration idle feedback reads and allow bounded retries without discarding machine zero. Fresh feedback must confirm unchanged idle state, position, disarm reason and advancing uptime. Motor enable remains blocked during retries; powered motion, controller faults, reset evidence and exhausted retries retain the stop path.
 
 - Added explicit passive Sensor only calibration capture without a verified motor zero. Preserves independent angle and sensor readings, retains available turns as unverified observations, excludes them from motor conversion, and retains motor stop/zero requirements.

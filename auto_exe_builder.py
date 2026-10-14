@@ -141,6 +141,7 @@ try:
         "--hidden-import", "east_core",
         "--hidden-import", "east_odrive",
         "--hidden-import", "east_reference",
+        "--hidden-import", "east_runtime",
         "--hidden-import", "east_rotary_sensor",
         "--hidden-import", "east_rotary_gui",
         "--hidden-import", "east_rotary_calibration",

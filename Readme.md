@@ -4,7 +4,13 @@ EAST controls the motorised benchtop tester and records sagittal-plane AFO angle
 
 This repository is research software. The 2.055 AFO-degrees-per-ODrive-turn mechanical conversion is accepted. Load calibration, torque geometry, operating limits, and protocol acceptance criteria remain provisional until experimentally verified. Do not use the system for formal AFO testing until those remaining checks are complete.
 
-## Compact GUI and timestamp handling — EAST 1.7.1
+## Responsive stop and checkpointing - EAST 1.7.2
+
+Stop and rotary faults now latch cancellation on the GUI thread and request idle in a tracked background worker. Periodic machine-reference checkpoints run on a separate bounded persistence worker, so disk flushing cannot directly stall feedback acquisition; required motion/idle checkpoints remain durable and ordered. ODrive I/O-lock waits are bounded, but a stalled Fibre property call cannot be interrupted by Python. EAST reports `IDLE UNCONFIRMED`, retains motion ownership, writes a worker-stack diagnostic in the per-user EAST state directory, and blocks further motion. Use the physical E-stop if movement continues or idle is unconfirmed. Do not force-close Python except as a last resort after securing the machine; a forced close cannot finalize every file.
+
+Run metadata records incomplete/error outcomes, acquisition overruns and maximum lateness. A gap after a CSV flush is an actual sampling gap, not interpolated data. Existing failed `RS_0_20261014` files remain original evidence. Before formal testing on Windows, follow the stationary and empty-machine checks in [the verification protocol](docs/VERIFICATION_PROTOCOL.md). Offline tests do not establish physical stop time or speed.
+
+## Compact GUI and timestamp handling - EAST 1.7.1
 
 Use the main green Connect button for all hardware. A healthy live ODrive connection is reused on retries, preserving its existing zero state. The extra top sensor panel and duplicate commanded-settings summary are removed; connection/measurement issues appear in the Session Terminal. The machine-zero section contains its status and full-width Set/Return buttons, with setup instructions in the popup.
 
@@ -156,6 +162,7 @@ python -m pip install -r requirements-gui-preview.txt
 - `east_core.py`: hardware-independent validation, conversions, load/torque calculations, and metadata helpers
 - `east_reference.py`: persistent reference state, atomic checkpoints, process lock, motion ownership, and settle validation
 - `east_odrive.py`: serialized ODrive reads/writes and read-only capability inspection
+- `east_runtime.py`: bounded background checkpoint persistence and stalled-worker diagnostics
 - `tester_config.json`: hardware assumptions, calibration values, limits, and sampling settings
 - `analysis/verify_speed.py`: angle-time speed verification
 - `Testing Scripts/gui-layout-preview.py`: Mac-safe GUI layout preview with no hardware imports
