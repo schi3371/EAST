@@ -60,11 +60,15 @@ A direct module-name invocation of the integration test failed to import sibling
 
 ## Physical and GUI verification status
 
-- Stationary motor-only ODrive diagnostic: **NOT TESTED**
-- Stationary ODrive + Bridge + rotary diagnostic: **NOT TESTED**
-- Timing/rate/gap analysis: **NOT TESTED**
-- GUI Connect/recovery: **NOT TESTED**
-- Terminal versus Plot comparison: **NOT TESTED**
+- Stationary motor-only ODrive diagnostic: **COMPLETED 2026-10-15**; evidence in
+  `Diagnostics/20261015-113317/`
+- Stationary ODrive + Bridge + rotary diagnostic: **COMPLETED 2026-10-15**; evidence
+  in `Diagnostics/20261015-114046/`
+- Standalone and idle-GUI timing/rate/gap analysis: **COMPLETED**
+- Initial normal GUI Connect: **COMPLETED**; failure and reconnect/recovery remain
+  **NOT TESTED**
+- Stationary Terminal versus idle/empty Plot comparison: **COMPLETED**; live populated
+  plotting remains **NOT TESTED**
 - Stop/Escape: **NOT TESTED**
 - Quit and visible isolation-exit workflow: **NOT TESTED**
 - Physical machine zero: **NOT TESTED**
@@ -218,11 +222,182 @@ not verify Stop, reconnect, or shutdown recovery.
 - Final implementation commit: the commit containing this report; its immutable hash
   is recorded in the Git history and the completion handoff after push.
 - Offline corrections and deterministic verification: **PASS**.
-- Hardware and GUI checks listed above: **NOT TESTED** in this corrective session.
+- Later stationary hardware/GUI checks are recorded below; all remaining physical
+  stages retain their explicit **NOT TESTED** status.
 - The previously completed empty-machine runs are not substitutes for the outstanding
   staged bench checks.
 - The reported freezing problem is **not declared resolved** from offline checks or the
   four completed runs alone.
-- Next outstanding check: stationary, read-only, motor-only ODrive diagnostics, only
-  after the physically present operator confirms the fixture is stationary and all
-  other hardware applications are closed. No hardware step was started here.
+- Next outstanding check: connection failure and stationary disconnect/reconnect
+  recovery. It has not been started.
+
+## Stationary standalone hardware evidence — 2026-10-15
+
+After the operator reported the fixture stationary and competing hardware applications
+closed, the documented read-only captures completed without motion/arming requests,
+controller error clearing, configuration saving, or production-limit changes.
+
+- Motor only: 2,165 samples, zero acquisition exceptions, 72.17 Hz achieved,
+  16/31/47/94 ms median/p95/p99/maximum gaps, and 63 ms maximum snapshot.
+- ODrive + Bridge + rotary: 2,073 motor samples, zero acquisition exceptions,
+  69.10 Hz achieved, 16/31/62/79 ms gaps, and 78 ms maximum snapshot.
+- Bridge: 2,073 persisted rows, 69.14 Hz achieved, 79 ms maximum gap, no reported
+  recorder error.
+- Rotary: 3,751 valid events, 125.0 Hz achieved, 47 ms maximum host-monotonic gap,
+  1,896 tied host timestamps, accepted P3022 profile, and no recording error.
+- Both motor captures had zero adapter lock wait. Standalone transport queue timing is
+  unavailable. Combined motor rate was 4.25% below motor-only; typical gaps were
+  unchanged, while selected tail metrics changed by 15 ms.
+
+The raw files and detailed comparison are preserved in the evidence folders. These
+stationary standalone results do not validate powered motion or resolve the reported
+GUI freezing.
+
+## Stationary GUI Terminal/Plot evidence — 2026-10-15
+
+Normal Connect requested/confirmed controller IDLE and settled at **CONNECTED /
+MACHINE-ZERO SETUP REQUIRED**. This differs from the strictly read-only standalone
+diagnostics. No zero/tare, arming, motion, test, error clearing, or controller save was
+performed. Original runtime JSONs and preserved copies are recorded in
+`Diagnostics/20261015-114947/`.
+
+Analysis used only the final 20 motor-seconds before each save to avoid double-counting
+the rolling history. Terminal recorded 794 samples at 39.65 Hz with 31/46/62/93 ms
+median/p95/p99/maximum gaps and a 62 ms maximum snapshot. Idle Plot recorded 699 samples
+at 34.90 Hz with 31/47/63/78 ms gaps and a 47 ms maximum snapshot. Terminal/Plot maximum
+queue waits were 16/0 ms and lock waits were 0/0 ms. The connection-settling baseline
+had larger tails.
+
+GUI maximum drain duration remained 16 ms. Its cumulative 735 ms maximum gap existed at
+baseline and did not increase, so it was not attributed to a tab. Rotary remained
+connected, valid, ready, within fit range, and near 124.6 Hz. The operator reported
+responsive switching, resizing, and scrolling at 150% scaling, with no visible pause,
+feedback fault, blocked operation, or exception. The configured launch size was
+1040 x 496; exact resized dimensions were not captured.
+
+Normal Connect opened the Bridge interface, but continuous force acquisition and sensor
+recording were inactive. Plot was idle/empty; no live acquisition data populated it.
+GUI monitoring waits 8 ms after each completed capture, unlike standalone deadline
+scheduling, so their achieved rates are not directly equivalent. This stationary check
+does not validate live plotting, powered motion, Stop, reconnect, shutdown, or resolution
+of the freezing problem. The next outstanding stage is connection failure and stationary
+disconnect/reconnect recovery; it remains **NOT TESTED**.
+
+## Connection recovery stage blocker — 2026-10-15
+
+The staged connection-recovery check stopped before its first action. The operator could
+not find a Disconnect control, and source inspection confirmed that the current GUI
+wires Connect, Start, and Stop but does not wire the existing `disconnect_odrive()`
+method to a button or menu command. Invoking it indirectly would not verify the normal
+operator workflow, and patching production code was outside this diagnostic stage.
+
+No Disconnect and no ODrive USB unplug/replug occurred. Consequently idle confirmation,
+worker/transport retirement, hardware release, absent-device Connect, reconnect,
+communication-loss detection, reference invalidation, connection-generation recovery,
+and retired-publication protection on real hardware all remain **NOT TESTED**. EAST was
+left connected in the preceding stationary idle state with machine zero unverified.
+Evidence is preserved in `Diagnostics/20261015-120315/`.
+
+## Corrected visible-Connect communication-loss recovery — 2026-10-15
+
+The missing manual Disconnect finding above remains preserved. The procedure was
+corrected without adding a control or invoking `disconnect_odrive()` indirectly. The
+operator performed a planned ODrive-only USB loss/reconnect while the fixture remained
+stationary; Bridge, rotary, enclosure, motor supply, E-stop, and sensor coupling were
+unchanged. Evidence is in `Diagnostics/20261015-121020/`.
+
+Fresh precheck evidence showed controller IDLE, zero active errors, motion state idle,
+ready lifecycle, valid rotary health, and unverified machine coordinates. After USB loss,
+a 218 ms delayed sample was rejected at 12:12:26.096. A transient restored-sample notice
+was followed by monitor failure, Stop latch, and **Motor idle NOT CONFIRMED**. The fault
+checkpoint at 12:12:40.108 contained no feedback, motion state `fault`, reference
+confidence `fault`, and no session mapping. Earlier idle evidence was not presented as
+fresh confirmation.
+
+One visible Connect attempt while ODrive remained absent retired the unhealthy retained
+path, attempted rediscovery, and returned “Recovery discovery failed or was cancelled;
+reference remains invalid.” Controls and tab/window interaction became responsive again.
+No competing retry was started.
+
+After the operator reconnected only ODrive USB, one visible Connect attempt reported the
+retained connection retired/replaced, rediscovered the controller, and restored
+monitoring. Final fresh evidence showed controller IDLE, zero active errors, motion state
+idle, engine `ready`, reference confidence `recovery_required`, and no session mapping.
+Status was **MONITOR RESTORED / MACHINE-ZERO SETUP REQUIRED**. No test or positioning
+operation resumed.
+
+The replacement path requires successful old-transport retirement before rediscovery.
+The numeric connection generation is not serialized; the executed single-increment path
+implies generation 1 → 2. Continued new samples and no recurring stale fault support
+successful replacement-monitor publication and fault-latch recovery, though the latch
+itself is not serialized. Manual Disconnect and fresh-launch absent-device Connect remain
+separately **NOT TESTED**, along with Stop, Quit/shutdown, live plotting/acquisition, and
+powered motion. This successful stationary recovery does not resolve the freezing issue.
+
+## Ordinary stationary operator checks — 2026-10-15
+
+Evidence is preserved in `Diagnostics/20261015-122448/`; final GUI JSON original paths
+and hashes are recorded in that folder's report.
+
+Stop and Escape while already idle each displayed Stop latched followed by Motor idle
+confirmed, and controls remained usable. These validate idle-state input/cleanup only,
+not powered stopping. Ordinary Quit closed without delay, blocker, or exception; the
+prior EAST processes disappeared and no Python worker remained. Its final checkpoint
+had fresh IDLE feedback and zero errors, but retained dirty/unverified continuity.
+
+After clean exit, a fresh launch with only ODrive USB absent returned `Connection timed
+out: ODrive 3943355F3231 was not found`. The GUI stayed responsive; Bridge connected and
+rotary became valid/ready. Ordinary closure exited with code 0 and no Python worker.
+
+After USB restoration, one Connect restored the matching controller with zero active
+errors, load-cell connection, and accepted rotary calibration. Nothing resumed and
+motion stayed blocked pending machine zero. The final rolling capture had 2,048 motor
+observations over 48.203 s (42.47 Hz), 16/47/63/94 ms gaps, 0/16/47/79 ms capture
+durations, 16 ms maximum queue wait, zero lock wait, and valid rotary at 124.57 Hz.
+EAST was left connected and idle with reference unverified.
+
+The earlier 14.012 s USB-loss interval is only an envelope from the timestamp of the
+218 ms rejected capture to durable fault-checkpoint completion. The transient retry,
+later property failure, Stop dispatch, failed idle confirmation, and persistence stages
+lack individual timestamps. Configured values bound parts of the path (8 ms poll wait,
+up to two qualified retries within 1,000 ms, 1.0 s idle-confirmation deadline), but
+Fibre property calls have no cancellable per-call deadline. No exact partition was
+invented and the hardware fault was not rerun.
+
+Manual Disconnect remains an interface limitation. Powered Stop, live acquisition and
+populated plotting, blocked-shutdown recovery, and powered motion remain **NOT TESTED**.
+These stationary checks do not resolve the freezing problem.
+
+## Supervised functional verification batch — 2026-10-15
+
+Detailed evidence and per-run timing are in `Diagnostics/20261015-130418/`. The operator
+reported successful physical 90° machine zero, matching 16-sample empty tare, actual
+motion Stop, completed motion, populated-plot responsiveness, and ordinary Quit.
+
+The requested interrupted ±5° 1°/s run finalized as `aborted / operator stop`, with
+fresh confirmed IDLE, zero active errors, 306/306 rows persisted, complete recorder
+worker, and no monitor/rotary/persistence error. A subsequent GUI warning stated that
+Stop/cleanup was still running and emitted a stalled-worker diagnostic as the next run
+started. Later clean completions do not erase that warning; it remains an unresolved
+sequencing limitation and the batch should have stopped there under the requested rule.
+
+The requested ±10° three-cycle runs completed at 1°/s and 5°/s with 3/3 cycles, normal
+machine-zero returns, confirmed IDLE, zero active errors, complete persistence, valid
+measurements, and no monitor/recorder/rotary error. Acquisition achieved 64.35 and
+63.29 Hz; independent rotary recording achieved 125.00 and 124.96 Hz. The operator
+reported the populated Plot and GUI remained responsive.
+
+An extra completed ±5° 1°/s run and unrequested ±10° runs at 10°/s and 20°/s were also
+created. They are preserved and passed their metadata/CSV integrity checks, but the
+higher-speed files are not treated as a planned progression or broad reliability proof.
+All six run sets were labelled `custom` rather than the intended named empty-machine
+preset, although they retain the same verified reference and valid empty tare.
+
+Across all six runs, acquisition was 63.29–65.29 Hz, independent rotary recording was
+124.96–125.00 Hz, rotary maximum gaps were 31–32 ms, and there were zero invalid rotary
+samples or nonzero-error CSV rows. All recorders completed with no pending rows. Ordinary
+Quit wrote a clean checkpoint with controller IDLE, zero errors, verified reference and
+clean continuity, and no EAST/Python process remained.
+
+Blocked-shutdown/isolation recovery remains **NOT TESTED**. The cleanup warning and
+limited run count mean the freezing problem is not declared categorically resolved.
