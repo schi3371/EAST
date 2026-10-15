@@ -8,7 +8,7 @@ import queue
 import tempfile
 import threading
 import time
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 import json
@@ -126,11 +126,15 @@ class MonitorIntegrationTests(unittest.TestCase):
                             checkpoint_writer=Mock(), _request_coordinated_stop=Mock(),
                             test_stop_event=threading.Event(), neutral_stop_event=threading.Event(),
                             continuous_stop_event=threading.Event(), ui_message_queue=queue.Queue(),
-                            _mark_control_health=Mock(),monitor_error=None)
+                            _mark_control_health=Mock(),monitor_error=None,
+                            feedback_fault_reason=None,odrive_connection_generation=1,
+                            engine=SimpleNamespace(record=Mock()))
+        app._record_feedback_observation=MethodType(gui_method('_record_feedback_observation'),app)
+        app._latch_feedback_fault=MethodType(gui_method('_latch_feedback_fault'),app)
         app.monitor_stop_event.is_set.side_effect=[False]*len(observations)+[True]
         app.odrive_adapter.snapshot.side_effect=observations
         app.odrive_adapter.request_idle.return_value=SimpleNamespace(confirmed=True)
-        gui_method('_feedback_monitor_loop')(app)
+        gui_method('_feedback_monitor_loop')(app,1,app.odrive_adapter)
         return app
 
     def test_idle_delay_preserves_zero_publishes_only_fresh_checkpoint(self):

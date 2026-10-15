@@ -155,10 +155,16 @@ class FullApplicationIntegration(unittest.TestCase):
         self.assertEqual(self.app.buttons[1].cget('state'),'disabled')
 
     def test_stopped_monitor_recovery_restarts_monitor_and_requires_reference(self):
-        self.ready();self.app._stop_feedback_monitor();self.app.monitor_error='SIMULATED failure'
+        self.ready();self.app._stop_feedback_monitor()
+        self.assertTrue(self.app._latch_feedback_fault(
+            'SIMULATED failure', self.app.odrive_connection_generation, self.app.odrive_adapter))
+        self.assertFalse(self.app.engine.evidence['feedback_health']['healthy'])
         self.app.connect_system()
         self.pump(lambda:self.app.engine.busy is None and self.app.monitor_thread is not None and self.app.monitor_thread.is_alive())
         self.assertIsNone(self.app.monitor_error)
+        self.assertIsNone(self.app.feedback_fault_reason)
+        self.assertTrue(self.app.engine.evidence['feedback_health']['healthy'])
+        self.assertTrue(self.app.engine.evidence['feedback_recovery']['validated'])
         self.assertFalse(self.app.reference_manager.verified)
         self.assertIsNone(self.app.empty_machine_tare)
         self.assertTrue(self.app.motion_coordinator.motor_idle_confirmed)
@@ -218,11 +224,59 @@ class FullApplicationIntegration(unittest.TestCase):
 
     def test_idle_observation_survives_late_followup_read_and_separate_checkpoint(self):
         self.ready()
-        self.app._read_adapter_feedback=lambda **kwargs:(_ for _ in ()).throw(RuntimeError('SIMULATED late diagnostic'))
-        result=self.app.engine.submit('idle observation',lambda:self.app.safe_idle_motor('SIMULATED Stop')).result(3)
-        self.assertTrue(result.confirmed)
-        self.assertTrue(self.app.motion_coordinator.motor_idle_confirmed)
+        publication_armed=threading.Event();publication_entered=threading.Event()
+        release_publication=threading.Event();publication_finished=threading.Event()
+        original=self.app._record_feedback_observation
+        def gated_publication(*args):
+            if publication_armed.is_set() and not publication_finished.is_set():
+                publication_entered.set()
+                self.assertTrue(release_publication.wait(1))
+            accepted=original(*args)
+            if publication_entered.is_set():publication_finished.set()
+            return accepted
+        self.app._record_feedback_observation=gated_publication
+        publication_armed.set()
+        self.assertTrue(publication_entered.wait(1))
+        try:
+            self.app._read_adapter_feedback=lambda **kwargs:(_ for _ in ()).throw(RuntimeError('SIMULATED late diagnostic'))
+            result=self.app.engine.submit('idle observation',lambda:self.app.safe_idle_motor('SIMULATED Stop')).result(3)
+            release_publication.set()
+            self.assertTrue(publication_finished.wait(1))
+            self.assertTrue(result.confirmed)
+            self.assertTrue(self.app.motion_coordinator.motor_idle_confirmed)
+            self.assertIn('SIMULATED late diagnostic',self.app.monitor_error)
+            self.assertFalse(self.app.engine.evidence['feedback_health']['healthy'])
+            self.assertIn('SIMULATED late diagnostic',self.app.engine.evidence['feedback_health']['reason'])
+            self.assertGreaterEqual(
+                self.app.engine.evidence['feedback_latest']['recorded_at'],result.observed_monotonic_s)
+            self.assertTrue(self.app.engine.evidence['persistence_health']['healthy'])
+            self.assertEqual(self.app.last_idle_observation['observed_at'],result.observed_at)
+            self.assertFalse(self.app.reference_manager.verified)
+            self.assertEqual(self.app.reference_manager.confidence.value,'fault')
+            self.assertFalse(self.app._transport_motion_allowed())
+            command=Mock();self.app.odrive_adapter.request_closed_loop_holding_current=command
+            with self.assertRaisesRegex(self.module.FeedbackError,'Recover the stopped feedback monitor'):
+                self.app.enter_closed_loop(None)
+            command.assert_not_called()
+        finally:
+            release_publication.set()
+
+    def test_failed_feedback_recovery_preserves_fault_latch(self):
+        self.ready();self.app._stop_feedback_monitor()
+        self.assertTrue(self.app._latch_feedback_fault(
+            'SIMULATED feedback fault', self.app.odrive_connection_generation, self.app.odrive_adapter))
+        self.app.odrive_adapter.request_idle=Mock(side_effect=RuntimeError('SIMULATED recovery read failed'))
+        self.module.MyInterface.find_odrive_with_timeout=staticmethod(lambda *args:None)
+        self.app.connect_system()
+        self.pump(lambda:self.app.engine.busy is None)
+        self.assertEqual(self.app.feedback_fault_reason,'SIMULATED feedback fault')
         self.assertFalse(self.app.engine.evidence['feedback_health']['healthy'])
-        self.assertTrue(self.app.engine.evidence['persistence_health']['healthy'])
-        self.assertEqual(self.app.last_idle_observation['observed_at'],result.observed_at)
         self.assertFalse(self.app.reference_manager.verified)
+
+    def test_retired_connection_cannot_publish_feedback(self):
+        self.ready()
+        old_adapter=self.app.odrive_adapter;old_generation=self.app.odrive_connection_generation
+        current=self.app.get_feedback();before=dict(self.app.engine.evidence['feedback_latest'])
+        self.app.odrive_connection_generation+=1
+        self.assertFalse(self.app._record_feedback_observation(current,old_generation,old_adapter))
+        self.assertEqual(self.app.engine.evidence['feedback_latest'],before)

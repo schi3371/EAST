@@ -225,6 +225,7 @@ class MyInterface:
         self.feedback_lock = threading.RLock()
         self.latest_feedback = None
         self.monitor_error = None
+        self.feedback_fault_reason = None
         self.feedback_retry_pending = False
         self.monitor_thread = None
         self.expected_axis_state = None
@@ -1164,15 +1165,17 @@ class MyInterface:
             if prior_writer.thread.is_alive():
                 raise RuntimeError("Previous checkpoint writer is still running")
         self.monitor_stop_event = threading.Event()
-        self.monitor_error = None
         self.feedback_retry_pending = False
         self.checkpoint_writer = CheckpointWriter(
             self.reference_manager,
             lambda exc: self._persistence_fault("persistence_health", exc),
         )
         self.checkpoint_writer.start()
+        monitor_connection = self.odrive_connection_generation
+        monitor_adapter = self.odrive_adapter
         self.monitor_thread = threading.Thread(
             target=self._feedback_monitor_loop,
+            args=(monitor_connection, monitor_adapter),
             name="odrive-feedback-monitor",
             daemon=True,
         )
@@ -1251,16 +1254,84 @@ class MyInterface:
         if thread is None or not thread.is_alive():
             self.watchdog_thread = None
 
-    def _feedback_monitor_loop(self):
+    def _record_feedback_observation(self, snapshot, connection_generation, adapter):
+        """Publish a successful read without clearing a latched feedback fault."""
+        with self.feedback_lock:
+            if (connection_generation != self.odrive_connection_generation
+                    or adapter is not self.odrive_adapter):
+                return False
+            previous = self.latest_feedback
+            if previous is None or snapshot.captured_monotonic_s >= previous.captured_monotonic_s:
+                self.latest_feedback = snapshot
+            if getattr(self, "engine", None) is not None:
+                observation = {
+                    "position_at": snapshot.captured_monotonic_s,
+                    "recorded_at": time.monotonic(),
+                    "connection_generation": connection_generation,
+                }
+                self.engine.record("feedback_latest", observation)
+                if self.feedback_fault_reason is None:
+                    self.engine.record("feedback_health", {"healthy": True, **observation})
+            return True
+
+    def _latch_feedback_fault(self, reason, connection_generation=None, adapter=None):
+        """Latch unhealthy feedback until validated connection recovery clears it."""
+        with self.feedback_lock:
+            if (connection_generation is not None
+                    and connection_generation != self.odrive_connection_generation):
+                return False
+            if adapter is not None and adapter is not self.odrive_adapter:
+                return False
+            self.feedback_fault_reason = str(reason)
+            self.monitor_error = str(reason)
+            if getattr(self, "engine", None) is not None:
+                self.engine.record("feedback_health", {
+                    "healthy": False,
+                    "reason": self.feedback_fault_reason,
+                    "connection_generation": self.odrive_connection_generation,
+                })
+            return True
+
+    def _clear_feedback_fault_after_recovery(self, snapshot, connection_generation, adapter):
+        """Clear the latch only after the caller validates an explicit recovery."""
+        snapshot.validate(
+            now_monotonic_s=time.monotonic(),
+            max_age_s=self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
+            max_capture_duration_s=(
+                self.system_config["reference"]["maximum_feedback_capture_ms"] / 1000.0
+            ),
+        )
+        if snapshot.active_errors or snapshot.current_state != int(AXIS_STATE_IDLE):
+            raise RuntimeError("Feedback fault recovery requires fresh error-free controller idle")
+        with self.feedback_lock:
+            if (connection_generation != self.odrive_connection_generation
+                    or adapter is not self.odrive_adapter):
+                raise RuntimeError("Recovered feedback belongs to a retired connection")
+            self.feedback_fault_reason = None
+            self.monitor_error = None
+            self.latest_feedback = snapshot
+            if getattr(self, "engine", None) is not None:
+                observation = {
+                    "position_at": snapshot.captured_monotonic_s,
+                    "recorded_at": time.monotonic(),
+                    "connection_generation": connection_generation,
+                    "validated_recovery": True,
+                }
+                self.engine.record("feedback_latest", observation)
+                self.engine.record("feedback_health", {"healthy": True, **observation})
+                self.engine.record("feedback_recovery", {
+                    "validated": True,
+                    "connection_generation": connection_generation,
+                    "position_at": snapshot.captured_monotonic_s,
+                })
+
+    def _feedback_monitor_loop(self, monitor_connection, monitor_adapter):
         with self.feedback_lock:
             initial = self.latest_feedback
         def publish(snapshot):
-            with self.feedback_lock:
-                previous = self.latest_feedback
-                if previous is None or snapshot.captured_monotonic_s >= previous.captured_monotonic_s:
-                    self.latest_feedback = snapshot
-            if getattr(self, "engine", None) is not None:
-                self.engine.record("feedback_health", {"healthy":True,"position_at":snapshot.captured_monotonic_s})
+            if not self._record_feedback_observation(
+                    snapshot, monitor_connection, monitor_adapter):
+                raise RuntimeError("Retired feedback monitor publication rejected")
             if hasattr(self, "monitor_timings"):
                 self.monitor_timings.append({"position_at": snapshot.captured_monotonic_s,
                     "capture_s": snapshot.capture_duration_s, "lock_wait_s": snapshot.lock_wait_s,
@@ -1286,11 +1357,14 @@ class MyInterface:
             self.ui_message_queue.put(("status", "IDLE / FEEDBACK RESTORED", GREEN))
             self.ui_message_queue.put(("reference",))
         def feedback_fault(reason):
-            if getattr(self, "engine", None) is not None:
-                self.engine.record("feedback_health", {"healthy":False,"reason":reason})
+            if not self._latch_feedback_fault(
+                    reason, monitor_connection, monitor_adapter):
+                return
             self._request_coordinated_stop(reason, fault=True)
         self.feedback_service = FeedbackMonitor(
-            lambda:self.odrive_adapter,self.system_config,self.monitor_stop_event,initial,
+            lambda:(monitor_adapter if monitor_connection == self.odrive_connection_generation
+                    and monitor_adapter is self.odrive_adapter else None),
+            self.system_config,self.monitor_stop_event,initial,
             lambda:(self.expected_axis_state,self.expected_disarm_reason),
             lambda:self.motion_coordinator.owner,publish,checkpoint,self._mark_control_health,
             delay,restored,feedback_fault)
@@ -1434,10 +1508,10 @@ class MyInterface:
                         self.latest_feedback = snapshot
             except Exception as feedback_exc:
                 feedback_failure = str(feedback_exc)
-                self.monitor_error = f"Idle observed, fresh feedback unavailable: {feedback_exc}"
+                feedback_fault = f"Idle observed, fresh feedback unavailable: {feedback_exc}"
+                self._latch_feedback_fault(
+                    feedback_fault, self.odrive_connection_generation, self.odrive_adapter)
                 self.reference_manager.invalidate_local(self.monitor_error, fault=True)
-                if getattr(self, "engine", None) is not None:
-                    self.engine.record("feedback_health", {"healthy":False,"reason":feedback_failure})
                 self.update_terminal(self.monitor_error + "\n")
                 self.ui_message_queue.put(("status", "IDLE OBSERVED / FEEDBACK FAULT", RED))
             try:
@@ -1872,6 +1946,8 @@ class MyInterface:
         with self.feedback_lock:
             self.latest_feedback = evidence.feedback
         self.hardware_fingerprint = evidence.fingerprint
+        self._clear_feedback_fault_after_recovery(
+            evidence.feedback, self.odrive_connection_generation, self.odrive_adapter)
         self._start_feedback_monitor()
         self.engine.transition(Lifecycle.READY)
         self.set_status("MONITOR RESTORED / MACHINE-ZERO SETUP REQUIRED", AMBER)
@@ -2036,6 +2112,8 @@ class MyInterface:
                                 self.reference_manager.invalidate(
                                     f"No continuity checkpoint; {phase_reason}"
                                 )
+            self._clear_feedback_fault_after_recovery(
+                initial, self.odrive_connection_generation, self.odrive_adapter)
             self._start_feedback_monitor()
             self.engine.transition(Lifecycle.READY)
             self._start_watchdog_if_enabled()

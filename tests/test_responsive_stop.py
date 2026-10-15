@@ -12,7 +12,7 @@ import threading
 import time
 from types import MethodType, SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from east_core import (CSV_COLUMNS, ROTARY_RUN_COLUMNS, MOTOR_TIMING_COLUMNS, load_tester_config,
                        reconcile_run_outcome, write_json_atomic)
@@ -122,10 +122,13 @@ class CheckpointWriterTests(unittest.TestCase):
                               feedback_retry_pending=False, motion_coordinator=MotionCoordinator(),
                               monitor_stop_event=ThreePolls(), odrive_adapter=SimpleNamespace(snapshot=capture),
                               checkpoint_writer=writer, ui_message_queue=queue.Queue(),
+                              odrive_connection_generation=1,
+                              _record_feedback_observation=Mock(return_value=True),
+                              _latch_feedback_fault=Mock(return_value=True),
                               _mark_control_health=Mock(), _request_coordinated_stop=Mock())
         bind(app, "_feedback_monitor_loop")
         started = time.monotonic()
-        app._feedback_monitor_loop()
+        app._feedback_monitor_loop(1, app.odrive_adapter)
         self.assertLess(time.monotonic() - started, 0.1)
         self.assertEqual(len(captured), 3)
         app._request_coordinated_stop.assert_not_called()
@@ -608,13 +611,29 @@ class GuiWorkerTests(unittest.TestCase):
         app.update_plot.assert_called_once()
 
     def test_slow_csv_flush_records_overrun_without_immediate_catchup(self):
-        stop = threading.Event()
+        class ControlledClock:
+            def __init__(self): self.now = 0.0
+            def monotonic(self): return self.now
+            def advance(self, seconds): self.now += seconds
+
+        class ControlledStop:
+            def __init__(self, clock): self.clock, self.stopped, self.waits = clock, False, []
+            def is_set(self): return self.stopped
+            def set(self): self.stopped = True
+            def wait(self, seconds):
+                if self.stopped: return True
+                self.waits.append(seconds)
+                self.clock.advance(seconds)
+                return False
+
+        clock = ControlledClock()
+        stop = ControlledStop(clock)
         sample_times = []
 
         def log(*args):
-            sample_times.append(time.monotonic())
+            sample_times.append(clock.monotonic())
             if len(sample_times) == 1:
-                time.sleep(0.05)
+                clock.advance(0.05)
             else:
                 stop.set()
 
@@ -625,11 +644,13 @@ class GuiWorkerTests(unittest.TestCase):
                               acquisition_done_event=threading.Event(),
                               update_terminal=Mock(), _request_coordinated_stop=Mock())
         bind(app, "continuous_strain_read")
-        app.continuous_strain_read()
+        with patch("east_execution.time.monotonic", side_effect=clock.monotonic):
+            app.continuous_strain_read()
         self.assertEqual(len(sample_times), 2)
-        self.assertGreaterEqual(app.acquisition_overruns, 4)
-        self.assertGreater(app.maximum_acquisition_lateness_s, 0.04)
-        self.assertGreater(sample_times[1] - sample_times[0], 0.055)
+        self.assertEqual(sample_times, [0.0, 0.058])
+        self.assertEqual(app.acquisition_overruns, 5)
+        self.assertAlmostEqual(app.maximum_acquisition_lateness_s, 0.042)
+        self.assertEqual(stop.waits, [0.008])
         app._request_coordinated_stop.assert_not_called()
 
     def test_finalization_does_not_request_live_odrive_diagnostics(self):
