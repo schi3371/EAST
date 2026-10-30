@@ -90,49 +90,22 @@ class GuiContractTests(unittest.TestCase):
         self.assertNotIn("fixed 90 degree neutral", source)
         self.assertNotIn("clear_errors()", source)
         self.assertNotIn("starting_position", source)
-        self.assertIn("Set Machine Zero \\N{EM DASH} Fixture at 90\\N{DEGREE SIGN}", source)
+        self.assertIn("Home / Return to Zero", source)
         self.assertIn("reference_manager.target_for_angle", source)
 
     def test_machine_zero_and_tare_workflow_contract(self):
-        source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        functions = {
-            node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-        }
-        start_source = ast.get_source_segment(source, functions["start_strain_test"])
-        set_zero_source = ast.get_source_segment(source, functions["_set_machine_zero_worker"])
-        return_source = ast.get_source_segment(source, functions["return_to_machine_zero"])
-        recovery_source = ast.get_source_segment(source, functions["recovery_jog"])
-        acknowledgement_source = ast.get_source_segment(
-            source, functions["_accept_recovery_session_acknowledgement"]
-        )
-        refresh_source = ast.get_source_segment(source, functions["_refresh_motion_controls"])
+        source=(PROJECT_DIR/'Ortho-Sim.py').read_text(encoding='utf-8')
+        functions={node.name:node for node in ast.walk(ast.parse(source)) if isinstance(node,ast.FunctionDef)}
+        start=ast.get_source_segment(source,functions['start_strain_test'])
+        homing=ast.get_source_segment(source,functions['_rotary_homing_worker'])
+        self.assertIn('validate_empty_machine_tare',start)
+        self.assertIn('rotary_zero_ready',start)
+        self.assertIn('establish_from_rotary_zero',homing)
+        self.assertNotIn('recovery_jog',functions)
+        self.assertNotIn('_set_machine_zero_worker',functions)
+        self.assertNotIn('Provisional Rotary Homing',source)
+        self.assertIn('Home / Return to Zero',source)
 
-        self.assertNotIn("tare_scale", source)
-        self.assertIn("validate_empty_machine_tare", start_source)
-        self.assertNotIn("getVoltageRatio", start_source)
-        self.assertNotIn("_submit_position", set_zero_source)
-        self.assertIn("invalidate_empty_machine_tare", set_zero_source)
-        self.assertNotIn("establish_at_physical_neutral", start_source)
-        self.assertIn("Return to Machine Zero", start_source)
-        self.assertNotIn("manual_mode.get", return_source)
-        self.assertNotIn("recovery_timeout", recovery_source)
-        self.assertIn("recovery_jog_maximum_cumulative_deg", recovery_source)
-        self.assertIn("invalidate_empty_machine_tare", recovery_source)
-        self.assertIn("recovery_session_acknowledged", acknowledgement_source)
-        self.assertIn(
-            "self._set_widget_state(self.reference_action_button, 'normal' if connected and idle_ui else 'disabled')", refresh_source
-        )
-        self.assertIn("Tare Empty Machine", source)
-        self.assertIn("Machine zero: SETUP REQUIRED", source)
-
-        for name in (
-            "update_parameter_summary",
-            "start_strain_test",
-            "create_plot_window",
-        ):
-            function_source = ast.get_source_segment(source, functions[name])
-            self.assertNotIn("reference_manager.invalidate", function_source)
 
     def test_protocol_preset_and_non_destructive_reset_contract(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")

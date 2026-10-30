@@ -1,21 +1,29 @@
-"""Provisional sensor homing policy. No hardware or GUI dependencies."""
+"""Official rotary sensor homing policy. No hardware or GUI dependencies."""
 from dataclasses import dataclass, asdict
 import math
 import time
 
 
+ZERO_TOLERANCE_DEG = 0.10
+ZERO_DWELL_S = 0.5
+
+
 @dataclass(frozen=True)
 class HomingPolicy:
-    tolerance_deg: float = 0.10
-    dwell_s: float = 0.5
+    tolerance_deg: float = ZERO_TOLERANCE_DEG
+    dwell_s: float = ZERO_DWELL_S
     maximum_step_deg: float = 0.5
     maximum_travel_deg: float = 20.0
     maximum_corrections: int = 80
     timeout_s: float = 120.0
 
     def validate(self):
-        if not math.isfinite(self.tolerance_deg) or not 0.05 <= self.tolerance_deg <= 0.5:
-            raise ValueError('Provisional stopping band must be between ±0.05 and ±0.5 degrees')
+        if not math.isfinite(self.tolerance_deg) or self.tolerance_deg != ZERO_TOLERANCE_DEG:
+            raise ValueError('The approved homing acceptance band is fixed at ±0.10 degrees')
+        if (self.dwell_s != ZERO_DWELL_S or not 0 < self.maximum_step_deg <= 0.5
+                or not 0 < self.maximum_travel_deg <= 20 or not 0 < self.timeout_s <= 120
+                or not isinstance(self.maximum_corrections, int) or not 1 <= self.maximum_corrections <= 80):
+            raise ValueError('Homing policy exceeds the approved movement/settling limits')
         return self
 
 
@@ -23,7 +31,7 @@ def home(policy, observe, move, check, clock=time.monotonic):
     """Each observation covers fresh samples and stationary motor evidence.
 
     move uses the app's existing position/trajectory execution. check enforces
-    cancellation, feedback and session identity. This never establishes zero.
+    cancellation, feedback and session identity. The app persists zero only after recording and post-idle checks pass.
     """
     policy.validate()
     started, travel, corrections, stalled = clock(), 0.0, [], 0
@@ -31,7 +39,7 @@ def home(policy, observe, move, check, clock=time.monotonic):
     def guard():
         check()
         if clock()-started > policy.timeout_s:
-            raise RuntimeError('Provisional homing timed out')
+            raise RuntimeError('Rotary homing timed out')
 
     def sample():
         guard()

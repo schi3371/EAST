@@ -8,10 +8,10 @@ standalone runner or create another motor controller.
 ## Preparation and operation
 
 1. Keep the fixture empty, physically clear and initially at 90 degrees. Use the
-   main window's normal connection, machine-zero verification and unloaded tare.
+   main window's connection, **Home / Return to Zero** and unloaded tare.
    Operator, fixture ID (e.g. `0`) and calibration ID must match that preparation.
-   The tool reads those identities; it does not silently replace them or establish
-   zero from the current motor position. Turn Manual Mode off. Close Calibration
+   The tool reads those identities; zero is established by the official rotary
+   homing workflow described in [Rotary Homing](ROTARY_HOMING.md). Turn Manual Mode off. Close Calibration
    and Machine Zero setup windows before starting.
 2. Open **Motion Modelling**. Defaults: nominal +/-10 degrees, 100 degrees/s²,
    three numbered cycles per run, slow speed 0.5 degrees/s, operating speed

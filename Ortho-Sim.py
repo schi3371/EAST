@@ -56,6 +56,7 @@ from east_core import (
     validate_test_parameters,
     write_json_atomic,
 )
+from east_rotary_homing import ZERO_TOLERANCE_DEG
 from east_odrive import ODriveAdapter
 from east_shutdown_ui import BlockedShutdownDialog
 from east_execution import TestEngine, TransportOwner, Lifecycle, AcquisitionLoop, RetainedConnectionRecovery, FeedbackMonitor
@@ -92,7 +93,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.8.2-provisional-rotary-homing"
+APP_VERSION = "1.9.0-rotary-machine-zero"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -629,7 +630,7 @@ class MyInterface:
         machine_zero_frame.grid_columnconfigure((0, 1), weight=1)
         self.reference_status_label = ctk.CTkLabel(
             machine_zero_frame,
-            text="Machine zero: SETUP REQUIRED",
+            text="Rotary zero: HOME REQUIRED",
             font=("Arial", 11, "bold"),
             text_color=AMBER,
             anchor="w",
@@ -641,8 +642,8 @@ class MyInterface:
         )
         self.reference_action_button = ctk.CTkButton(
             machine_zero_frame,
-            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
-            command=self.open_reference_recovery,
+            text="Home / Return to Zero",
+            command=self.open_rotary_homing,
             fg_color=AMBER,
             hover_color="#b45309",
             state="disabled",
@@ -650,19 +651,20 @@ class MyInterface:
         )
         self.reference_action_button.grid(row=1, column=0, columnspan=2, padx=8, pady=(0, 5), sticky="ew")
 
-        self.neutral_button = ctk.CTkButton(
-            machine_zero_frame,
-            text="Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}",
-            command=self.return_to_machine_zero,
-            fg_color=GREEN,
-            hover_color="#15803d",
-            corner_radius=8,
-            height=34,
-            font=("Arial", 12, "bold"),
-        )
-        self.neutral_button.grid(
-            row=2, column=0, columnspan=2, padx=8, pady=(0, 8), sticky="ew"
-        )
+        self.neutral_button = self.reference_action_button
+        # Older code retains a neutral_button handle, but the main panel has one
+        # rotary homing action rather than a second encoder-only return method.
+        self.homing_condition = ctk.StringVar(value="AFO fitted")
+        ctk.CTkOptionMenu(machine_zero_frame, variable=self.homing_condition,
+            values=["Empty fixture", "AFO fitted"]).grid(row=2,column=0,columnspan=2,
+                padx=8,pady=4,sticky="ew")
+        self.homing_acknowledged = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(machine_zero_frame, text="Fixture/AFO clear; sensor mounting unchanged; E-stop accessible",
+            variable=self.homing_acknowledged, font=("Arial",10)).grid(row=3,column=0,
+                columnspan=2,padx=8,pady=4,sticky="ew")
+        self.homing_live_label = ctk.CTkLabel(machine_zero_frame,
+            text="Sensor zero band: ±0.10° | 0.5 s settling + post-idle check",wraplength=390)
+        self.homing_live_label.grid(row=4,column=0,columnspan=2,padx=8,pady=(4,8),sticky="ew")
 
         tare_frame = ctk.CTkFrame(manual_control_frame, fg_color="#ecfdf5", corner_radius=8)
         tare_frame.grid(row=5, column=0, columnspan=3, padx=6, pady=(0, 6), sticky="ew")
@@ -718,14 +720,6 @@ class MyInterface:
         self.motion_mapping_button.grid(
             row=7, column=0, columnspan=3, padx=6, pady=(0, 8), sticky="ew"
         )
-        self.rotary_homing_button = ctk.CTkButton(
-            manual_control_frame, text="Provisional Rotary Homing", command=self.open_rotary_homing,
-            fg_color=AMBER, hover_color="#b45309", height=34,
-        )
-        self.rotary_homing_button.grid(
-            row=8, column=0, columnspan=3, padx=6, pady=(0, 8), sticky="ew"
-        )
-
         for widget in (
             self.left_arrow,
             self.right_arrow,
@@ -964,7 +958,7 @@ class MyInterface:
             return
         if state == "normal" and self.motion_coordinator.shutting_down:
             return
-        if state == "normal" and self.motion_mapping_active():
+        if state == "normal" and (self.motion_mapping_active() or self.rotary_homing_active()):
             state = "disabled"
         for entry in (
             self.file_name_input, self.cycles_input, self.speed_input,
@@ -1009,19 +1003,18 @@ class MyInterface:
             self.ui_message_queue.put(("reference",))
             return
         manager = self.reference_manager
-        if manager.verified:
+        if self.rotary_reference_verified():
             mapping = manager.require_verified()
             text = (
-                "Machine zero: VERIFIED\n"
-                f"Physical 90\N{DEGREE SIGN} = machine 0\N{DEGREE SIGN} "
-                f"({mapping.neutral_position_turns:.8f} session turns)"
+                "Rotary zero: VERIFIED\n"
+                f"Motor reference: {mapping.neutral_position_turns:.8f} session turns"
             )
             colour = GREEN
         elif manager.confidence == ReferenceConfidence.FAULT:
-            text = f"Machine zero: FAULT\n{manager.reason}"
+            text = f"Rotary zero: HOME REQUIRED\n{manager.reason}"
             colour = RED
         else:
-            text = f"Machine zero: SETUP REQUIRED\n{manager.reason}"
+            text = f"Rotary zero: HOME REQUIRED\n{manager.reason}"
             colour = AMBER
         if hasattr(self, "reference_status_label"):
             self.reference_status_label.configure(text=text, text_color=colour)
@@ -1116,7 +1109,7 @@ class MyInterface:
             return
         self._retire_stop_worker()
         connected = self.odrive_adapter is not None
-        verified = self.reference_manager.verified
+        verified = self.rotary_reference_verified()
         tare_ready = self.empty_machine_tare is not None and not (
             empty_machine_tare_identity_mismatches(
                 self.empty_machine_tare,
@@ -1125,7 +1118,7 @@ class MyInterface:
                 self.system_config,
             )
         )
-        mapping_active = self.motion_mapping_active()
+        mapping_active = self.motion_mapping_active() or self.rotary_homing_active()
         idle_ui = (
             not mapping_active
             and self.engine.busy is None
@@ -1155,8 +1148,8 @@ class MyInterface:
                 self.neutral_thread, self.continuous_thread, self.recovery_thread)))
         self._set_widget_state(self.buttons[0], 'normal' if recovery_ui and (not self.startup_block_reason) else 'disabled')
         idle_ui = idle_ui and healthy
-        self._set_widget_state(self.reference_action_button, 'normal' if connected and idle_ui else 'disabled')
-        self._set_widget_state(self.buttons[1], 'normal' if connected and verified and tare_ready and idle_ui and self.run_finalized and (not self.manual_mode.get()) and self.rotary_sensor.measurement()['valid'] else 'disabled')
+        self._set_widget_state(self.reference_action_button, 'normal' if connected and recovery_ui and not self.startup_block_reason else 'disabled')
+        self._set_widget_state(self.buttons[1], 'normal' if connected and tare_ready and idle_ui and self.run_finalized and (not self.manual_mode.get()) and self.rotary_sensor.measurement()['valid'] else 'disabled')
         self._set_widget_state(self.manual_mode_toggle, 'normal' if connected and verified and idle_ui else 'disabled')
         manual_enabled = connected and verified and idle_ui and self.manual_mode.get()
         manual_state = "normal" if manual_enabled else "disabled"
@@ -1170,7 +1163,7 @@ class MyInterface:
             self._set_widget_state(widget, manual_state)
         if self.manual_step_units.get() == "Motor turns":
             self._set_widget_state(self.mode_toggle, 'disabled')
-        self._set_widget_state(self.neutral_button, 'normal' if connected and verified and idle_ui else 'disabled')
+        self._set_widget_state(self.neutral_button, 'normal' if connected and recovery_ui and not self.startup_block_reason else 'disabled')
         self._set_widget_state(self.tare_button, 'normal' if connected and verified and idle_ui else 'disabled')
         self._set_widget_state(self.clear_session_tare_button, 'normal' if not mapping_active and self.engine.busy is None and self.empty_machine_tare is not None and (not self.motion_coordinator.shutting_down) and (not self.strain_test_active) and (self.motion_coordinator.owner is None) else 'disabled')
 
@@ -1869,6 +1862,10 @@ class MyInterface:
         value = self.rotary_sensor.measurement()
         self.engine.record("rotary_health", {"valid":value["valid"],"reason":value["reason"],"age_s":value.get("sample_age_s"),"rate_hz":value.get("achieved_rate_hz")})
         notice = "ready" if value["valid"] else value["reason"]
+        label = getattr(self, 'homing_live_label', None)
+        if label is not None:
+            angle_text = f"{value['angle_deg']:+.3f}°" if value['valid'] else value['reason']
+            label.configure(text=f"Rotary: {angle_text} | Zero band ±0.10° | 0.5 s + idle check")
         if notice != self.last_rotary_notice:
             if value["valid"]:
                 self.update_terminal(f"Rotary sensor ready: {value['achieved_rate_hz']:.1f} delivered Hz; "
@@ -1932,7 +1929,6 @@ class MyInterface:
         self.motion_coordinator.request_stop()
         self.transport_owner.cancel_motion()
         self.reference_manager.invalidate_local("Coordinate continuity unproven while recovering feedback")
-        self.invalidate_empty_machine_tare("reference continuity unproven after monitor recovery")
         previous = self.latest_feedback
         def retire():
             self._stop_feedback_monitor()
@@ -1972,7 +1968,6 @@ class MyInterface:
         self.engine.record("idle", self.last_idle_observation)
         self.engine.record("reference_continuity", {"proven": evidence.continuity_proven, "reason": evidence.reason})
         self.reference_manager.invalidate_local(evidence.reason)
-        self.invalidate_empty_machine_tare("reference continuity unproven after monitor recovery")
         with self.feedback_lock:
             self.latest_feedback = evidence.feedback
         self.hardware_fingerprint = evidence.fingerprint
@@ -1980,7 +1975,7 @@ class MyInterface:
             evidence.feedback, self.odrive_connection_generation, self.odrive_adapter)
         self._start_feedback_monitor()
         self.engine.transition(Lifecycle.READY)
-        self.set_status("MONITOR RESTORED / MACHINE-ZERO SETUP REQUIRED", AMBER)
+        self.set_status("MONITOR RESTORED / ROTARY HOMING REQUIRED", AMBER)
         self.update_terminal(evidence.reason + " No test was restarted.\n")
         self.update_reference_display()
 
@@ -2101,7 +2096,7 @@ class MyInterface:
             if record is not None:
                 if self.previous_unsafe_exit:
                     self.reference_manager.invalidate(
-                        "Previous power-isolated exit: physical machine-zero recovery required",
+                        "Previous power-isolated exit: rotary homing required",
                         fault=True,
                     )
                 else:
@@ -2110,7 +2105,7 @@ class MyInterface:
                     )
                     if not identity_matches:
                         self.reference_manager.invalidate(
-                            f"{identity_reason}; physical recovery required"
+                            f"{identity_reason}; rotary homing required"
                         )
                     else:
                         checkpoint = self.state_store.load_checkpoint()
@@ -2476,15 +2471,6 @@ class MyInterface:
                     self.update_terminal("ODrive disconnected after confirmed idle. "
                                          f"Clean continuity checkpoint: {'saved' if item[1] else 'not saved'}.\n")
                     self.update_reference_display()
-                elif item[0] == "recovery_motion_finished":
-                    self.update_reference_display()
-                    if self.recovery_window is not None and self.recovery_window.winfo_exists():
-                        for button in self.recovery_jog_buttons:
-                            button.configure(state="normal")
-                        self.recovery_set_button.configure(state="normal")
-                        self.recovery_position_label.configure(
-                            text=self._recovery_position_text()
-                        )
         except queue.Empty:
             pass
 
@@ -2499,6 +2485,7 @@ class MyInterface:
         if plot_changed:
             self.update_plot()
 
+        self._poll_rotary_homing()
         self._poll_rotary_sensor()
         self._diagnose_stalled_workers()
         self.update_manual_position_display()
@@ -2509,73 +2496,161 @@ class MyInterface:
         except tk.TclError:
             pass
 
-    def _recovery_position_text(self):
-        try:
-            snapshot = self.get_feedback()
-            return (
-                f"Session position: {snapshot.position_turns:.8f} turns | "
-                f"Jog path used: {self.recovery_cumulative_deg:.2f} deg"
-            )
-        except Exception as exc:
-            return f"Feedback unavailable: {exc}"
 
-    def open_rotary_homing(self):
-        if self.motion_coordinator.shutting_down or self.startup_block_reason:
-            self.update_terminal("Provisional homing blocked during shutdown or unresolved startup.\n")
+    def rotary_homing_active(self):
+        return getattr(getattr(self, 'rotary_homing', None), 'active', False) is True
+
+    def rotary_reference_verified(self):
+        if not self.reference_manager.verified:
+            return False
+        sensor = self.rotary_sensor
+        reader, calibration = sensor.reader, sensor.calibration
+        if reader is None or calibration is None:
+            return False
+        method = f'rotary_sensor_homing:{calibration.sha256}:{reader.connection_id}'
+        mapping = self.reference_manager.require_verified()
+        return (mapping.verification_method == method
+                and self.reference_manager.record.fixture_id == (self.fixture_id_input.get().strip()
+                    if threading.current_thread() is threading.main_thread() else self.operator_context['fixture']))
+
+    def rotary_zero_ready(self):
+        value = self.rotary_sensor.measurement(require=True)
+        if not self.rotary_reference_verified():
+            return False
+        snapshot = self.get_feedback()
+        return (abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
+                and abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG)
+
+    def open_rotary_homing(self, resume_test=False):
+        """One explicit action: refresh unhealthy feedback, home, persist zero."""
+        from types import SimpleNamespace
+        from east_motion_mapping import workers_finished
+        from east_rotary_homing import HomingPolicy
+        if self.rotary_homing_active():
             return
-        if self.rotary_homing is not None and not self.rotary_homing.closed:
-            self.rotary_homing.window.lift()
+        try:
+            if (self.shutdown_requested or self.startup_block_reason or self.engine.busy is not None
+                    or self.strain_test_active or self.motion_mapping_active()
+                    or self.motion_coordinator.owner is not None or not workers_finished(self)):
+                raise ValueError('Finish the current operation/cleanup before homing')
+            if self.odrive_adapter is None:
+                raise ValueError('Connect ODrive first')
+            if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+                raise ValueError('Close Rotary Sensor Calibration; use the live angle in this panel')
+            if not self.homing_acknowledged.get():
+                raise ValueError('Confirm the clear fixture/AFO and unchanged sensor mounting in the zero panel')
+            if self.manual_mode.get():
+                self.manual_mode.set(False)
+                self.update_terminal('Manual Mode exited for automatic rotary homing.\n')
+            value = self.rotary_sensor.measurement()
+            parameters = self.collect_test_parameters() if resume_test else None
+            condition = ('Empty fixture' if parameters.test_type == 'empty_machine_baseline' else 'AFO fitted') if parameters else self.homing_condition.get()
+            if condition not in ('Empty fixture','AFO fitted'):
+                raise ValueError('Select the fixture condition')
+            state = SimpleNamespace(closed=False, active=True, phase='homing', future=None,
+                                    fixture_condition=condition, resume_parameters=parameters)
+            self.rotary_homing = state
+            self.homing_acknowledged.set(False)
+            self.operator_context = {'operator':self.operator_input.get().strip(),
+                'fixture':self.fixture_id_input.get().strip(),'calibration':self.calibration_id_input.get().strip()}
+            needs_recovery = bool(not value['valid'] or self.monitor_error or self.feedback_retry_pending
+                or self.monitor_thread is None or not self.monitor_thread.is_alive()
+                or not self.motion_coordinator.motor_idle_confirmed)
+            try:
+                self.get_feedback()
+            except ReferenceError:
+                needs_recovery = True
+            if needs_recovery:
+                state.phase = 'recovering'
+                self.update_terminal('Refreshing ODrive feedback before rotary homing. No interrupted test will resume.\n')
+                state.future = self.engine.submit('recover feedback for rotary homing',self._connect_system_worker)
+            else:
+                state.future = self.start_rotary_homing(state,HomingPolicy())
+            self.set_test_inputs_state('disabled')
+            self._refresh_motion_controls()
+        except Exception as exc:
+            if getattr(self, 'rotary_homing', None) is not None:
+                self.rotary_homing.active = False
+            self.update_terminal(f'Homing blocked: {exc}\n')
+            self.update_reference_display()
+
+    def _poll_rotary_homing(self):
+        from east_rotary_homing import HomingPolicy
+        state = getattr(self, 'rotary_homing', None)
+        if state is None or getattr(state,'active',False) is not True:
             return
-        from east_rotary_homing_gui import RotaryHomingWindow
-        self.rotary_homing = RotaryHomingWindow(self.master, self)
+        future = state.future
+        if future is None or not future.done():
+            return
+        try:
+            result = future.result()
+            if self.shutdown_requested:
+                raise RuntimeError('Shutdown cancelled homing preparation')
+            if state.phase in ('recovering','waiting_sensor'):
+                if self.engine.cancel_event.is_set():
+                    raise RuntimeError('Stop cancelled feedback recovery')
+                if state.phase == 'recovering':
+                    state.phase = 'waiting_sensor'
+                    state.sensor_deadline = time.monotonic()+2.0
+                sensor = self.rotary_sensor.measurement()
+                if not sensor['valid']:
+                    if time.monotonic() < state.sensor_deadline:
+                        return
+                    raise RotaryError(f'Fresh rotary feedback unavailable: {sensor["reason"]}')
+                state.phase = 'homing'
+                state.future = self.start_rotary_homing(state,HomingPolicy())
+                return
+            state.active = False
+            if self.engine.cancel_event.is_set():
+                raise RuntimeError('Stop cancelled test preparation')
+            if result['evidence']['outcome'] == 'sensor_zero_reached' and state.resume_parameters is not None:
+                if self.collect_test_parameters() != state.resume_parameters:
+                    raise RuntimeError('Test settings changed; start a new test explicitly')
+                self._starting_after_homing = True
+                try:
+                    self.start_strain_test()
+                finally:
+                    self._starting_after_homing = False
+        except Exception as exc:
+            state.active = False
+            self.update_terminal(f'Rotary homing stopped: {exc}\n')
+        if not self.strain_test_active and self.engine.busy is None:
+            self.set_test_inputs_state('normal')
+        self.update_reference_display()
+
 
     def start_rotary_homing(self, window, policy):
-        """Admit an unreferenced, empty-fixture experiment; never establish zero."""
+        """Admit bounded rotary homing with the declared fixture/AFO condition."""
         from east_motion_mapping import ready_for_next
         from east_calibration_motion import CalibrationPositioningReference
         from east_core import APP_DIR
         policy.validate()
         if window is not self.rotary_homing or window.closed:
-            raise ValueError("Open the provisional homing window first")
+            raise ValueError("Home action is no longer current")
         if not ready_for_next(self) or self.motion_mapping_active() or self.monitor_error or self.feedback_retry_pending:
             raise ValueError("Finish cleanup and recover healthy ODrive feedback first")
         if self.startup_block_reason or self.manual_mode.get():
             raise ValueError("Resolve startup and turn Manual Mode off")
         if self.rotary_calibration is not None and not self.rotary_calibration.closed:
-            raise ValueError("Close Rotary Sensor Calibration before automatic homing")
+            raise ValueError("Close Rotary Sensor Calibration before homing")
         if self.recovery_window is not None and self.recovery_window.winfo_exists():
             raise ValueError("Close Machine Zero Setup before automatic homing")
         value = self.rotary_sensor.measurement(require=True)
         reference = CalibrationPositioningReference.establish(self, value['angle_deg'], acknowledged=True)
-        if not self.show_resizable_confirmation(
-                title="Confirm Provisional Rotary Homing",
-                message=(f"EMPTY FIXTURE ONLY. Current sensor angle: {value['angle_deg']:+.3f} degrees.\n\n"
-                         f"Move toward calibrated sensor zero, stopping band ±{policy.tolerance_deg:g} degrees.\n"
-                         "At most 0.5 nominal degrees per correction, 20 degrees cumulative travel, 120 seconds.\n"
-                         "Existing recovery speed/acceleration and feedback limits apply.\n\n"
-                         "No machine-zero reference is written. Confirm fixture clear, unchanged sensor mounting, "
-                         "enclosure protection in use and physical E-stop accessible."),
-                confirm_text="Run Provisional Homing"):
-            return None
-        # Modal confirmation can admit nested GUI actions. Check again afterwards.
-        if not ready_for_next(self) or self.monitor_error or self.feedback_retry_pending or self.motion_mapping_active():
-            raise ValueError("System changed during confirmation; recover before retrying")
         reference.check(self, stationary=True)
         value = self.rotary_sensor.measurement(require=True)
-        if abs(value['angle_deg']-reference.angle(self.get_feedback().position_turns)) > 0.2:
-            raise ValueError("Sensor/motor position changed during confirmation; retry preparation")
         source = value['sample'][4]
         calibration = self.rotary_sensor.calibration.sha256
         base = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else APP_DIR
         path = base/self.system_config['logging']['output_directory']/(
-            'provisional_rotary_home_'+datetime.now().strftime('%Y%m%dT%H%M%S_%f')+'.json')
-        token = self.motion_coordinator.acquire('provisional-rotary-home')
+            'rotary_home_'+datetime.now().strftime('%Y%m%dT%H%M%S_%f')+'.json')
+        token = self.motion_coordinator.acquire('rotary-home')
         self.stop_started_monotonic = None
         self.stop_diagnostic_recorded = False
         self.operator_context = {'operator':self.operator_input.get().strip(),
                                  'fixture':self.fixture_id_input.get().strip(),
                                  'calibration':self.calibration_id_input.get().strip()}
-        future = self.engine.submit('provisional rotary homing', lambda:self._rotary_homing_worker(
+        future = self.engine.submit('rotary homing', lambda:self._rotary_homing_worker(
             policy, reference, token, source, calibration, path))
         if future.done() and future.exception() is not None:
             self.motion_coordinator.release(token)
@@ -2588,9 +2663,10 @@ class MyInterface:
         from east_rotary_homing import home
         import statistics
         raw_path = path.with_name(path.stem+'_rotary_samples.csv')
-        body = {'schema':'east-provisional-rotary-home-1', 'provisional':True,
+        body = {'schema':'east-rotary-home-2', 'official_zero_method':True,
                 'started_at':datetime.now().astimezone().isoformat(),
                 'zero_reference_written':False, 'policy':policy.__dict__,
+                'fixture_condition':getattr(self.rotary_homing, 'fixture_condition', 'AFO fitted'),
                 'operator':reference.operator_id, 'fixture_id':reference.fixture_id,
                 'rotary_calibration_sha256':calibration, 'sensor_connection_id':source,
                 'rotary_calibration':self.rotary_sensor.calibration.metadata(),
@@ -2651,7 +2727,7 @@ class MyInterface:
                     check()
             if len(angles) < 5:
                 raise RotaryError('Not enough fresh rotary samples for a zero observation')
-            return dict(mean_deg=statistics.mean(angles), min_deg=min(angles), max_deg=max(angles), samples=len(angles))
+            return dict(mean_deg=statistics.mean(angles), min_deg=min(angles), max_deg=max(angles), samples=len(angles), duration_s=time.monotonic()-start)
 
         def move(delta):
             nonlocal armed
@@ -2666,11 +2742,11 @@ class MyInterface:
                      'target_motor_turns':target, 'requested_at_host_s':time.monotonic()}
             body['corrections'].append(event)
             self._write_runtime_checkpoint(MotionState.MOVING, self.get_feedback(), clean_shutdown=False,
-                extra={'phase':'provisional_rotary_home', 'target_turns':target, 'zero_reference_written':False})
+                extra={'phase':'rotary_home', 'target_turns':target, 'zero_reference_written':False})
             write_json_atomic(path,{**body, 'outcome':'running'})
             self._submit_position(token, target)
             event['submitted_at_host_s'] = time.monotonic()
-            self.update_terminal(f"Provisional homing: sensor {value['angle_deg']:+.3f} deg; correction {delta:+.3f} nominal deg.\n")
+            self.update_terminal(f"Rotary homing: sensor {value['angle_deg']:+.3f} deg; correction {delta:+.3f} nominal deg.\n")
             cfg = self.system_config['reference']
             wait_for_settle(lambda:check()[0], target,
                 min(afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config),abs(step)*0.25),
@@ -2691,9 +2767,9 @@ class MyInterface:
                                       self.system_config['reference']['recovery_acceleration_deg_s2'])
             self.rotary_sensor.start_recording(raw_path, time.monotonic())
             recording_started = True
-            self.update_terminal(f'Provisional homing started. Evidence: {path}\n')
+            self.update_terminal(f'Rotary homing started. Evidence: {path}\n')
             result = home(policy, observe, move, check)
-            idle = self.safe_idle_motor('provisional rotary homing finished',token=token)
+            idle = self.safe_idle_motor('rotary homing finished',token=token)
             armed = False
             if not idle or not idle.confirmed:
                 raise FeedbackError('Homing idle was not confirmed')
@@ -2711,7 +2787,7 @@ class MyInterface:
             cancelled = self.engine.cancel_event.is_set() and not self.monitor_error
             if cancelled:
                 body['outcome'] = 'cancelled'
-            self._request_coordinated_stop(f'Provisional rotary homing: {exc}',fault=not cancelled)
+            self._request_coordinated_stop(f'Rotary homing: {exc}',fault=not cancelled)
             stop = self.stop_worker
             if stop is not None:
                 stop.join(timeout=self.system_config['reference']['idle_confirmation_timeout_s']+0.25)
@@ -2724,6 +2800,24 @@ class MyInterface:
                 except Exception as exc:
                     failure = f'{failure or ""}; rotary recording finalization failed: {exc}'
                     body.update(outcome='failed',error=failure)
+            if body['outcome'] == 'sensor_zero_reached':
+                try:
+                    snapshot, latest = check()
+                    if abs(latest['angle_deg']) > policy.tolerance_deg:
+                        raise RotaryError('Sensor left zero before reference commit')
+                    mapping = self.reference_manager.establish_from_rotary_zero(
+                        snapshot, self.hardware_fingerprint, reference.operator_id,
+                        reference.fixture_id, calibration, source, body['final_observation'])
+                    body['zero_reference_written'] = True
+                    body['reference_id'] = mapping.reference_id
+                    self.unsafe_exit_recovered_in_session = True
+                    self.engine.record('rotary_zero', {'verified':True,'reference_id':mapping.reference_id,
+                        'calibration_sha256':calibration,'final_angle_deg':latest['angle_deg']})
+                except Exception as exc:
+                    body.update(outcome='failed',error=f'Rotary zero commit failed: {exc}')
+                    self.reference_manager.invalidate_local(str(exc),fault=True)
+            if body['outcome'] == 'failed':
+                self.reference_manager.invalidate_local(body.get('error','Homing incomplete'),fault=True)
             # Retain ownership if Stop/recording cleanup is unresolved.
             stop = self.stop_worker
             recorder = self.rotary_sensor.recording
@@ -2738,12 +2832,15 @@ class MyInterface:
             body['machine_zero_after'] = self.reference_manager.metadata_snapshot()
             try:
                 write_json_atomic(path,body)
+            except Exception as exc:
+                self.reference_manager.invalidate_local(f'Homing evidence could not be saved: {exc}',fault=True)
+                body.update(outcome='failed',error=str(exc))
+                raise
             finally:
                 self._schedule_rotary_homing_retirement(token, path, body)
             self.ui_message_queue.put(('reference',))
             self.ui_message_queue.put(('run_buttons',))
-        message = (f"Sensor zero reached within ±{policy.tolerance_deg:g}°. Original machine-zero method unchanged; "
-                   "no reference written. Confirm alignment before setting machine zero. Evidence: "+str(path)
+        message = (f"Rotary machine zero verified within ±{policy.tolerance_deg:g}° and saved. Evidence: "+str(path)
                    if body['outcome']=='sensor_zero_reached' else f"Homing failed: {body.get('error')}. Evidence: {path}")
         self.update_terminal(message+'\n')
         return {'message':message, 'evidence':body}
@@ -2789,8 +2886,8 @@ class MyInterface:
         self.motion_mapping = MotionMappingWindow(self.master, self)
 
     def open_rotary_calibration(self):
-        if self.engine.busy == 'provisional rotary homing':
-            self.update_terminal("Wait for provisional homing to finish before calibration.\n")
+        if self.rotary_homing_active():
+            self.update_terminal("Wait for rotary homing to finish before calibration.\n")
             return
         if self.motion_mapping_active():
             self.update_terminal("Finish or stop motion modelling before opening calibration.\n")
@@ -2808,370 +2905,17 @@ class MyInterface:
         self.rotary_calibration = RotaryCalibrationWindow(self.master, self)
 
     def open_reference_recovery(self):
-        if self.engine.busy == 'provisional rotary homing':
-            self.update_terminal("Wait for provisional homing to finish before machine-zero setup.\n")
-            return
-        if self.motion_mapping_active():
-            self.update_terminal("Finish or stop motion modelling before opening machine-zero setup.\n")
-            return
-        if self.motion_coordinator.shutting_down:
-            self.update_terminal("Reference recovery blocked during shutdown.\n")
-            return
-        if self.odrive_adapter is None:
-            self.update_terminal("Connect the ODrive before machine-zero setup.\n")
-            return
-        if self.motion_coordinator.owner is not None or self.strain_test_active:
-            self.update_terminal("Machine-zero setup is blocked while motion is active.\n")
-            return
-        if self.recovery_window is not None and self.recovery_window.winfo_exists():
-            self.recovery_window.lift()
-            return
-        try:
-            snapshot = self.get_feedback()
-        except Exception as exc:
-            self.update_terminal(f"Cannot start machine-zero setup: {exc}\n")
-            return
-        self.recovery_origin_turns = snapshot.position_turns
-        self.recovery_cumulative_deg = 0.0
-        self.recovery_session_acknowledged = False
+        """Compatibility entry: all zero recovery is now rotary-based."""
+        return self.open_rotary_homing()
 
-        window = ctk.CTkToplevel(self.master)
-        self.recovery_window = window
-        window.title("EAST Machine Zero Setup")
-        window.geometry("650x540")
-        window.minsize(590, 500)
-        window.configure(fg_color=BG)
-        window.transient(self.master)
-        window.protocol("WM_DELETE_WINDOW", self.close_reference_recovery)
-        window.bind("<Escape>", lambda _event: self.stop_logging())
-
-        panel = ctk.CTkFrame(window, fg_color=PANEL, corner_radius=8)
-        panel.pack(fill="both", expand=True, padx=18, pady=18)
-        ctk.CTkLabel(
-            panel,
-            text="Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
-            font=("Arial", 20, "bold"),
-            text_color=TEXT,
-        ).pack(anchor="w", padx=16, pady=(14, 5))
-        ctk.CTkLabel(
-            panel,
-            text=(
-                "Use the supplied square to confirm that the moving fixture is at 90\N{DEGREE SIGN} "
-                "to the fixed machine reference. Use the slow Jog Left and Jog Right controls "
-                "to make small adjustments until the fixture is aligned with the square. Then "
-                "select 'Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}'. This defines "
-                "machine angle 0\N{DEGREE SIGN} for the current ODrive power session."
-            ),
-            font=("Arial", 12),
-            text_color=TEXT,
-            wraplength=540,
-            justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 10))
-        self.recovery_position_label = ctk.CTkLabel(
-            panel,
-            text=self._recovery_position_text(),
-            font=("Arial", 12, "bold"),
-            text_color=MUTED,
-        )
-        self.recovery_position_label.pack(anchor="w", padx=16, pady=5)
-
-        self.recovery_acknowledgement = ctk.BooleanVar(value=False)
-        self.recovery_ack_checkbox = ctk.CTkCheckBox(
-            panel,
-            text=(
-                "For this setup session: fixture is clear, E-stop is accessible, "
-                "and I am observing the mechanism"
-            ),
-            variable=self.recovery_acknowledgement,
-        )
-        self.recovery_ack_checkbox.pack(anchor="w", padx=16, pady=8)
-
-        jog_frame = ctk.CTkFrame(panel, fg_color=PANEL_SOFT, corner_radius=6)
-        jog_frame.pack(fill="x", padx=16, pady=6)
-        step = self.system_config["reference"]["recovery_jog_step_deg"]
-        left = ctk.CTkButton(
-            jog_frame,
-            text=f"Jog Left ({step:g}\N{DEGREE SIGN})",
-            command=lambda: self.recovery_jog(-1),
-            fg_color=MUTED,
-            hover_color="#475569",
-        )
-        right = ctk.CTkButton(
-            jog_frame,
-            text=f"Jog Right ({step:g}\N{DEGREE SIGN})",
-            command=lambda: self.recovery_jog(1),
-            fg_color=MUTED,
-            hover_color="#475569",
-        )
-        left.pack(side="left", fill="x", expand=True, padx=6, pady=8)
-        right.pack(side="left", fill="x", expand=True, padx=6, pady=8)
-        self.recovery_jog_buttons = (left, right)
-
-        self.recovery_set_button = ctk.CTkButton(
-            panel,
-            text="Set Machine Zero \N{EM DASH} Fixture at 90\N{DEGREE SIGN}",
-            command=self.set_machine_zero,
-            fg_color="#0f766e",
-            hover_color="#115e59",
-            height=36,
-        )
-        self.recovery_set_button.pack(fill="x", padx=16, pady=(10, 5))
-
-        if self.system_config["reference"]["assisted_measured_angle_enabled"]:
-            measured = ctk.CTkFrame(panel, fg_color="transparent")
-            measured.pack(fill="x", padx=16, pady=5)
-            self.recovery_angle_entry = ctk.CTkEntry(
-                measured, placeholder_text="Measured displacement from machine zero (deg)"
-            )
-            self.recovery_uncertainty_entry = ctk.CTkEntry(
-                measured, placeholder_text="Uncertainty (deg)"
-            )
-            self.recovery_angle_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
-            self.recovery_uncertainty_entry.pack(side="left", fill="x", expand=True, padx=5)
-            ctk.CTkButton(
-                measured,
-                text="Use Measurement",
-                command=self.set_neutral_from_measurement,
-                width=130,
-            ).pack(side="left", padx=(5, 0))
-
-        ctk.CTkButton(
-            panel,
-            text="Cancel / Keep Motion Blocked",
-            command=self.close_reference_recovery,
-            fg_color="#94a3b8",
-            hover_color=MUTED,
-        ).pack(fill="x", padx=16, pady=(5, 14))
 
     def close_reference_recovery(self):
-        if threading.current_thread() is not threading.main_thread():
-            self.ui_message_queue.put(("close_recovery",))
-            return
-        self.neutral_stop_event.set()
-        if self.motion_coordinator.owner == "reference-recovery-jog":
-            self._request_coordinated_stop("machine-zero setup closed")
-        if self.recovery_window is not None:
-            try:
-                self.recovery_window.destroy()
-            except tk.TclError:
-                pass
         self.recovery_window = None
-        self.recovery_session_acknowledged = False
 
-    def _accept_recovery_session_acknowledgement(self):
-        if self.recovery_session_acknowledged:
-            return True
-        if not self.recovery_acknowledgement.get():
-            return False
-        self.recovery_session_acknowledged = True
-        self.recovery_ack_checkbox.configure(state="disabled")
-        return True
-
-    def recovery_jog(self, direction):
-        if self.engine.busy is not None:
-            self.update_terminal("Wait for hardware lifecycle operation.\n")
-            return
-        if not self._accept_recovery_session_acknowledgement():
-            CTkMessagebox(
-                title="Acknowledgement Required",
-                message="Confirm the recovery safety acknowledgement before jogging.",
-            )
-            return
-        cfg = self.system_config["reference"]
-        next_total = self.recovery_cumulative_deg + abs(cfg["recovery_jog_step_deg"])
-        if next_total > cfg["recovery_jog_maximum_cumulative_deg"] + 1e-9:
-            self.update_terminal("Recovery jog blocked at its cumulative travel limit.\n")
-            return
-        token = None
-        try:
-            token = self.motion_coordinator.acquire("reference-recovery-jog")
-            self.invalidate_empty_machine_tare("machine-zero fixture adjustment")
-            self.reference_manager.invalidate("Unreferenced recovery jog performed")
-        except Exception as exc:
-            if token is not None:
-                self.motion_coordinator.release(token)
-            self.update_terminal(f"Recovery jog blocked: {exc}\n")
-            return
-        for button in self.recovery_jog_buttons:
-            button.configure(state="disabled")
-        self.recovery_set_button.configure(state="disabled")
-        self.recovery_thread = threading.Thread(
-            target=self._recovery_jog_worker,
-            args=(token, direction, next_total),
-            name="reference-recovery-jog",
-            daemon=True,
-        )
-        self.recovery_thread.start()
-
-    def _recovery_jog_worker(self, token, direction, next_total):
-        try:
-            cfg = self.system_config["reference"]
-            self.configure_trajectory(
-                cfg["recovery_speed_deg_s"], cfg["recovery_acceleration_deg_s2"]
-            )
-            self.enter_closed_loop(token, allow_unreferenced=True)
-            snapshot = self.get_feedback()
-            step_turns = afo_degrees_to_odrive_turns(
-                direction * cfg["recovery_jog_step_deg"], self.system_config
-            )
-            target = snapshot.position_turns + step_turns
-            origin_limit = afo_degrees_to_odrive_turns(
-                cfg["recovery_jog_maximum_cumulative_deg"], self.system_config
-            )
-            if abs(target - self.recovery_origin_turns) > origin_limit + 1e-9:
-                raise ReferenceError("Recovery target exceeds bounded travel")
-            self._write_runtime_checkpoint(
-                MotionState.MOVING,
-                snapshot,
-                clean_shutdown=False,
-                extra={"phase": "unreferenced_recovery_jog", "target_turns": target},
-            )
-            self._submit_position(token, target)
-            wait_for_settle(
-                self.get_feedback,
-                target_turns=target,
-                tolerance_turns=afo_degrees_to_odrive_turns(
-                    self.system_config["motion"]["position_tolerance_deg"], self.system_config
-                ),
-                velocity_limit_turns_s=afo_speed_to_odrive_turns_s(
-                    cfg["settle_velocity_limit_deg_s"], self.system_config
-                ),
-                dwell_s=cfg["settle_dwell_ms"] / 1000.0,
-                timeout_s=motion_timeout_seconds(
-                    cfg["recovery_jog_step_deg"],
-                    cfg["recovery_speed_deg_s"],
-                    cfg["recovery_acceleration_deg_s2"],
-                    self.system_config,
-                ),
-                stale_after_s=cfg["feedback_stale_after_ms"] / 1000.0,
-                cancelled=lambda: self._motion_cancelled(token),
-                **self._powered_wait_requirements(),
-            )
-            self.recovery_cumulative_deg = next_total
-            self.update_terminal(
-                f"Recovery jog complete ({self.recovery_cumulative_deg:.2f} deg path used).\n"
-            )
-        except Exception as exc:
-            self.update_terminal(f"Recovery jog failed: {exc}\n")
-        finally:
-            self.safe_idle_motor("recovery jog complete", token=token)
-            self.motion_coordinator.release(token)
-            self.ui_message_queue.put(("recovery_motion_finished",))
 
     def set_machine_zero(self):
-        if self.motion_coordinator.shutting_down:
-            self.update_terminal("Machine-zero setup blocked during shutdown.\n")
-            return
-        if not self._accept_recovery_session_acknowledgement():
-            CTkMessagebox(
-                title="Acknowledgement Required",
-                message="Confirm the safety acknowledgement before setting machine zero.",
-            )
-            return
-        confirmation = CTkMessagebox(
-            title="Set Machine Zero",
-            message=(
-                "Confirm the empty moving fixture is mechanically aligned at physical "
-                "90\N{DEGREE SIGN} using the supplied square.\n\n"
-                "This records the current encoder position as machine angle 0\N{DEGREE SIGN}. "
-                "The motor will not move."
-            ),
-            icon="question",
-            option_1="Cancel",
-            option_2="Set Machine Zero",
-        )
-        if confirmation.get() != "Set Machine Zero":
-            return
-        operator, fixture = self.operator_input.get(), self.fixture_id_input.get()
-        self._submit_lifecycle("set machine zero", lambda: self._set_machine_zero_worker(operator, fixture))
+        return self.open_rotary_homing()
 
-    def _set_machine_zero_worker(self, operator, fixture):
-        try:
-            if self.motion_coordinator.owner is not None:
-                raise MotionConflictError("Wait for recovery motion to finish")
-            self._validate_live_motion_config()
-            live_fingerprint = self._revalidate_hardware_identity()
-            idle_result = self.odrive_adapter.request_idle(
-                self.system_config["reference"]["idle_confirmation_timeout_s"]
-            )
-            if not idle_result.confirmed:
-                raise RuntimeError("ODrive idle could not be confirmed")
-            self.motion_coordinator.confirm_motor_idle()
-            snapshot = self._read_adapter_feedback(
-                include_phase=bool(self.system_config["reference"]["phase_recovery_enabled"])
-            )
-            with self.feedback_lock:
-                self.latest_feedback = snapshot
-            if self.engine.cancel_event.is_set():
-                raise RuntimeError("Machine-zero saving cancelled by Stop/shutdown")
-            self.reference_manager.establish_at_physical_neutral(
-                snapshot,
-                live_fingerprint,
-                operator,
-                fixture,
-                acknowledgement=True,
-            )
-            self.unsafe_exit_recovered_in_session = True
-            self.invalidate_empty_machine_tare("machine zero was re-established")
-            self.update_terminal(
-                "Machine zero saved: fixture mechanically aligned at physical 90 degrees; "
-                "machine angle defined as 0 degrees.\n"
-            )
-            self.set_status("CONNECTED / MACHINE ZERO VERIFIED", GREEN)
-            self.update_reference_display()
-            self.close_reference_recovery()
-        except Exception as exc:
-            self.update_terminal(f"Unable to set machine zero: {exc}\n")
-            raise
-
-    def set_neutral_from_measurement(self):
-        try:
-            if self.motion_coordinator.shutting_down:
-                raise MotionConflictError("Reference recovery blocked during shutdown")
-            if not self._accept_recovery_session_acknowledgement():
-                raise ReferenceError("Machine-zero setup acknowledgement is required")
-            angle = float(self.recovery_angle_entry.get())
-            uncertainty = float(self.recovery_uncertainty_entry.get())
-            operator, fixture = self.operator_input.get(), self.fixture_id_input.get()
-            self._submit_lifecycle("measured reference recovery", lambda: self._set_measured_zero_worker(angle, uncertainty, operator, fixture))
-        except Exception as exc:
-            self.update_terminal(f"Measured-angle recovery blocked: {exc}\n")
-
-    def _set_measured_zero_worker(self, angle, uncertainty, operator, fixture):
-        try:
-            if self.motion_coordinator.owner is not None:
-                raise MotionConflictError("Wait for all motion workers to finish")
-            self._validate_live_motion_config()
-            live_fingerprint = self._revalidate_hardware_identity()
-            idle_result = self.odrive_adapter.request_idle(
-                self.system_config["reference"]["idle_confirmation_timeout_s"]
-            )
-            if not idle_result.confirmed:
-                raise RuntimeError("ODrive idle could not be confirmed")
-            self.motion_coordinator.confirm_motor_idle()
-            snapshot = self._read_adapter_feedback(include_phase=True)
-            with self.feedback_lock:
-                self.latest_feedback = snapshot
-            if self.engine.cancel_event.is_set():
-                raise RuntimeError("Reference recovery cancelled by Stop/shutdown")
-            self.reference_manager.verify_measured_displacement(
-                snapshot,
-                live_fingerprint,
-                angle,
-                uncertainty,
-                operator,
-                fixture,
-                True,
-            )
-            self.unsafe_exit_recovered_in_session = True
-            self.update_terminal(
-                "Measured-displacement machine-zero recovery completed; "
-                "no motor motion was commanded.\n"
-            )
-            self.update_reference_display()
-            self.close_reference_recovery()
-        except Exception as exc:
-            self.update_terminal(f"Measured-angle recovery failed: {exc}\n")
 
     def on_close(self):
         """Handle application closing"""
@@ -3466,32 +3210,19 @@ class MyInterface:
             self.update_terminal("No serial connection established. Please connect ODrive first.\n")
             return
 
-        if not self.reference_manager.verified:
-            self.update_terminal(
-                f"Machine zero is not verified: {self.reference_manager.reason}\n"
-                "Open Machine Zero setup and align the fixture at physical 90 degrees.\n"
-            )
-            return
-
-        try:
-            snapshot = self.get_feedback()
-            current_angle = self.reference_manager.angle_from_position(snapshot.position_turns)
-        except ReferenceError as exc:
-            self.update_terminal(f"Cannot verify machine zero before test: {exc}\n")
-            return
-        if abs(current_angle) > self.system_config["motion"]["position_tolerance_deg"]:
-            self.update_terminal(
-                "Fixture is away from verified machine zero. Press "
-                "'Return to Machine Zero \N{EM DASH} 90\N{DEGREE SIGN}' before starting. "
-                "Do not redefine machine zero.\n"
-            )
-            return
-
         try:
             self.rotary_sensor.measurement(require=True)
-        except RotaryError as exc:
-            self.update_terminal(f"Test blocked: rotary sensor {exc}\n")
-            return
+            ready = self.rotary_zero_ready()
+        except (ReferenceError, RotaryError) as exc:
+            self.update_terminal(f"Test blocked: {exc}\n")
+            return False
+        if not ready:
+            if mapping_request is not None or getattr(self, '_starting_after_homing', False) is True:
+                self.update_terminal("Test blocked: rotary zero is not stable; use Home / Return to Zero.\n")
+                return False
+            self.update_terminal("Preparing rotary zero before starting a new test.\n")
+            self.open_rotary_homing(resume_test=True)
+            return False
 
         if self.manual_mode.get():
             self.update_terminal("Disable manual mode before starting a strain test.\n")
@@ -3625,8 +3356,8 @@ class MyInterface:
             self._revalidate_hardware_identity(require_reference=True)
             self.rotary_sensor.measurement(require=True)
             snapshot = self.get_feedback()
-            if abs(self.reference_manager.angle_from_position(snapshot.position_turns)) > self.system_config["motion"]["position_tolerance_deg"]:
-                raise RuntimeError("Fixture moved away from machine zero during test confirmation")
+            if not self.rotary_zero_ready():
+                raise RuntimeError("Rotary zero changed during test confirmation; home again before testing")
             self.run_parameters = parameters
             self.configure_trajectory(
                 parameters.commanded_afo_speed_deg_s,
@@ -3652,6 +3383,10 @@ class MyInterface:
             context = getattr(self, "run_motion_mapping_context", None)
             if isinstance(context, dict):
                 self.run_metadata["motion_modelling"] = dict(context)
+            self.run_metadata['rotary_zero_reference'] = {
+                'method':self.reference_manager.require_verified().verification_method,
+                'calibration_sha256':self.rotary_sensor.calibration.sha256,
+                'tolerance_deg':ZERO_TOLERANCE_DEG, 'angle_at_initialization_deg':self.rotary_sensor.measurement(require=True)['angle_deg']}
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
@@ -3875,12 +3610,8 @@ class MyInterface:
                 raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
             if snapshot.current_state != int(AXIS_STATE_IDLE):
                 raise RuntimeError("ODrive did not report idle during tare")
-            angle = self.reference_manager.angle_from_position(snapshot.position_turns)
-            tolerance = float(self.system_config["motion"]["position_tolerance_deg"])
-            if abs(angle) > tolerance:
-                raise RuntimeError(
-                    "Fixture is away from machine zero. Return to machine zero before taring."
-                )
+            if not self.rotary_zero_ready():
+                raise RuntimeError("Home to rotary zero before capturing unloaded tare")
 
             device = self._ensure_load_cell()
             sample_count = int(self.system_config["load_cell"]["tare_samples"])
@@ -4892,128 +4623,8 @@ class MyInterface:
             raise RuntimeError(f"ODrive has active errors: {snapshot.active_errors}")
 
     def return_to_machine_zero(self):
-        if self.engine.busy is not None:
-            self.update_terminal("Wait for hardware lifecycle operation.\n")
-            return
-        """Return to the saved machine-zero encoder position for this controller session."""
-        if self.motion_coordinator.shutting_down:
-            self.update_terminal("Machine-zero return blocked during shutdown.\n")
-            return
-        if self.odrive_controller is None:
-            self.update_terminal("Connect the ODrive before returning to machine zero.\n")
-            return
-        if not self.reference_manager.verified:
-            self.update_terminal(f"Machine zero is unavailable: {self.reference_manager.reason}\n")
-            return
-        if self.strain_test_active or self.neutral_motion_active:
-            self.update_terminal("Machine-zero return is unavailable while another motion is active.\n")
-            return
+        return self.open_rotary_homing()
 
-        confirmation = CTkMessagebox(
-            title="Return to Machine Zero",
-            message=(
-                "Return to verified machine zero (fixture physical 90 degrees)?\n\n"
-                "Confirm the fixture is clear and the physical E-stop is accessible."
-            ),
-            icon="question",
-            option_1="Cancel",
-            option_2="Return",
-        )
-        if confirmation.get() != "Return":
-            return
-
-        self.stop_continuous_movement()
-        try:
-            token = self.motion_coordinator.acquire("neutral-return")
-        except MotionConflictError as exc:
-            self.update_terminal(f"Machine-zero return blocked: {exc}\n")
-            return
-        self.neutral_stop_event = threading.Event()
-        self.neutral_motion_token = token
-        self.neutral_motion_active = True
-        self.left_arrow.configure(state="disabled")
-        self.right_arrow.configure(state="disabled")
-        self.neutral_button.configure(state="disabled")
-        self.neutral_thread = threading.Thread(
-            target=self._return_to_neutral_worker,
-            args=(token,),
-            name="neutral-return",
-        )
-        self.neutral_thread.start()
-
-    def _return_to_neutral_worker(self, token):
-        try:
-            motion = self.system_config["motion"]
-            self.configure_trajectory(
-                motion["neutral_return_speed_deg_s"],
-                motion["neutral_return_acceleration_deg_s2"],
-            )
-            self.enter_closed_loop(token)
-            neutral_target = self.reference_manager.require_verified().neutral_position_turns
-            current_turns = self.get_feedback().position_turns
-            distance_deg = abs(
-                odrive_turns_to_afo_degrees(
-                    current_turns - neutral_target, self.system_config
-                )
-            )
-            timeout_s = motion_timeout_seconds(
-                distance_deg,
-                motion["neutral_return_speed_deg_s"],
-                motion["neutral_return_acceleration_deg_s2"],
-                self.system_config,
-            )
-            tolerance_turns = afo_degrees_to_odrive_turns(
-                motion["position_tolerance_deg"], self.system_config
-            )
-            self.motion_phase = "returning_to_machine_zero"
-            snapshot = self.get_feedback()
-            self._write_runtime_checkpoint(
-                MotionState.MOVING,
-                snapshot,
-                clean_shutdown=False,
-                extra={"phase": self.motion_phase, "target_turns": neutral_target},
-            )
-            self._submit_position(token, neutral_target)
-            self.update_terminal(
-                f"Returning to machine zero at {neutral_target:.8f} session turns.\n"
-            )
-            wait_for_settle(
-                self.get_feedback,
-                neutral_target,
-                tolerance_turns,
-                afo_speed_to_odrive_turns_s(
-                    self.system_config["reference"]["settle_velocity_limit_deg_s"],
-                    self.system_config,
-                ),
-                self.system_config["reference"]["settle_dwell_ms"] / 1000.0,
-                timeout_s,
-                self.system_config["reference"]["feedback_stale_after_ms"] / 1000.0,
-                lambda: self.neutral_stop_event.is_set() or self._motion_cancelled(token),
-                expected_state=int(AXIS_STATE_CLOSED_LOOP_CONTROL),
-                expected_disarm_reason=self.expected_disarm_reason,
-                progress=self._mark_control_health,
-            )
-            idle_result = self.safe_idle_motor("machine zero reached", token=token)
-            if not idle_result or not idle_result.confirmed:
-                raise RuntimeError("Machine zero reached but ODrive idle was not confirmed")
-            self.observe_idle_neutral(
-                neutral_target,
-                cancelled=lambda: self.neutral_stop_event.is_set(),
-            )
-            self.update_terminal("Machine zero reached.\n")
-            self.set_status("MACHINE ZERO / IDLE", "#0f766e")
-        except TestStopped:
-            self.safe_idle_motor("machine-zero return stopped", token=token)
-            self.update_terminal("Machine-zero return stopped.\n")
-        except Exception as exc:
-            self.safe_idle_motor("machine-zero return error", token=token)
-            self.set_status("ERROR / IDLE", RED)
-            self.update_terminal(f"Machine-zero return failed: {exc}\n")
-        finally:
-            self.motion_phase = "idle"
-            self.motion_coordinator.release(token)
-            self.neutral_motion_token = None
-            self.ui_message_queue.put(("neutral_finished",))
 
     def clamp_manual_target(self, target_turns):
         maximum_angle = self.system_config["motion"]["maximum_afo_angle_deg"]

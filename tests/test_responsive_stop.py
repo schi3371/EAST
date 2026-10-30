@@ -597,7 +597,7 @@ class GuiWorkerTests(unittest.TestCase):
         app = SimpleNamespace(ui_message_queue=queue.Queue(), plot_data_queue=queue.Queue(),
                               update_terminal=Mock(), update_plot_data=Mock(), update_plot=Mock(),
                               _retire_stop_worker=Mock(),
-                              _poll_rotary_sensor=Mock(), _diagnose_stalled_workers=Mock(),
+                              _poll_rotary_sensor=Mock(), _poll_rotary_homing=Mock(), _diagnose_stalled_workers=Mock(),
                               update_manual_position_display=Mock(),
                               master=SimpleNamespace(after=Mock()))
         for _ in range(300):

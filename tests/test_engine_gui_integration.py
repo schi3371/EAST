@@ -77,7 +77,7 @@ class FullApplicationIntegration(unittest.TestCase):
                 'load_preset_button reset_fields_button clear_session_tare_button reference_action_button '
                 'manual_mode_toggle left_arrow right_arrow step_angle_input manual_step_units_menu '
                 'mode_toggle neutral_button tare_button reference_status_label tare_status_label status_label '
-                'terminal isolated_exit_button output_tabs').split()
+                'terminal isolated_exit_button output_tabs homing_acknowledged homing_condition homing_live_label').split()
             for name in names:setattr(app,name,Field())
             app.buttons=[Field(),Field()];app.continuous_mode=Field(value=False)
             app.output_tabs.value='Session Terminal'
@@ -93,6 +93,8 @@ class FullApplicationIntegration(unittest.TestCase):
         for name,value in {'operator_input':'SIMULATED','fixture_id_input':'SIM-FIXTURE','calibration_id_input':'SIM-LOAD',
             'file_name_input':'SIMULATED','afo_id_input':'EMPTY','cycles_input':'1','speed_input':'1',
             'acceleration_input':'5','min_angle_input':'5','max_angle_input':'5'}.items():getattr(self.app,name).value=value
+        self.app.homing_condition.value='Empty fixture'
+        self.app.homing_acknowledged.value=True
         self.sensorstop=threading.Event();self.sensorthread=None
 
     def tearDown(self):
@@ -123,8 +125,6 @@ class FullApplicationIntegration(unittest.TestCase):
     def ready(self):
         self.app.connect_system()
         self.pump(lambda:self.app.engine.busy is None and self.app.monitor_thread is not None)
-        self.app.engine.submit('simulated physical square confirmation',lambda:self.app._set_machine_zero_worker('SIMULATED','SIM-FIXTURE')).result(2)
-        self.app.engine.submit('simulated empty tare',lambda:self.app._tare_worker('SIMULATED','SIM-FIXTURE','SIM-LOAD')).result(2)
         reader=RotaryReader(750256,'Voltage ratio');reader.accepting=True
         reader.metadata={'interval_ms':8,'requested_interval_ms':8,'hub_serial':750256,'input_mode':'Voltage ratio'}
         self.app.rotary_sensor.reader=reader
@@ -132,6 +132,16 @@ class FullApplicationIntegration(unittest.TestCase):
             while not self.sensorstop.is_set():reader._sample(None,.39772982090527514);self.sensorstop.wait(.004)
         self.sensorthread=threading.Thread(target=events,daemon=True);self.sensorthread.start()
         self.pump(lambda:self.app.rotary_sensor.measurement()['valid'])
+        def simulated_zero():
+            value=self.app.rotary_sensor.measurement(require=True)
+            angle=value['angle_deg']
+            self.app.reference_manager.establish_from_rotary_zero(
+                self.app.get_feedback(),self.app.hardware_fingerprint,'SIMULATED','SIM-FIXTURE',
+                self.app.rotary_sensor.calibration.sha256,reader.connection_id,
+                dict(mean_deg=angle,min_deg=angle,max_deg=angle,samples=60,duration_s=.5))
+            self.app.unsafe_exit_recovered_in_session=True
+        self.app.engine.submit('SIMULATED rotary zero evidence',simulated_zero).result(2)
+        self.app.engine.submit('simulated empty tare',lambda:self.app._tare_worker('SIMULATED','SIM-FIXTURE','SIM-LOAD')).result(2)
         self.app.show_resizable_confirmation=lambda **kwargs:True
 
     def test_successful_complete_run_through_real_services(self):
@@ -166,7 +176,7 @@ class FullApplicationIntegration(unittest.TestCase):
         self.assertTrue(self.app.engine.evidence['feedback_health']['healthy'])
         self.assertTrue(self.app.engine.evidence['feedback_recovery']['validated'])
         self.assertFalse(self.app.reference_manager.verified)
-        self.assertIsNone(self.app.empty_machine_tare)
+        self.assertIsNotNone(self.app.empty_machine_tare)
         self.assertTrue(self.app.motion_coordinator.motor_idle_confirmed)
         self.assertFalse(self.app.engine.evidence['reference_continuity']['proven'])
 
@@ -192,7 +202,7 @@ class FullApplicationIntegration(unittest.TestCase):
         self.assertIs(self.app.odrive_adapter.device,replacement)
         self.assertFalse(self.app.reference_manager.verified)
         self.assertIsNone(self.app.reference_manager.mapping)
-        self.assertIsNone(self.app.empty_machine_tare)
+        self.assertIsNotNone(self.app.empty_machine_tare)
         self.assertFalse(self.app.strain_test_active)
 
     def test_blocked_transport_quit_shows_direct_isolation_action_and_dirty_exit(self):

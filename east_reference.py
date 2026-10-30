@@ -767,6 +767,7 @@ class ReferenceManager:
         fixture_id: str,
         acknowledgement: bool,
         method: str = "operator_confirmed_physical_90_deg",
+        physical_definition: Optional[str] = None,
     ) -> SessionMapping:
         if not acknowledgement:
             raise ReferenceError("Machine-zero acknowledgement is required")
@@ -796,7 +797,7 @@ class ReferenceManager:
             established_at=utc_now_iso(),
             established_by=operator,
             fixture_id=fixture_id,
-            physical_definition=(
+            physical_definition=physical_definition or (
                 "Fixture mechanically aligned at physical 90 degrees; "
                 "machine angle defined as 0 degrees."
             ),
@@ -831,6 +832,32 @@ class ReferenceManager:
             )
             raise
         return mapping
+
+    def establish_from_rotary_zero(self, snapshot, fingerprint, operator, fixture_id,
+                                   calibration_sha256, sensor_connection_id, observation):
+        """Persist a motor mapping only after the caller completed rotary homing.
+
+        Sensor calibration and connection bind this mapping to the physical angle
+        reference. The tolerance is an acceptance criterion, not absolute accuracy.
+        """
+        from east_rotary_homing import ZERO_TOLERANCE_DEG, ZERO_DWELL_S
+        snapshot.validate(time.monotonic(), self.config['reference']['feedback_stale_after_ms']/1000,
+                          self.config['reference']['maximum_feedback_capture_ms']/1000)
+        if (not calibration_sha256 or not sensor_connection_id
+                or not isinstance(observation.get('samples'), int) or observation['samples'] < 5
+                or _finite(observation.get('duration_s', 0), 'rotary observation duration') < ZERO_DWELL_S):
+            raise ReferenceError('Fresh, sustained rotary zero evidence is required')
+        for name in ('min_deg','max_deg','mean_deg'):
+            if abs(_finite(observation[name], name)) > ZERO_TOLERANCE_DEG:
+                raise ReferenceError('Rotary zero is outside the fixed ±0.10 degree band')
+        if not observation['min_deg'] <= observation['mean_deg'] <= observation['max_deg']:
+            raise ReferenceError('Inconsistent rotary observation')
+        if snapshot.current_state != 1:
+            raise ReferenceError('Confirmed idle is required to commit rotary zero')
+        return self.establish_at_physical_neutral(snapshot, fingerprint, operator, fixture_id, True,
+            method=f'rotary_sensor_homing:{calibration_sha256}:{sensor_connection_id}',
+            physical_definition='Fixture homed to calibrated rotary zero within ±0.10 degrees; '
+                'motor mapping anchored after stationary post-idle observation.')
 
     def verify_measured_displacement(
         self,

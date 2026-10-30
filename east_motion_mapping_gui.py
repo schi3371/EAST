@@ -36,8 +36,8 @@ class MotionMappingWindow:
         panel.grid_rowconfigure(10, weight=1)
         ctk.CTkLabel(panel, text='Empty-machine nonlinear motion experiment',
                      font=('Arial', 20, 'bold')).grid(row=0, column=0, columnspan=3, pady=6)
-        ctk.CTkLabel(panel, text='Uses the existing connection, verified physical zero, unloaded tare and full normal recording.\n'
-            'Prepare zero/tare in the main window. Keep the AFO absent. This tool does not redefine zero or reconnect.',
+        ctk.CTkLabel(panel, text='Uses the existing connection, rotary-verified zero, unloaded tare and full normal recording.\n'
+            'Home and capture unloaded tare in the main window. Keep the AFO absent. This tool does not redefine zero or reconnect.',
             wraplength=730, justify='left').grid(row=1, column=0, columnspan=3, sticky='ew', pady=5)
         self.identity = ctk.CTkLabel(panel, text='', wraplength=730)
         self.identity.grid(row=2, column=0, columnspan=3, sticky='ew')
@@ -96,7 +96,7 @@ class MotionMappingWindow:
             if not ready_for_next(app) or app.monitor_error or app.feedback_retry_pending:
                 raise ValueError('Finish the current operation and resolve feedback/cleanup before starting')
             if not app.reference_manager.verified or app.empty_machine_tare is None:
-                raise ValueError('Use the main window to verify physical zero and capture unloaded tare first')
+                raise ValueError('Use Home / Return to Zero and capture unloaded tare first')
             if app.manual_mode.get():
                 raise ValueError('Turn Manual Mode off before a normal test')
             app.rotary_sensor.measurement(require=True)

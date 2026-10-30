@@ -413,7 +413,7 @@ class RotarySensorService:
         return {"required_for_normal_tests": True,
                 "calibration": self.calibration.metadata() if self.calibration else None,
                 "profile_error": self.profile_error, "connection": self.measurement()["metadata"],
-                "angle_use": "Independent measurement; motor commands, zero and torque calculation unchanged"}
+                "angle_use": "Calibrated fixture angle defines rotary homing/zero and plot angle; test trajectory conversion and torque geometry remain motor-based"}
 
     def disconnect(self):
         if self.reader:
