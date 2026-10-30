@@ -30,7 +30,7 @@ For a hardware-free preview:
 ```
 
 The source manifest checks compatibility against reviewed baseline 5b558be's
-motion/reference/sensor/configuration files. A mismatch stops before connection;
+motion/reference/sensor/configuration files. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;
 review the changed code rather than deleting the guard. New launcher/runner/test
 files do not affect that baseline check. No controller persistent configuration,
 motor gains, calibration or protection settings are changed.

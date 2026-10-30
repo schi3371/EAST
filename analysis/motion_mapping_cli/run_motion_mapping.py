@@ -32,13 +32,25 @@ def arguments(argv=None):
     return p.parse_args(argv)
 
 
+def verify_reviewed_sources(repo, manifest):
+    """Ignore only Git's LF/CRLF checkout conversion, never code/config changes."""
+    for name, digest in manifest.items():
+        path = repo / name
+        if not path.is_file():
+            raise RuntimeError(f'{name} differs from the reviewed baseline: file missing')
+        raw = path.read_bytes()
+        normalized = raw.replace(b'\r\n', b'\n')
+        if hashlib.sha256(normalized).hexdigest() != digest:
+            raise RuntimeError(
+                f'{name} differs from the reviewed baseline after Windows line-ending '
+                'normalization. This is a content change, not just LF/CRLF. '
+                'Keep your local changes and inspect the Git diff before updating the runner.')
+
+
 def load_east(repo):
     repo = repo.resolve()
     manifest = json.loads((HERE / 'source_manifest.json').read_text())
-    for name, digest in manifest.items():
-        path = repo / name
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise RuntimeError(f'{name} differs from the reviewed baseline; review/update this runner before use')
+    verify_reviewed_sources(repo, manifest)
     sys.path.insert(0, str(repo))
     import east_core as core
     import east_reference as reference

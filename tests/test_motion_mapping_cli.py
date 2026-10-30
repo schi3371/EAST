@@ -95,6 +95,37 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'differs'):
                 runner.load_east(Path(d))
 
+    def test_windows_crlf_checkout_is_accepted_without_importing_hardware(self):
+        manifest=json.loads((REPO/'analysis/motion_mapping_cli/source_manifest.json').read_text())
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            for name in manifest:
+                p=root/name
+                p.parent.mkdir(parents=True,exist_ok=True)
+                p.write_bytes((REPO/name).read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
+            runner.verify_reviewed_sources(root,manifest)
+
+    def test_real_content_change_still_rejected_in_windows_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            p=root/'source.py'
+            import hashlib
+            original=b'conversion = 2.055\n'
+            manifest={'source.py':hashlib.sha256(original).hexdigest()}
+            p.write_bytes(b'conversion = 2.455\r\n')
+            with self.assertRaisesRegex(RuntimeError,'content change'):
+                runner.verify_reviewed_sources(root,manifest)
+
+    def test_config_and_indentation_changes_are_not_normalized_away(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            for original,changed in [(b'{"limit": 15}\n',b'{"limit": 30}\r\n'),
+                                     (b'if ready:\n    move()\n',b'if ready:\r\nmove()\r\n')]:
+                (root/'source').write_bytes(changed)
+                with self.assertRaisesRegex(RuntimeError,'content change'):
+                    runner.verify_reviewed_sources(root,{'source':hashlib.sha256(original).hexdigest()})
+
     def launcher(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location('mapping_play_launcher',REPO/'Testing Scripts'/'run-motion-mapping.py')
