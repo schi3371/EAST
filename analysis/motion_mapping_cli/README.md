@@ -35,8 +35,10 @@ For a hardware-free preview:
 
 The source manifest checks the reviewed motion/reference/sensor/configuration
 files originating at baseline 5b558be. Its GUI entry has been reviewed and updated
-for the Motion Modelling window in version 1.8.1, and the configuration version
-label is updated too; shared motor control and numerical settings remain unchanged. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;
+for the Motion Modelling window and provisional rotary homing in version 1.8.2.
+The reference entry also includes a reviewed settle-check timestamp-ordering fix;
+the configuration version label is updated. Numerical settings and motor trajectory
+control remain unchanged. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;
 review the changed code rather than deleting the guard. New launcher/runner/test
 files do not affect that baseline check. No controller persistent configuration,
 motor gains, calibration or protection settings are changed.

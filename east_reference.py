@@ -1258,8 +1258,10 @@ def wait_for_settle(
     while clock() - start <= timeout_s:
         if cancelled():
             raise MotionConflictError("Motion was cancelled")
-        now = clock()
         last = snapshot_provider()
+        # The provider may return feedback published while it was executing.
+        # Validate against time AFTER retrieval, never an older pre-call time.
+        now = clock()
         last.validate(now, stale_after_s)
         if last.active_errors:
             raise FeedbackError(f"ODrive active errors: {last.active_errors}")

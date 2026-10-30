@@ -92,7 +92,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.8.1-motion-modelling"
+APP_VERSION = "1.8.2-provisional-rotary-homing"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -244,6 +244,7 @@ class MyInterface:
         self.recovery_thread = None
         self.recovery_window = None
         self.rotary_calibration = None
+        self.rotary_homing = None
         self.motion_mapping = None
         self.run_motion_mapping_context = None
         self.odrive_connection_generation = 0
@@ -716,6 +717,13 @@ class MyInterface:
         )
         self.motion_mapping_button.grid(
             row=7, column=0, columnspan=3, padx=6, pady=(0, 8), sticky="ew"
+        )
+        self.rotary_homing_button = ctk.CTkButton(
+            manual_control_frame, text="Provisional Rotary Homing", command=self.open_rotary_homing,
+            fg_color=AMBER, hover_color="#b45309", height=34,
+        )
+        self.rotary_homing_button.grid(
+            row=8, column=0, columnspan=3, padx=6, pady=(0, 8), sticky="ew"
         )
 
         for widget in (
@@ -2511,6 +2519,265 @@ class MyInterface:
         except Exception as exc:
             return f"Feedback unavailable: {exc}"
 
+    def open_rotary_homing(self):
+        if self.motion_coordinator.shutting_down or self.startup_block_reason:
+            self.update_terminal("Provisional homing blocked during shutdown or unresolved startup.\n")
+            return
+        if self.rotary_homing is not None and not self.rotary_homing.closed:
+            self.rotary_homing.window.lift()
+            return
+        from east_rotary_homing_gui import RotaryHomingWindow
+        self.rotary_homing = RotaryHomingWindow(self.master, self)
+
+    def start_rotary_homing(self, window, policy):
+        """Admit an unreferenced, empty-fixture experiment; never establish zero."""
+        from east_motion_mapping import ready_for_next
+        from east_calibration_motion import CalibrationPositioningReference
+        from east_core import APP_DIR
+        policy.validate()
+        if window is not self.rotary_homing or window.closed:
+            raise ValueError("Open the provisional homing window first")
+        if not ready_for_next(self) or self.motion_mapping_active() or self.monitor_error or self.feedback_retry_pending:
+            raise ValueError("Finish cleanup and recover healthy ODrive feedback first")
+        if self.startup_block_reason or self.manual_mode.get():
+            raise ValueError("Resolve startup and turn Manual Mode off")
+        if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+            raise ValueError("Close Rotary Sensor Calibration before automatic homing")
+        if self.recovery_window is not None and self.recovery_window.winfo_exists():
+            raise ValueError("Close Machine Zero Setup before automatic homing")
+        value = self.rotary_sensor.measurement(require=True)
+        reference = CalibrationPositioningReference.establish(self, value['angle_deg'], acknowledged=True)
+        if not self.show_resizable_confirmation(
+                title="Confirm Provisional Rotary Homing",
+                message=(f"EMPTY FIXTURE ONLY. Current sensor angle: {value['angle_deg']:+.3f} degrees.\n\n"
+                         f"Move toward calibrated sensor zero, stopping band ±{policy.tolerance_deg:g} degrees.\n"
+                         "At most 0.5 nominal degrees per correction, 20 degrees cumulative travel, 120 seconds.\n"
+                         "Existing recovery speed/acceleration and feedback limits apply.\n\n"
+                         "No machine-zero reference is written. Confirm fixture clear, unchanged sensor mounting, "
+                         "enclosure protection in use and physical E-stop accessible."),
+                confirm_text="Run Provisional Homing"):
+            return None
+        # Modal confirmation can admit nested GUI actions. Check again afterwards.
+        if not ready_for_next(self) or self.monitor_error or self.feedback_retry_pending or self.motion_mapping_active():
+            raise ValueError("System changed during confirmation; recover before retrying")
+        reference.check(self, stationary=True)
+        value = self.rotary_sensor.measurement(require=True)
+        if abs(value['angle_deg']-reference.angle(self.get_feedback().position_turns)) > 0.2:
+            raise ValueError("Sensor/motor position changed during confirmation; retry preparation")
+        source = value['sample'][4]
+        calibration = self.rotary_sensor.calibration.sha256
+        base = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else APP_DIR
+        path = base/self.system_config['logging']['output_directory']/(
+            'provisional_rotary_home_'+datetime.now().strftime('%Y%m%dT%H%M%S_%f')+'.json')
+        token = self.motion_coordinator.acquire('provisional-rotary-home')
+        self.stop_started_monotonic = None
+        self.stop_diagnostic_recorded = False
+        self.operator_context = {'operator':self.operator_input.get().strip(),
+                                 'fixture':self.fixture_id_input.get().strip(),
+                                 'calibration':self.calibration_id_input.get().strip()}
+        future = self.engine.submit('provisional rotary homing', lambda:self._rotary_homing_worker(
+            policy, reference, token, source, calibration, path))
+        if future.done() and future.exception() is not None:
+            self.motion_coordinator.release(token)
+            raise future.exception()
+        self.set_test_inputs_state('disabled')
+        self._refresh_motion_controls()
+        return future
+
+    def _rotary_homing_worker(self, policy, reference, token, source, calibration, path):
+        from east_rotary_homing import home
+        import statistics
+        raw_path = path.with_name(path.stem+'_rotary_samples.csv')
+        body = {'schema':'east-provisional-rotary-home-1', 'provisional':True,
+                'started_at':datetime.now().astimezone().isoformat(),
+                'zero_reference_written':False, 'policy':policy.__dict__,
+                'operator':reference.operator_id, 'fixture_id':reference.fixture_id,
+                'rotary_calibration_sha256':calibration, 'sensor_connection_id':source,
+                'rotary_calibration':self.rotary_sensor.calibration.metadata(),
+                'machine_zero_before':self.reference_manager.metadata_snapshot(),
+                'control_settings':{'speed_deg_s':self.system_config['reference']['recovery_speed_deg_s'],
+                    'acceleration_deg_s2':self.system_config['reference']['recovery_acceleration_deg_s2'],
+                    'nominal_deg_per_turn':reference.factor},
+                'raw_rotary_file':str(raw_path), 'outcome':'preparing',
+                'corrections':[], 'observations':[], 'idle_confirmed':False}
+        recording_started = False
+        result = None
+        failure = None
+        deadline = time.monotonic()+policy.timeout_s
+        armed = False
+        observing_idle = False
+
+        def check():
+            if observing_idle:
+                if self.motion_coordinator.active_token != token or not self.motion_coordinator.motor_idle_confirmed:
+                    raise FeedbackError('Idle homing ownership/confirmation changed')
+            else:
+                self.motion_coordinator.assert_active(token)
+            if self.engine.cancel_event.is_set() or time.monotonic() > deadline:
+                raise RuntimeError('Homing stopped or timed out')
+            if self.monitor_error or self.feedback_retry_pending:
+                raise FeedbackError('Healthy ODrive feedback is required for homing')
+            snapshot = reference.check(self)
+            expected_state = int(AXIS_STATE_CLOSED_LOOP_CONTROL) if armed else int(AXIS_STATE_IDLE)
+            if snapshot.current_state != expected_state or snapshot.active_errors:
+                raise FeedbackError('ODrive state/errors changed during homing')
+            if armed and snapshot.disarm_reason != self.expected_disarm_reason:
+                raise FeedbackError('ODrive disarm reason changed during homing')
+            value = self.rotary_sensor.measurement(require=True)
+            if value['sample'][4] != source or self.rotary_sensor.calibration.sha256 != calibration:
+                raise RotaryError('Rotary connection or calibration changed during homing')
+            if abs(value['angle_deg']) > reference.maximum_angle:
+                raise RotaryError('Rotary angle exceeds permitted homing range')
+            self._mark_control_health()
+            return snapshot, value
+
+        def observe(duration):
+            start = time.monotonic()
+            baseline = check()[1]['sample'][3]
+            samples, angles = set(), []
+            while time.monotonic()-start < duration:
+                snapshot, value = check()
+                if abs(snapshot.velocity_turns_s*reference.factor) > self.system_config['reference']['settle_velocity_limit_deg_s']:
+                    raise FeedbackError('Motor is not stationary during rotary zero observation')
+                sample = value['sample']
+                if sample[3] > baseline and sample[3] not in samples:
+                    samples.add(sample[3])
+                    angles.append(value['angle_deg'])
+                    body['observations'].append({'host_monotonic_s':time.monotonic(),
+                        'rotary_sequence':sample[3], 'rotary_sample_host_s':sample[0],
+                        'angle_deg':value['angle_deg'], 'motor_turns':snapshot.position_turns,
+                        'motor_feedback_host_s':snapshot.captured_monotonic_s})
+                if self.engine.cancel_event.wait(0.01):
+                    check()
+            if len(angles) < 5:
+                raise RotaryError('Not enough fresh rotary samples for a zero observation')
+            return dict(mean_deg=statistics.mean(angles), min_deg=min(angles), max_deg=max(angles), samples=len(angles))
+
+        def move(delta):
+            nonlocal armed
+            snapshot, value = check()
+            step = delta/reference.factor
+            target = reference.target(snapshot.position_turns, 1 if step > 0 else -1, abs(step))
+            if not armed:
+                self.enter_closed_loop(token, allow_unreferenced=True)
+                armed = True
+                check()
+            event = {'before_deg':value['angle_deg'], 'nominal_step_deg':delta,
+                     'target_motor_turns':target, 'requested_at_host_s':time.monotonic()}
+            body['corrections'].append(event)
+            self._write_runtime_checkpoint(MotionState.MOVING, self.get_feedback(), clean_shutdown=False,
+                extra={'phase':'provisional_rotary_home', 'target_turns':target, 'zero_reference_written':False})
+            write_json_atomic(path,{**body, 'outcome':'running'})
+            self._submit_position(token, target)
+            event['submitted_at_host_s'] = time.monotonic()
+            self.update_terminal(f"Provisional homing: sensor {value['angle_deg']:+.3f} deg; correction {delta:+.3f} nominal deg.\n")
+            cfg = self.system_config['reference']
+            wait_for_settle(lambda:check()[0], target,
+                min(afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config),abs(step)*0.25),
+                afo_speed_to_odrive_turns_s(cfg['settle_velocity_limit_deg_s'],self.system_config),
+                cfg['settle_dwell_ms']/1000.0,
+                min(max(0.1,deadline-time.monotonic()),motion_timeout_seconds(abs(delta),cfg['recovery_speed_deg_s'],cfg['recovery_acceleration_deg_s2'],self.system_config)),
+                cfg['feedback_stale_after_ms']/1000.0,
+                lambda:self.engine.cancel_event.is_set() or self._motion_cancelled(token),
+                **self._powered_wait_requirements())
+            event['settled_motor_turns'] = check()[0].position_turns
+
+        try:
+            write_json_atomic(path, body)
+            self._validate_live_motion_config()
+            self._revalidate_hardware_identity(require_reference=False)
+            check()
+            self.configure_trajectory(self.system_config['reference']['recovery_speed_deg_s'],
+                                      self.system_config['reference']['recovery_acceleration_deg_s2'])
+            self.rotary_sensor.start_recording(raw_path, time.monotonic())
+            recording_started = True
+            self.update_terminal(f'Provisional homing started. Evidence: {path}\n')
+            result = home(policy, observe, move, check)
+            idle = self.safe_idle_motor('provisional rotary homing finished',token=token)
+            armed = False
+            if not idle or not idle.confirmed:
+                raise FeedbackError('Homing idle was not confirmed')
+            body['idle_confirmed'] = True
+            observing_idle = True
+            after_idle = observe(policy.dwell_s)
+            if after_idle['min_deg'] < -policy.tolerance_deg or after_idle['max_deg'] > policy.tolerance_deg:
+                raise RotaryError('Fixture left the stopping band after motor idle')
+            body.update(outcome='sensor_zero_reached', final_observation=after_idle,
+                        candidate_zero_motor_turns=check()[0].position_turns,
+                        nominal_travel_deg=result['nominal_travel_deg'])
+        except Exception as exc:
+            failure = str(exc)
+            body.update(outcome='failed',error=failure)
+            cancelled = self.engine.cancel_event.is_set() and not self.monitor_error
+            if cancelled:
+                body['outcome'] = 'cancelled'
+            self._request_coordinated_stop(f'Provisional rotary homing: {exc}',fault=not cancelled)
+            stop = self.stop_worker
+            if stop is not None:
+                stop.join(timeout=self.system_config['reference']['idle_confirmation_timeout_s']+0.25)
+                self._retire_stop_worker()
+            body['idle_confirmed'] = bool(self.motion_coordinator.motor_idle_confirmed)
+        finally:
+            if recording_started:
+                try:
+                    body['rotary_recording_statistics'] = self.rotary_sensor.finish_recording()
+                except Exception as exc:
+                    failure = f'{failure or ""}; rotary recording finalization failed: {exc}'
+                    body.update(outcome='failed',error=failure)
+            # Retain ownership if Stop/recording cleanup is unresolved.
+            stop = self.stop_worker
+            recorder = self.rotary_sensor.recording
+            recorder_alive = recorder is not None and recorder.thread.is_alive()
+            if (self.motion_coordinator.motor_idle_confirmed and not recorder_alive
+                    and (stop is None or not stop.is_alive())):
+                self.motion_coordinator.release(token)
+            body['motion_owner_after_cleanup'] = self.motion_coordinator.owner
+            if self.motion_coordinator.owner is not None:
+                body.update(outcome='failed',error=body.get('error','Cleanup remains pending'))
+            body['completed_at'] = datetime.now().astimezone().isoformat()
+            body['machine_zero_after'] = self.reference_manager.metadata_snapshot()
+            try:
+                write_json_atomic(path,body)
+            finally:
+                self._schedule_rotary_homing_retirement(token, path, body)
+            self.ui_message_queue.put(('reference',))
+            self.ui_message_queue.put(('run_buttons',))
+        message = (f"Sensor zero reached within ±{policy.tolerance_deg:g}°. Original machine-zero method unchanged; "
+                   "no reference written. Confirm alignment before setting machine zero. Evidence: "+str(path)
+                   if body['outcome']=='sensor_zero_reached' else f"Homing failed: {body.get('error')}. Evidence: {path}")
+        self.update_terminal(message+'\n')
+        return {'message':message, 'evidence':body}
+
+    def _schedule_rotary_homing_retirement(self, token, path, body):
+        if self.motion_coordinator.active_token == token:
+            # Reuse the app's tracked cleanup slot. Ownership remains held until
+            # outstanding Stop/recording workers retire and idle is confirmed.
+            self.cleanup_thread = threading.Thread(target=self._retire_rotary_homing,
+                args=(token, self.rotary_sensor.recording, path, dict(body)),
+                name='east-rotary-home-cleanup', daemon=True)
+            self.cleanup_thread.start()
+
+    def _retire_rotary_homing(self, token, recorder, path, body):
+        while self.motion_coordinator.active_token == token:
+            stop = self.stop_worker
+            if (self.motion_coordinator.motor_idle_confirmed
+                    and (stop is None or not stop.is_alive())
+                    and (recorder is None or not recorder.thread.is_alive())):
+                self._retire_stop_worker()
+                self.motion_coordinator.release(token)
+                body['motion_owner_after_cleanup'] = self.motion_coordinator.owner
+                body['idle_confirmed'] = True
+                body['cleanup_completed_at'] = datetime.now().astimezone().isoformat()
+                try:
+                    write_json_atomic(path,body)
+                except Exception as exc:
+                    self.update_terminal(f'Homing cleanup metadata failed: {exc}\n')
+                self.ui_message_queue.put(('run_buttons',))
+                return
+            if self.motion_coordinator.shutting_down:
+                return  # Existing shutdown owns the remaining isolation/recovery path.
+            time.sleep(0.05)
+
     def open_motion_mapping(self):
         if self.motion_coordinator.shutting_down or self.startup_block_reason:
             self.update_terminal("Motion modelling blocked during shutdown or unresolved startup.\n")
@@ -2522,6 +2789,9 @@ class MyInterface:
         self.motion_mapping = MotionMappingWindow(self.master, self)
 
     def open_rotary_calibration(self):
+        if self.engine.busy == 'provisional rotary homing':
+            self.update_terminal("Wait for provisional homing to finish before calibration.\n")
+            return
         if self.motion_mapping_active():
             self.update_terminal("Finish or stop motion modelling before opening calibration.\n")
             return
@@ -2538,6 +2808,9 @@ class MyInterface:
         self.rotary_calibration = RotaryCalibrationWindow(self.master, self)
 
     def open_reference_recovery(self):
+        if self.engine.busy == 'provisional rotary homing':
+            self.update_terminal("Wait for provisional homing to finish before machine-zero setup.\n")
+            return
         if self.motion_mapping_active():
             self.update_terminal("Finish or stop motion modelling before opening machine-zero setup.\n")
             return
