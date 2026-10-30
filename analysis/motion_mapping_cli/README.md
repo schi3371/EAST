@@ -1,5 +1,9 @@
 # Run/Play motion experiment
 
+For the integrated GUI workflow (normal load-cell + motor + rotary recording),
+use **Motion Modelling** in EAST instead; see [the GUI guide](../../MOTION_MODELLING.md).
+This standalone runner remains separate and requires the GUI to be closed.
+
 Open `Testing Scripts/run-motion-mapping.py` and press Run/Play using the normal
 EAST Python environment. No command arguments or typed confirmation are required.
 The launcher is explicitly configured for **operator SC, fixture ID 0**, using the
@@ -29,8 +33,10 @@ For a hardware-free preview:
 .\.venv\Scripts\python.exe "Testing Scripts/run-motion-mapping.py" --preview
 ```
 
-The source manifest checks compatibility against reviewed baseline 5b558be's
-motion/reference/sensor/configuration files. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;
+The source manifest checks the reviewed motion/reference/sensor/configuration
+files originating at baseline 5b558be. Its GUI entry has been reviewed and updated
+for the Motion Modelling window in version 1.8.1, and the configuration version
+label is updated too; shared motor control and numerical settings remain unchanged. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;
 review the changed code rather than deleting the guard. New launcher/runner/test
 files do not affect that baseline check. No controller persistent configuration,
 motor gains, calibration or protection settings are changed.

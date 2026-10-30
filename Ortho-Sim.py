@@ -92,7 +92,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.8.0-supervised-execution"
+APP_VERSION = "1.8.1-motion-modelling"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -244,6 +244,8 @@ class MyInterface:
         self.recovery_thread = None
         self.recovery_window = None
         self.rotary_calibration = None
+        self.motion_mapping = None
+        self.run_motion_mapping_context = None
         self.odrive_connection_generation = 0
         self.recovery_origin_turns = None
         self.recovery_cumulative_deg = 0.0
@@ -708,6 +710,14 @@ class MyInterface:
             row=6, column=0, columnspan=3, padx=6, pady=(2, 8), sticky="ew"
         )
 
+        self.motion_mapping_button = ctk.CTkButton(
+            manual_control_frame, text="Motion Modelling", command=self.open_motion_mapping,
+            fg_color=BLUE, hover_color="#1d4ed8", height=34,
+        )
+        self.motion_mapping_button.grid(
+            row=7, column=0, columnspan=3, padx=6, pady=(0, 8), sticky="ew"
+        )
+
         for widget in (
             self.left_arrow,
             self.right_arrow,
@@ -946,6 +956,8 @@ class MyInterface:
             return
         if state == "normal" and self.motion_coordinator.shutting_down:
             return
+        if state == "normal" and self.motion_mapping_active():
+            state = "disabled"
         for entry in (
             self.file_name_input, self.cycles_input, self.speed_input,
             self.acceleration_input, self.min_angle_input, self.max_angle_input,
@@ -1084,6 +1096,10 @@ class MyInterface:
                 and self.monitor_thread is not None and self.monitor_thread.is_alive()
                 and not self.feedback_retry_pending and not self.monitor_error)
 
+    def motion_mapping_active(self):
+        window = getattr(self, "motion_mapping", None)
+        return window is not None and getattr(window, "active", False) is True
+
     def _refresh_motion_controls(self):
         if threading.current_thread() is not threading.main_thread():
             self.ui_message_queue.put(("run_buttons",))
@@ -1101,8 +1117,10 @@ class MyInterface:
                 self.system_config,
             )
         )
+        mapping_active = self.motion_mapping_active()
         idle_ui = (
-            self.engine.busy is None
+            not mapping_active
+            and self.engine.busy is None
             and not self.strain_test_active
             and not self.motion_coordinator.shutting_down
             and not self.motion_coordinator.stopping
@@ -1121,7 +1139,7 @@ class MyInterface:
             self.get_feedback()
         except FeedbackError:
             healthy = False
-        recovery_ui = (self.engine.busy is None and not self.shutdown_requested
+        recovery_ui = (not mapping_active and self.engine.busy is None and not self.shutdown_requested
             and self.motion_coordinator.owner is None
             and not any(worker and worker.is_alive() for worker in (
                 self.stop_worker, self.disconnect_worker, self.cleanup_thread,
@@ -1146,7 +1164,7 @@ class MyInterface:
             self._set_widget_state(self.mode_toggle, 'disabled')
         self._set_widget_state(self.neutral_button, 'normal' if connected and verified and idle_ui else 'disabled')
         self._set_widget_state(self.tare_button, 'normal' if connected and verified and idle_ui else 'disabled')
-        self._set_widget_state(self.clear_session_tare_button, 'normal' if self.engine.busy is None and self.empty_machine_tare is not None and (not self.motion_coordinator.shutting_down) and (not self.strain_test_active) and (self.motion_coordinator.owner is None) else 'disabled')
+        self._set_widget_state(self.clear_session_tare_button, 'normal' if not mapping_active and self.engine.busy is None and self.empty_machine_tare is not None and (not self.motion_coordinator.shutting_down) and (not self.strain_test_active) and (self.motion_coordinator.owner is None) else 'disabled')
 
     def _persistence_fault(self, domain, error):
         self.engine.record(domain, {"healthy":False,"reason":str(error)})
@@ -1583,6 +1601,10 @@ class MyInterface:
                 self.ui_message_queue.put(("terminal", f"RUN ERROR: could not persist incomplete outcome: {exc}\n"))
 
     def _request_coordinated_stop(self, reason, fault=False):
+        # Worker callers only latch an Event; Tk and batch finalization stay on the UI thread.
+        mapping = getattr(self, "motion_mapping", None)
+        if mapping is not None and getattr(mapping, "active", False) is True:
+            mapping.cancelled.set()
         owner = getattr(self, "transport_owner", None)
         if owner is not None:
             owner.cancel_motion()
@@ -2310,6 +2332,9 @@ class MyInterface:
             return
         self.terminal.insert(ctk.END, message)
         self.terminal.see(ctk.END)  # Scroll to the end of the text
+        mapping = getattr(self, "motion_mapping", None)
+        if mapping is not None and getattr(mapping, "closed", True) is False:
+            mapping.append_terminal(message)
 
     def show_resizable_confirmation(self, title, message, confirm_text="Start", dangerous=False):
         """Show a modal confirmation whose actions remain visible on small screens."""
@@ -2486,7 +2511,20 @@ class MyInterface:
         except Exception as exc:
             return f"Feedback unavailable: {exc}"
 
+    def open_motion_mapping(self):
+        if self.motion_coordinator.shutting_down or self.startup_block_reason:
+            self.update_terminal("Motion modelling blocked during shutdown or unresolved startup.\n")
+            return
+        if self.motion_mapping is not None and not self.motion_mapping.closed:
+            self.motion_mapping.window.lift()
+            return
+        from east_motion_mapping_gui import MotionMappingWindow
+        self.motion_mapping = MotionMappingWindow(self.master, self)
+
     def open_rotary_calibration(self):
+        if self.motion_mapping_active():
+            self.update_terminal("Finish or stop motion modelling before opening calibration.\n")
+            return
         if self.motion_coordinator.shutting_down:
             self.update_terminal("Calibration blocked during shutdown.\n")
             return
@@ -2500,6 +2538,9 @@ class MyInterface:
         self.rotary_calibration = RotaryCalibrationWindow(self.master, self)
 
     def open_reference_recovery(self):
+        if self.motion_mapping_active():
+            self.update_terminal("Finish or stop motion modelling before opening machine-zero setup.\n")
+            return
         if self.motion_coordinator.shutting_down:
             self.update_terminal("Reference recovery blocked during shutdown.\n")
             return
@@ -3105,7 +3146,16 @@ class MyInterface:
             self.ui_message_queue.put(("status", "SHUTDOWN INCOMPLETE", RED))
             self.ui_message_queue.put(("offer_isolated_exit", str(exc)))
 
-    def start_strain_test(self):
+    def start_strain_test(self, mapping_request=None):
+        mapping = getattr(self, "motion_mapping", None)
+        mapping_active = mapping is not None and getattr(mapping, "active", False) is True
+        if mapping_request is not None:
+            if not mapping_active or not mapping.accepts(mapping_request):
+                self.update_terminal("Motion modelling request is no longer authorized.\n")
+                return False
+        elif mapping_active:
+            self.update_terminal("Use the Motion Modelling window while its sequence is active.\n")
+            return False
         if self.motion_coordinator.shutting_down:
             self.update_terminal("Start blocked during shutdown.\n")
             return
@@ -3179,7 +3229,7 @@ class MyInterface:
             return
         
         try:
-            parameters = self.collect_test_parameters()
+            parameters = mapping_request.parameters if mapping_request is not None else self.collect_test_parameters()
         except ValueError as exc:
             CTkMessagebox(title="Input Error", message=str(exc))
             return
@@ -3202,7 +3252,8 @@ class MyInterface:
             "empty_machine_baseline": "EMPTY-MACHINE BASELINE",
             "custom": "CUSTOM",
         }[parameters.test_type]
-        active_protocol = self.active_protocol_name()
+        active_protocol = ("Motion Modelling / empty machine" if mapping_request is not None
+                           else self.active_protocol_name())
         safety_line = (
             "Remove the AFO and all removable loads before starting."
             if baseline_test
@@ -3222,7 +3273,7 @@ class MyInterface:
             f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n\n"
             "Fixture clear  |  Physical E-stop accessible"
         )
-        if not self.show_resizable_confirmation(
+        if mapping_request is None and not self.show_resizable_confirmation(
             title=("Confirm Empty-Machine Baseline" if baseline_test else "Confirm Test"),
             message=confirmation_message,
             confirm_text=("Start Baseline" if baseline_test else "Start"),
@@ -3243,6 +3294,10 @@ class MyInterface:
         except MotionConflictError as exc:
             self.update_terminal(f"Cannot start test: {exc}\n")
             return
+        # Admission above has retired the previous stop. Do not diagnose this
+        # new run using a timer from an earlier, fully completed Stop operation.
+        self.stop_started_monotonic = None
+        self.stop_diagnostic_recorded = False
         self.strain_test_active = True
         self.csv_recorder = None
         self.data_collection_thread = None
@@ -3256,8 +3311,18 @@ class MyInterface:
         self.run_metadata = None
         self.metadata_file_name = None
         self.strain_file_name = None
-        preset_metadata = self.current_preset_metadata(parameters)
-        self._submit_lifecycle("test initialization", lambda: self._initialize_test_worker(parameters, preset_metadata))
+        self.run_motion_mapping_context = mapping_request.context() if mapping_request is not None else None
+        preset_metadata = (mapping_request.preset_metadata if mapping_request is not None
+                           else self.current_preset_metadata(parameters))
+        accepted = self._submit_lifecycle("test initialization", lambda: self._initialize_test_worker(parameters, preset_metadata))
+        if not accepted:
+            self._request_coordinated_stop("Test initialization could not be scheduled", fault=True)
+            self.cleanup_thread = threading.Thread(
+                target=self._cleanup_failed_start, args=("Test initialization could not be scheduled",),
+                name="east-failed-start-cleanup", daemon=True,
+            )
+            self.cleanup_thread.start()
+        return accepted
 
     def _initialize_test_worker(self, parameters, preset_metadata):
         self.test_started_monotonic = time.monotonic()
@@ -3311,6 +3376,9 @@ class MyInterface:
                 tare_metadata=self.empty_machine_tare.to_dict(),
                 preset_metadata=preset_metadata,
             )
+            context = getattr(self, "run_motion_mapping_context", None)
+            if isinstance(context, dict):
+                self.run_metadata["motion_modelling"] = dict(context)
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
