@@ -1,11 +1,11 @@
-# Experimental model-driven test motion — v1.11.0
+# Experimental model-driven test motion — v1.12.0
 
 Normal GUI tests and three-speed AFO/baseline batches now use the pooled direction-specific cubic from the 2 November motion analysis. This is experimental feed-forward positioning, not prospective validation or continuous rotary closed-loop tracking. No hardware was operated during implementation.
 
 ## Operator use
 
 1. Update EAST with the application closed. Connect, home using the rotary sensor, and capture the normal unloaded tare before mounting an AFO.
-2. Load the desired preset. With model mode enabled, preset loading limits each side of ROM to 9 degrees. Original preset definitions remain unchanged; reduced ROM is correctly marked modified. Manually entered ranges over 9 degrees are rejected before motion.
+2. Choose Original or Updated cubic in the main Motion method menu, then load the desired preset. Presets retain their original +/-10-degree settings. The former model-specific +/-9-degree clamp is removed; requested targets through the configured +/-15-degree envelope are accepted. See [switching and extrapolation](MOTION_METHODS.md).
 3. Begin with an empty-machine single-speed slow run. Inspect rotary endpoints, reversals, return to zero and measured speed before loaded or faster runs. Completing a run does not validate its accuracy.
 4. The three-speed batch uses this implementation. Its 20 degrees/s condition is outside the original 0.5/5 nominal degrees/s training conditions and is labelled accordingly in segment metadata. Loaded operation and reversals are also unvalidated.
 
@@ -17,7 +17,7 @@ For fitted coordinate x in motor turns and planned direction d (+1 increasing, -
 
     angle = sum((b[i] + d*c[i]) * x**i for i in range(4))
 
-Coefficients and provenance are embedded in `east_motion_model.py` and model-enabled run metadata. Bisection inverts the monotonic branches. No extrapolation beyond the fitted +/-4.38 motor turns is allowed. Targets are limited to +/-9 degrees so both branches remain inside the fitted range.
+Coefficients and provenance are embedded in `east_motion_model.py` and model-enabled run metadata. Bisection inverts the monotonic branches. The fitted range remains +/-4.38 motor turns. Extrapolation beyond it is now permitted and recorded per segment. A monotonic numerical inverse bracket of +/-8 turns covers requested angles through +/-15 degrees; this is not an experimentally validated operating range.
 
 At run start, fresh stationary motor feedback and a rotary reading within +/-0.1 degree establish a per-run origin using the initial increasing branch. This is an explicit experimental alignment assumption: the original fit has direction offsets, and stationary/reversal branch behaviour has not been independently validated. After the initial unnumbered increasing movement settles, the origin is refined once using that known branch and the fresh rotary/motor observation, then stays fixed for every numbered sweep and return. This is coordinate alignment, not a coefficient refit. Both initial and refined anchors are saved. The initial positioning endpoint is therefore outside the frozen-origin evaluation dataset. Each segment selects its branch from the destination relative to the fresh measured angle. Inconsistent motor direction or a starting coordinate outside the fitted range blocks movement.
 

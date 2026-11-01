@@ -106,7 +106,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nMounting/setup ID: {requests[0].mounting_setup_id}\n\n'+summary+
                 f'\nTotal: 3 runs, {3*p.cycles} numbered cycles; each run also positions initially and returns to zero.'
                 f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².'
-                + ('\nExperimental cubic targets; +/-9 degrees maximum; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.')+
+                + ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'),confirm_text='Run Sequence'):
                 return

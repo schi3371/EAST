@@ -15,6 +15,15 @@ class ModelTests(unittest.TestCase):
                 y=curve(x,d)
                 self.assertGreater(y,last);last=y
                 self.assertAlmostEqual(inverse(y,d),x,places=10)
+    def test_extrapolation_to_machine_envelope_remains_monotonic(self):
+        from east_motion_model import X_LIMIT
+        for d in (-1,1):
+            for angle in (-15,-12,-10,10,12,15):
+                x=inverse(angle,d)
+                self.assertAlmostEqual(curve(x,d),angle,places=9)
+            self.assertGreater(abs(inverse(15,d)),X_LIMIT)
+        validate_range(15,15)
+
     def test_anchor_translates_encoder_origin_without_erasing_direction(self):
         m=RunModel.anchored(100,.04)
         self.assertAlmostEqual(curve(100-m.origin_turns,1),.04)
@@ -22,17 +31,17 @@ class ModelTests(unittest.TestCase):
         for d in (-1,1):
             self.assertAlmostEqual(curve(m.target(9,d)-m.origin_turns,d),9)
             self.assertAlmostEqual(curve(m.target(-9,d)-m.origin_turns,d),-9)
-    def test_no_extrapolation_nan_or_bad_direction(self):
-        for x in (math.nan,math.inf,4.39,-4.39):
+    def test_invalid_inputs_and_machine_envelope(self):
+        for x in (math.nan,math.inf,8.01,-8.01):
             with self.assertRaises(ValueError):curve(x,1)
-        for y in (10,15,math.nan,math.inf):
+        for y in (20,math.nan,math.inf):
             with self.assertRaises(ValueError):inverse(y,1)
         for d in (0,2):
             with self.assertRaises(ValueError):inverse(0,d)
         with self.assertRaises(ValueError):RunModel.anchored(0,.11)
         with self.assertRaises(ValueError):RunModel.anchored(math.nan,0)
-        with self.assertRaises(ValueError):RunModel.anchored(0,0).target(9.1,1)
-        with self.assertRaises(ValueError):validate_range(10,10)
+        with self.assertRaises(ValueError):RunModel.anchored(0,0).target(15.1,1)
+        with self.assertRaises(ValueError):validate_range(16,16)
         with self.assertRaises(ValueError):enabled({'motion':{'experimental_model':{'enabled':'false'}}})
         with self.assertRaises(ValueError):enabled({'motion':{'experimental_model':{'enabled':True,'model_id':'unknown'}}})
 
@@ -84,9 +93,9 @@ class ApplicationTests(unittest.TestCase):
     def test_model_default_load_and_range_block_before_motion(self):
         a=self.prepare();self.module.CTkMessagebox=lambda **kw:h.Field(value='Load Preset')
         a.protocol_var.value='Three-Speed AFO Protocol';a.load_selected_preset()
-        self.assertEqual(float(a.min_angle_input.get()),9)
-        self.assertEqual(float(a.max_angle_input.get()),9)
-        a.loaded_preset_key='custom';a.min_angle_input.value='10'
+        self.assertEqual(float(a.min_angle_input.get()),10)
+        self.assertEqual(float(a.max_angle_input.get()),10)
+        a.loaded_preset_key='custom';a.min_angle_input.value='16'
         self.assertFalse(a.start_strain_test())
         self.assertIsNone(a.strain_thread)
 
@@ -134,6 +143,58 @@ class ApplicationTests(unittest.TestCase):
         a.engine.submit("simulated profile bounds",lambda:a.configure_trajectory(20,100,turns_per_degree=.7)).result(2)
         self.assertAlmostEqual(a.commanded_odrive_velocity,20/2.055)
         self.assertAlmostEqual(a.commanded_odrive_acceleration,100/2.055)
+
+    def test_full_fifteen_degree_model_run_records_extrapolation(self):
+        a=self.prepare();a.min_angle_input.value='15';a.max_angle_input.value='15'
+        a.start_strain_test()
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
+        segments=a.run_metadata['experimental_motion_model']['segments']
+        self.assertTrue(segments[0]['extrapolated'])
+        self.assertEqual([s['target_angle_deg'] for s in segments],[15,-15,15,0])
+
+    def test_original_selection_executes_legacy_and_preserves_tare(self):
+        from east_motion_model import ORIGINAL_METHOD
+        a=self.prepare();tare=a.empty_machine_tare
+        self.assertTrue(a.select_motion_method(ORIGINAL_METHOD))
+        a.start_strain_test()
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
+        self.assertFalse(a.run_metadata['experimental_motion_model']['enabled'])
+        self.assertEqual(a.run_metadata['motion_method'],ORIGINAL_METHOD)
+        self.assertIs(a.empty_machine_tare,tare)
+        self.assertIsNone(a.run_motion_model)
+
+    def test_selection_change_during_confirmation_blocks_start(self):
+        from east_motion_model import ORIGINAL_METHOD
+        a=self.prepare()
+        def confirm(**kwargs):
+            a.select_motion_method(ORIGINAL_METHOD)
+            return True
+        a.show_resizable_confirmation=confirm
+        self.assertFalse(a.start_strain_test())
+        self.assertIsNone(a.strain_thread)
+
+    def test_selector_changes_mode_and_blocks_during_run(self):
+        from east_motion_model import ORIGINAL_METHOD, UPDATED_METHOD
+        a=self.prepare()
+        self.assertTrue(a.select_motion_method(ORIGINAL_METHOD))
+        self.assertFalse(enabled(a.system_config))
+        self.assertTrue(a.select_motion_method(UPDATED_METHOD))
+        self.assertTrue(enabled(a.system_config))
+        a.strain_test_active=True
+        self.assertFalse(a.select_motion_method(ORIGINAL_METHOD))
+        self.assertTrue(enabled(a.system_config))
+        self.assertEqual(a.motion_method_var.get(),UPDATED_METHOD)
+        a.strain_test_active=False
+        from types import SimpleNamespace
+        a.motion_mapping=SimpleNamespace(active=True,closed=False,append_terminal=Mock())
+        self.assertFalse(a.select_motion_method(ORIGINAL_METHOD))
+        self.assertTrue(enabled(a.system_config))
+        a.motion_mapping=None
+        a.motion_method_menu=h.Field()
+        a.set_test_inputs_state('disabled')
+        self.assertEqual(a.motion_method_menu.cget('state'),'disabled')
 
     def test_stop_blocks_model_command(self):
         a=self.prepare();a.run_motion_model=RunModel.anchored(0,0);a.test_stop_event.set()

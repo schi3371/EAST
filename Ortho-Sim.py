@@ -31,7 +31,7 @@ from odrive.enums import (
     INPUT_MODE_TRAP_TRAJ,
 )
 
-from east_motion_model import CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
+from east_motion_model import X_LIMIT, ORIGINAL_METHOD, UPDATED_METHOD, CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 
 from east_core import (
     CSV_COLUMNS,
@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.11.0-model-motion"
+APP_VERSION = "1.12.0-motion-selector"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -154,6 +154,7 @@ class MyInterface:
                 for key, preset in self.system_config["test_presets"].items()
             },
         }
+        self.motion_method_var = ctk.StringVar(value=UPDATED_METHOD if motion_model_enabled(self.system_config) else ORIGINAL_METHOD)
         self.protocol_var = ctk.StringVar(value="Custom")
         self.loaded_preset_key = "custom"
         self.preset_loaded_at = datetime.now().astimezone().isoformat(
@@ -466,6 +467,11 @@ class MyInterface:
         self.protocol_menu.grid(
             row=0, column=1, columnspan=3, padx=(0, 0), sticky="ew"
         )
+        ctk.CTkLabel(protocol_frame,text="Motion method:",font=('Arial',11,'bold')).grid(row=2,column=0,padx=(0,6),sticky='w')
+        self.motion_method_menu = ctk.CTkOptionMenu(
+            protocol_frame,variable=self.motion_method_var,values=[ORIGINAL_METHOD,UPDATED_METHOD],
+            command=self.select_motion_method,width=205,height=30)
+        self.motion_method_menu.grid(row=2,column=1,columnspan=3,sticky='ew',pady=(5,3))
         self.load_preset_button = ctk.CTkButton(
             protocol_frame,
             text="Load Preset",
@@ -834,7 +840,7 @@ class MyInterface:
         selected_key = self.protocol_display_to_key[selected_display]
         text = f"Active protocol: {active_name}"
         if motion_model_enabled(self.system_config):
-            text += " | EXPERIMENTAL cubic targets; max +/-9 degrees; speed varies"
+            text += " | EXPERIMENTAL cubic; extrapolation allowed to machine limit; speed varies"
         if selected_key != self.loaded_preset_key:
             text += (
                 f"\nSelected: {selected_display} \N{EM DASH} press Load Preset to apply. "
@@ -848,6 +854,25 @@ class MyInterface:
         else:
             colour = GREEN
         self.protocol_status_label.configure(text=text, text_color=colour)
+
+    def select_motion_method(self, selection):
+        """Session selection only. Never change a frozen run or batch."""
+        previous = UPDATED_METHOD if motion_model_enabled(self.system_config) else ORIGINAL_METHOD
+        blocked = (self.strain_test_active or self.motion_coordinator.owner is not None
+                   or self.engine.busy is not None or self.motion_mapping_active()
+                   or self.rotary_homing_active() or self.shutdown_requested
+                   or not self.run_finalized or self.motion_coordinator.stopping)
+        if blocked or selection not in (ORIGINAL_METHOD,UPDATED_METHOD):
+            self.motion_method_var.set(previous)
+            self.update_terminal("Motion method changes are blocked during movement, a sequence or unresolved cleanup.\n")
+            return False
+        settings = dict(self.system_config['motion'].get('experimental_model',{}))
+        settings['enabled'] = selection == UPDATED_METHOD
+        self.system_config['motion']['experimental_model'] = settings
+        self.motion_method_var.set(selection)
+        self.update_protocol_status()
+        self.update_terminal(f"Motion method selected: {selection}. Applies to the next normal test or protocol batch. Motion Modelling identification stays Original.\n")
+        return True
 
     def load_selected_preset(self):
         if self.motion_mapping_active() is True:
@@ -901,8 +926,6 @@ class MyInterface:
         else:
             for key, entry in motion_entries.items():
                 value = preset['speeds_deg_s'][0] if key == 'speed_deg_s' and preset.get('execution_kind') == 'speed_sequence' else preset[key]
-                if key in ("minimum_angle_deg", "maximum_angle_deg") and motion_model_enabled(self.system_config):
-                    value = min(float(value), 9.0)
                 self._replace_entry_value(entry, value)
         self.loaded_preset_key = selected_key
         self.preset_loaded_at = datetime.now().astimezone().isoformat(
@@ -991,6 +1014,9 @@ class MyInterface:
         preset = self._loaded_preset()
         if state == 'normal' and preset and preset.get('execution_kind') == 'speed_sequence':
             self.speed_input.configure(state='disabled')
+        selector = getattr(self,"motion_method_menu",None)
+        if selector is not None:
+            selector.configure(state=state)
         self.protocol_menu.configure(state=state)
         self.load_preset_button.configure(state=state)
         self.reset_fields_button.configure(state=state)
@@ -3341,7 +3367,7 @@ class MyInterface:
             f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             f"Cycles: {parameters.cycles}  |  Constant-speed span: "
             f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n\n"
-            + ("Experimental direction-cubic targets; +/-9 degrees maximum; instantaneous speed varies.\n" if use_model else "Legacy fixed conversion.\n") +
+            + ("Experimental cubic targets; extrapolation beyond fitted range is allowed; instantaneous speed varies.\n" if use_model else "Legacy fixed conversion.\n") +
             "Fixture clear  |  Physical E-stop accessible"
         )
         if mapping_request is None and not self.show_resizable_confirmation(
@@ -3351,6 +3377,9 @@ class MyInterface:
         ):
             return
 
+        if mapping_request is None and motion_model_enabled(self.system_config) != use_model:
+            self.update_terminal("Motion method changed during confirmation; review and start again.\n")
+            return False
         if self.stop_worker is not None:
             if self.stop_worker.is_alive() or not self.motion_coordinator.motor_idle_confirmed:
                 self.update_terminal("Cannot start: previous stop has not completed with confirmed idle.\n")
@@ -3460,6 +3489,7 @@ class MyInterface:
                 'tolerance_deg':ZERO_TOLERANCE_DEG, 'angle_at_initialization_deg':self.rotary_sensor.measurement(require=True)['angle_deg']}
             self.run_metadata["experimental_motion_model"] = (model_provenance() if self.run_motion_model_enabled else {"enabled":False,"mode":"legacy_fixed_conversion"})
             self.run_metadata["experimental_motion_model"]["enabled"] = self.run_motion_model_enabled
+            self.run_metadata["motion_method"] = UPDATED_METHOD if self.run_motion_model_enabled else ORIGINAL_METHOD
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
@@ -4126,7 +4156,8 @@ class MyInterface:
             rotary_sample_age_s=rotary.get("sample_age_s"),
             motor_velocity_turns_s=self.commanded_odrive_velocity,motor_acceleration_turns_s2=self.commanded_odrive_acceleration,
             motor_rate_capped=self.commanded_odrive_velocity < speed*ratio or self.commanded_odrive_acceleration < acceleration*ratio,
-            outside_training_speed_range=not 0.5 <= speed <= 5.0))
+            outside_training_speed_range=not 0.5 <= speed <= 5.0,
+            extrapolated=abs(target-model.origin_turns)>X_LIMIT or abs(snapshot.position_turns-model.origin_turns)>X_LIMIT))
         self.update_terminal(f'Model target {angle_deg:g} deg -> {target:.6f} motor turns ({phase})\n')
         self.command_position_and_wait(target,phase,token,speed_deg_s,acceleration_deg_s2, distance_deg=abs(delta_angle))
         return target
