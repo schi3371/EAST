@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.9.0-rotary-machine-zero",
+  "software_version": "1.10.0-three-speed-protocol",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -112,6 +112,40 @@
       "maximum_angle_deg": 10.0,
       "speed_deg_s": 5.0,
       "acceleration_deg_s2": 100.0
+    },
+    "three_speed_afo": {
+      "display_name": "Three-Speed AFO Protocol",
+      "version": "1.0",
+      "execution_kind": "speed_sequence",
+      "test_type": "afo_test",
+      "cycles": 3,
+      "minimum_angle_deg": 10.0,
+      "maximum_angle_deg": 10.0,
+      "acceleration_deg_s2": 100.0,
+      "speeds_deg_s": [
+        0.5,
+        5.0,
+        20.0
+      ],
+      "additional_inter_run_rest_s": 0.0,
+      "settings_status": "provisional_not_scientifically_validated"
+    },
+    "three_speed_empty_baseline": {
+      "display_name": "Three-Speed Empty-Machine Baseline",
+      "version": "1.0",
+      "execution_kind": "speed_sequence",
+      "test_type": "empty_machine_baseline",
+      "cycles": 3,
+      "minimum_angle_deg": 10.0,
+      "maximum_angle_deg": 10.0,
+      "acceleration_deg_s2": 100.0,
+      "speeds_deg_s": [
+        0.5,
+        5.0,
+        20.0
+      ],
+      "additional_inter_run_rest_s": 0.0,
+      "settings_status": "provisional_not_scientifically_validated"
     }
   },
   "rotary_sensor": {

@@ -80,9 +80,11 @@ def completed_run(app, request):
     if not quiescent(app):
         return 'pending', None
     metadata = app.run_metadata
-    if not metadata or metadata.get('motion_modelling') != request.context():
+    if not metadata or metadata.get(getattr(request, 'metadata_key', 'motion_modelling')) != request.context():
         return 'failure', 'Run initialization ended without matching metadata'
-    if not ready_for_next(app):
+    # A completed run can be recorded during shutdown; next-run admission is
+    # separately blocked by ready_for_next and the batch cancellation latch.
+    if not app.run_finalized or app.motion_coordinator.owner is not None or not app.motion_coordinator.motor_idle_confirmed:
         return 'failure', 'Run cleanup, metadata finalization or confirmed idle is unresolved'
     if metadata.get('run_status') != 'completed':
         return 'failure', metadata.get('error') or 'Run did not complete'

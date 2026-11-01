@@ -35,7 +35,10 @@ For a hardware-free preview:
 
 The source manifest checks the reviewed motion/reference/sensor/configuration
 files originating at baseline 5b558be. Its GUI entry has been reviewed and updated
-for the Motion Modelling window and official rotary machine zero in version 1.9.0.
+for the Motion Modelling window, official rotary machine zero, and three-speed
+GUI protocol/preset integration in version 1.10.0. The standalone runner remains
+an empty-machine motion experiment; see [the three-speed guide](../../THREE_SPEED_PROTOCOL.md)
+for the loaded/baseline GUI sequences.
 The reference entry also includes a reviewed settle-check timestamp-ordering fix;
 the configuration version label and sensor-metadata description are updated. Numerical motion limits and motor trajectory
 control remain unchanged. LF/CRLF line-ending differences from Windows Git checkouts are normalised before comparison; actual content differences remain blocked. A content mismatch stops before connection;

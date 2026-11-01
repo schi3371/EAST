@@ -9,7 +9,10 @@ from east_core import write_json_atomic
 from east_motion_mapping import make_plan, ready_for_next, completed_run, quiescent
 
 
-class MotionMappingWindow:
+from east_batch_gui import RecordedBatchWindow
+
+
+class MotionMappingWindow(RecordedBatchWindow):
     def __init__(self, master, app):
         self.app, self.closed, self.active = app, False, False
         self.cancelled = threading.Event()
@@ -55,6 +58,7 @@ class MotionMappingWindow:
         self.status.grid(row=8, column=0, columnspan=3, pady=5, sticky='ew')
         self.single_button = ctk.CTkButton(panel, text='Run One Slow Test', command=lambda:self.start('single'))
         self.sequence_button = ctk.CTkButton(panel, text='Run Six-Test Sequence', command=lambda:self.start('sequence'))
+        self.run_buttons = [self.single_button, self.sequence_button]
         self.stop_button = ctk.CTkButton(panel, text='Stop', command=self.stop, fg_color='#dc2626')
         for col, button in enumerate((self.single_button, self.sequence_button, self.stop_button)):
             button.grid(row=9, column=col, padx=4, pady=6, sticky='ew')
@@ -65,22 +69,7 @@ class MotionMappingWindow:
         self.output.grid(row=11, column=0, columnspan=3, sticky='ew')
         self.window.after(200, self.tick)
 
-    def accepts(self, request):
-        return self.active and not self.cancelled.is_set() and request is self.request
 
-    def append_terminal(self, message):
-        if self.closed:
-            return
-        self.terminal.configure(state='normal')
-        self.terminal.insert('end', message)
-        # Bounded view; the main terminal and saved experimental files remain authoritative.
-        if int(self.terminal.index('end-1c').split('.')[0]) > 1200:
-            self.terminal.delete('1.0', '300.0')
-        self.terminal.see('end')
-        self.terminal.configure(state='disabled')
-        if self.active and 'Stop/cleanup is still running' in message:
-            self.cancelled.set()
-            self.app.stop_logging()
 
     def start(self, mode):
         if self.active or self.save_future is not None:
@@ -149,118 +138,5 @@ class MotionMappingWindow:
             updated_at=datetime.now().astimezone().isoformat(),
             idle_confirmed=bool(self.app.motion_coordinator.motor_idle_confirmed))
         self.save_action = action
-        self.save_future = self.app.engine.submit('save motion modelling manifest',
+        self.save_future = self.submit_manifest('save motion modelling manifest',
                                                  lambda:write_json_atomic(self.manifest_path,body))
-
-    def next_run(self):
-        if self.cancelled.is_set():
-            if not quiescent(self.app):
-                return
-            self.finish('cancelled', 'Stop, fault or cleanup warning cancelled the remaining sequence')
-            return
-        if len(self.records) == len(self.requests):
-            self.finish('completed', None)
-            return
-        if not ready_for_next(self.app):
-            return
-        self.request = self.requests[len(self.records)]
-        self.status.configure(text=f'Starting {self.request.run_id} ({self.request.index}/{self.request.total})')
-        self.launched_at = time.monotonic()
-        if not self.app.start_strain_test(mapping_request=self.request):
-            self.finish('error', 'Normal GUI admission blocked this run; see Session Terminal')
-            return
-        self.awaiting_run = True
-
-    def finish(self, status, error):
-        self.batch_status, self.batch_error = status, error
-        self.awaiting_run = False
-        # Keep active ownership until the final sidecar is durably saved.
-        self.save('finish')
-
-    def stop(self):
-        self.cancelled.set()
-        if self.active:
-            self.status.configure(text='Stop requested — remaining runs cancelled; waiting for normal cleanup')
-        # Escape/Stop in this window remains a real application Stop even when
-        # the batch is inactive and a normal main-window test is running.
-        self.app.stop_logging()
-
-    def tick(self):
-        if self.closed:
-            return
-        app = self.app
-        try:
-            self.identity.configure(text=f'Operator: {app.operator_input.get()} | Fixture: {app.fixture_id_input.get()} | '
-                                     f'Load calibration: {app.calibration_id_input.get()}')
-            if self.active:
-                for v in self.fields.values():v.configure(state='disabled')
-                self.single_button.configure(state='disabled')
-                self.sequence_button.configure(state='disabled')
-                if app.shutdown_requested or app.monitor_error or app.feedback_retry_pending:
-                    if not self.cancelled.is_set():
-                        self.stop()
-                if self.save_future is not None:
-                    if self.save_future.done():
-                        future, action = self.save_future, self.save_action
-                        self.save_future = None
-                        try:
-                            future.result()
-                        except Exception as exc:
-                            self.active = False
-                            self.cancelled.set()
-                            self.status.configure(text=f'Batch manifest save failed; sequence stopped: {exc}')
-                            app.update_terminal(f'Motion modelling manifest save failed: {exc}\n')
-                        else:
-                            if action == 'finish':
-                                self.active = False
-                                self.request = None
-                                self.status.configure(text=f'{self.batch_status.upper()}: {self.batch_error or "all runs saved"}')
-                            else:
-                                self.next_run()
-                elif getattr(self,'awaiting_run',False):
-                    state, reason = completed_run(app,self.request)
-                    if state != 'pending':
-                        self.records.append(dict(context=self.request.context(), outcome=state,error=reason,
-                            strain_file=app.strain_file_name,rotary_file=app.rotary_samples_file_name,
-                            metadata_file=app.metadata_file_name))
-                        self.awaiting_run = False
-                        if state == 'failure' or self.cancelled.is_set():
-                            self.finish('error' if state == 'failure' else 'cancelled',reason or 'Stop requested')
-                        else:
-                            self.save('next')
-                    else:
-                        s = app.latest_feedback
-                        rotary = app.rotary_sensor.measurement()
-                        angle = rotary.get('angle_deg')
-                        self.status.configure(text=f'{self.request.run_id} ({self.request.index}/{self.request.total}) | '
-                            f'cycle {app.current_cycle}/{self.request.parameters.cycles} | {app.motion_phase} | '
-                            f'{time.monotonic()-self.launched_at:.0f} s elapsed\n'
-                            f'Motor: {s.position_turns if s else "unavailable"} turns | Rotary: {angle} deg | '
-                            f'{rotary.get("reason", "")}')
-                elif self.cancelled.is_set() and quiescent(app):
-                    self.finish('cancelled','Stop requested between runs')
-                else:
-                    self.next_run()
-            else:
-                self.single_button.configure(state='normal')
-                self.sequence_button.configure(state='normal')
-                for v in self.fields.values():v.configure(state='normal')
-                if self.release_pending and quiescent(app):
-                    self.release_pending = False
-                    app.set_test_inputs_state('normal')
-                    app._refresh_motion_controls()
-        except Exception as exc:
-            self.cancelled.set()
-            self.active = False
-            self.status.configure(text=f'Sequence stopped: {exc}')
-            app.update_terminal(f'Motion modelling window error: {exc}\n')
-            app.stop_logging()
-        self.window.after(200,self.tick)
-
-    def close(self):
-        if self.active or self.save_future is not None:
-            self.stop()
-            self.status.configure(text='Wait for Stop/recording cleanup and batch saving before closing this window')
-            return
-        self.closed = True
-        self.window.destroy()

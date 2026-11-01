@@ -93,7 +93,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.9.0-rotary-machine-zero"
+APP_VERSION = "1.10.0-three-speed-protocol"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -813,6 +813,13 @@ class MyInterface:
         if preset is None:
             return "Custom"
         name = f"{preset['display_name']} v{preset['version']}"
+        if preset.get('execution_kind') == 'speed_sequence':
+            name += ' — 0.5 → 5 → 20°/s; cycles EACH speed'
+            try:
+                cycles = int(self.cycles_input.get())
+                name += f' ({3*cycles} total numbered cycles)'
+            except (TypeError,ValueError):
+                pass
         if preset_values_modified(self._motion_field_values(), preset):
             name += " \N{EM DASH} MODIFIED"
         return name
@@ -839,6 +846,9 @@ class MyInterface:
         self.protocol_status_label.configure(text=text, text_color=colour)
 
     def load_selected_preset(self):
+        if self.motion_mapping_active() is True:
+            self.update_terminal("Preset changes are blocked during an active sequence.\n")
+            return
         selected_display = self.protocol_var.get()
         selected_key = self.protocol_display_to_key[selected_display]
         preset = (
@@ -878,17 +888,22 @@ class MyInterface:
             "speed_deg_s": self.speed_input,
             "acceleration_deg_s2": self.acceleration_input,
         }
+        # CTkEntry ignores replacement while disabled (sequence speed is read-only).
+        for entry in motion_entries.values():
+            entry.configure(state="normal")
         if preset is None:
             for entry in motion_entries.values():
                 entry.delete(0, ctk.END)
         else:
             for key, entry in motion_entries.items():
-                self._replace_entry_value(entry, preset[key])
+                value = preset['speeds_deg_s'][0] if key == 'speed_deg_s' and preset.get('execution_kind') == 'speed_sequence' else preset[key]
+                self._replace_entry_value(entry, value)
         self.loaded_preset_key = selected_key
         self.preset_loaded_at = datetime.now().astimezone().isoformat(
             timespec="milliseconds"
         )
         self.update_parameter_summary()
+        self.set_test_inputs_state('normal')
 
     def current_preset_metadata(self, parameters):
         preset = self._loaded_preset()
@@ -967,6 +982,9 @@ class MyInterface:
             self.calibration_id_input,
         ):
             entry.configure(state=state)
+        preset = self._loaded_preset()
+        if state == 'normal' and preset and preset.get('execution_kind') == 'speed_sequence':
+            self.speed_input.configure(state='disabled')
         self.protocol_menu.configure(state=state)
         self.load_preset_button.configure(state=state)
         self.reset_fields_button.configure(state=state)
@@ -2269,7 +2287,7 @@ class MyInterface:
 
     def reset_test_fields(self):
         """Clear run-specific inputs without changing session safety state."""
-        if self.strain_test_active or self.motion_coordinator.owner is not None:
+        if self.motion_mapping_active() is True or self.strain_test_active or self.motion_coordinator.owner is not None:
             CTkMessagebox(
                 title="Reset Blocked",
                 message="Stop the active movement before resetting test fields.",
@@ -2875,14 +2893,33 @@ class MyInterface:
                 return  # Existing shutdown owns the remaining isolation/recovery path.
             time.sleep(0.05)
 
+    def open_three_speed_protocol(self):
+        if self.motion_coordinator.shutting_down or self.startup_block_reason:
+            self.update_terminal('Three-speed protocol blocked during shutdown/unresolved startup.\n')
+            return False
+        from east_protocol_batch_gui import ThreeSpeedProtocolWindow
+        current = self.motion_mapping
+        if current is not None and not current.closed:
+            if current.active:
+                current.window.lift()
+                return False
+            if isinstance(current,ThreeSpeedProtocolWindow) and current.preset_key == self.loaded_preset_key:
+                current.window.lift()
+                return False
+            current.close()
+        self.motion_mapping = ThreeSpeedProtocolWindow(self.master,self,self.loaded_preset_key)
+        return False
+
     def open_motion_mapping(self):
         if self.motion_coordinator.shutting_down or self.startup_block_reason:
             self.update_terminal("Motion modelling blocked during shutdown or unresolved startup.\n")
             return
-        if self.motion_mapping is not None and not self.motion_mapping.closed:
-            self.motion_mapping.window.lift()
-            return
         from east_motion_mapping_gui import MotionMappingWindow
+        if self.motion_mapping is not None and not self.motion_mapping.closed:
+            if self.motion_mapping.active or isinstance(self.motion_mapping,MotionMappingWindow):
+                self.motion_mapping.window.lift()
+                return
+            self.motion_mapping.close()
         self.motion_mapping = MotionMappingWindow(self.master, self)
 
     def open_rotary_calibration(self):
@@ -2959,6 +2996,9 @@ class MyInterface:
                 self.update_terminal("Shutdown is already in progress. If it remains blocked, use the power-isolated exit only after isolating motor power.\n")
                 return
             self.shutdown_requested = True
+            batch = getattr(self, 'motion_mapping', None)
+            if batch is not None and getattr(batch, 'active', False) is True:
+                batch.cancelled.set()
             self.engine.begin_close()
             self.shutdown_started_monotonic = time.monotonic()
             self.motion_coordinator.begin_shutdown()
@@ -2986,6 +3026,9 @@ class MyInterface:
                 (worker := getattr(self, name, None)) is not None and worker.is_alive()]
         if self.engine.busy is not None:
             live.append("test engine: " + self.engine.busy)
+        batch = getattr(self, 'motion_mapping', None)
+        if batch is not None and getattr(batch, 'active', False) is True:
+            live.append('batch outcome/manifest')
         recorder = getattr(self, "csv_recorder", None)
         if recorder is not None and recorder.thread.is_alive():
             live.append("CSV recorder")
@@ -3168,14 +3211,18 @@ class MyInterface:
         mapping_active = mapping is not None and getattr(mapping, "active", False) is True
         if mapping_request is not None:
             if not mapping_active or not mapping.accepts(mapping_request):
-                self.update_terminal("Motion modelling request is no longer authorized.\n")
+                self.update_terminal("Batch request is no longer authorized.\n")
                 return False
         elif mapping_active:
-            self.update_terminal("Use the Motion Modelling window while its sequence is active.\n")
+            self.update_terminal("Use the active sequence window while its batch is running.\n")
             return False
         if self.motion_coordinator.shutting_down:
             self.update_terminal("Start blocked during shutdown.\n")
             return
+        if mapping_request is None and not mapping_active:
+            preset = self._loaded_preset()
+            if isinstance(preset, dict) and preset.get('execution_kind') == 'speed_sequence':
+                return self.open_three_speed_protocol()
         if self.engine.busy is not None:
             self.update_terminal("Start blocked while hardware lifecycle work is in progress.\n")
             return
@@ -3256,7 +3303,7 @@ class MyInterface:
             "empty_machine_baseline": "EMPTY-MACHINE BASELINE",
             "custom": "CUSTOM",
         }[parameters.test_type]
-        active_protocol = ("Motion Modelling / empty machine" if mapping_request is not None
+        active_protocol = (mapping_request.preset_metadata["preset_display_name"] if mapping_request is not None
                            else self.active_protocol_name())
         safety_line = (
             "Remove the AFO and all removable loads before starting."
@@ -3316,6 +3363,7 @@ class MyInterface:
         self.metadata_file_name = None
         self.strain_file_name = None
         self.run_motion_mapping_context = mapping_request.context() if mapping_request is not None else None
+        self.run_batch_metadata_key = getattr(mapping_request, 'metadata_key', 'motion_modelling') if mapping_request is not None else None
         preset_metadata = (mapping_request.preset_metadata if mapping_request is not None
                            else self.current_preset_metadata(parameters))
         accepted = self._submit_lifecycle("test initialization", lambda: self._initialize_test_worker(parameters, preset_metadata))
@@ -3382,7 +3430,8 @@ class MyInterface:
             )
             context = getattr(self, "run_motion_mapping_context", None)
             if isinstance(context, dict):
-                self.run_metadata["motion_modelling"] = dict(context)
+                key = getattr(self, 'run_batch_metadata_key', None) or 'motion_modelling'
+                self.run_metadata[key] = dict(context)
             self.run_metadata['rotary_zero_reference'] = {
                 'method':self.reference_manager.require_verified().verification_method,
                 'calibration_sha256':self.rotary_sensor.calibration.sha256,
@@ -3392,6 +3441,11 @@ class MyInterface:
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
             self.run_metadata["rotary_sensor"] = self.rotary_sensor.metadata()
             self.run_metadata["rotary_sensor"]["raw_samples_file"] = Path(self.rotary_samples_file_name).name
+            if 'protocol_batch' in self.run_metadata:
+                self.run_metadata['protocol_batch_files'] = {
+                    'batch_manifest':self.run_metadata['protocol_batch']['batch_manifest'],
+                    'metadata_file':str(metadata_path),'strain_file':str(csv_path),
+                    'rotary_file':self.rotary_samples_file_name}
             self.run_metadata["rotary_sensor"]["join_method"] = "Latest delivered sample at load-cell read; age and sequence recorded; no interpolation"
             self.run_metadata["motor_timing_provenance"] = {
                 "position_timestamp": "host completion of position remote read, not end of the multi-property bundle",

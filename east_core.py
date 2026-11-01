@@ -203,7 +203,11 @@ PRESET_MOTION_FIELDS = (
 
 
 def preset_motion_values(preset: Dict[str, Any]) -> Dict[str, Any]:
-    return {key: preset[key] for key in PRESET_MOTION_FIELDS}
+    fields = [k for k in PRESET_MOTION_FIELDS if k != 'speed_deg_s'] if preset.get('execution_kind') == 'speed_sequence' else PRESET_MOTION_FIELDS
+    values = {key: preset[key] for key in fields}
+    if preset.get('execution_kind') == 'speed_sequence':
+        values['speeds_deg_s'] = list(preset['speeds_deg_s'])
+    return values
 
 
 def preset_values_modified(values: Dict[str, Any], preset: Dict[str, Any]) -> bool:
@@ -213,6 +217,8 @@ def preset_values_modified(values: Dict[str, Any], preset: Dict[str, Any]) -> bo
         if int(str(values["cycles"]).strip()) != int(expected["cycles"]):
             return True
         for key in PRESET_MOTION_FIELDS[1:]:
+            if key == 'speed_deg_s' and preset.get('execution_kind') == 'speed_sequence':
+                continue  # Sequence speeds are explicit, fixed and not an editable scalar.
             if not math.isclose(
                 float(values[key]), float(expected[key]), rel_tol=0.0, abs_tol=1e-9
             ):
@@ -356,7 +362,14 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     }
     display_names = set()
     for key, preset in config["test_presets"].items():
-        missing_fields = required_preset_fields.difference(preset)
+        required = required_preset_fields
+        if preset.get('execution_kind') == 'speed_sequence':
+            required = (required_preset_fields - {'speed_deg_s'}) | {'speeds_deg_s'}
+            if preset.get('speeds_deg_s') != [0.5, 5.0, 20.0] or 'speed_deg_s' in preset:
+                raise ValueError(f'test_presets.{key} must declare the supported numeric speed sequence')
+        elif preset.get('execution_kind','single_run') != 'single_run':
+            raise ValueError(f'test_presets.{key}.execution_kind is invalid')
+        missing_fields = required.difference(preset)
         if missing_fields:
             raise ValueError(
                 f"test_presets.{key} is missing: {', '.join(sorted(missing_fields))}"
