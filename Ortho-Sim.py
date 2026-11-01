@@ -31,6 +31,8 @@ from odrive.enums import (
     INPUT_MODE_TRAP_TRAJ,
 )
 
+from east_motion_model import CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
+
 from east_core import (
     CSV_COLUMNS,
     ROTARY_RUN_COLUMNS,
@@ -93,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.10.0-three-speed-protocol"
+APP_VERSION = "1.11.0-model-motion"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -831,6 +833,8 @@ class MyInterface:
         selected_display = self.protocol_var.get()
         selected_key = self.protocol_display_to_key[selected_display]
         text = f"Active protocol: {active_name}"
+        if motion_model_enabled(self.system_config):
+            text += " | EXPERIMENTAL cubic targets; max +/-9 degrees; speed varies"
         if selected_key != self.loaded_preset_key:
             text += (
                 f"\nSelected: {selected_display} \N{EM DASH} press Load Preset to apply. "
@@ -897,6 +901,8 @@ class MyInterface:
         else:
             for key, entry in motion_entries.items():
                 value = preset['speeds_deg_s'][0] if key == 'speed_deg_s' and preset.get('execution_kind') == 'speed_sequence' else preset[key]
+                if key in ("minimum_angle_deg", "maximum_angle_deg") and motion_model_enabled(self.system_config):
+                    value = min(float(value), 9.0)
                 self._replace_entry_value(entry, value)
         self.loaded_preset_key = selected_key
         self.preset_loaded_at = datetime.now().astimezone().isoformat(
@@ -1462,7 +1468,7 @@ class MyInterface:
             reason = "Fixture ID does not match the saved machine-zero record"
             raise ReferenceRequiredError(reason)
 
-    def configure_trajectory(self, speed_deg_s, acceleration_deg_s2):
+    def configure_trajectory(self, speed_deg_s, acceleration_deg_s2, turns_per_degree=None):
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive is not connected")
         motion = self.system_config["motion"]
@@ -1470,6 +1476,13 @@ class MyInterface:
         trajectory_acceleration = afo_acceleration_to_odrive_turns_s2(
             acceleration_deg_s2, self.system_config
         )
+        if turns_per_degree is not None:
+            if not math.isfinite(turns_per_degree) or turns_per_degree <= 0:
+                raise ValueError("Invalid model trajectory conversion")
+            trajectory_velocity = float(speed_deg_s)*turns_per_degree
+            trajectory_acceleration = float(acceleration_deg_s2)*turns_per_degree
+            trajectory_velocity = min(trajectory_velocity, afo_speed_to_odrive_turns_s(motion["maximum_speed_deg_s"], self.system_config))
+            trajectory_acceleration = min(trajectory_acceleration, afo_acceleration_to_odrive_turns_s2(motion["maximum_acceleration_deg_s2"], self.system_config))
         controller_limit = trajectory_velocity * float(motion["controller_velocity_safety_multiplier"])
         self.odrive_adapter.configure_trajectory(
             trajectory_velocity,
@@ -1479,6 +1492,7 @@ class MyInterface:
             INPUT_MODE_TRAP_TRAJ,
         )
         self.commanded_odrive_velocity = trajectory_velocity
+        self.commanded_odrive_acceleration = trajectory_acceleration
         self.commanded_afo_acceleration = float(acceleration_deg_s2)
 
     def odrive_configuration_snapshot(self):
@@ -2537,7 +2551,7 @@ class MyInterface:
             return False
         snapshot = self.get_feedback()
         return (abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
-                and abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG)
+                and (motion_model_enabled(self.system_config) or abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG))
 
     def open_rotary_homing(self, resume_test=False):
         """One explicit action: refresh unhealthy feedback, home, persist zero."""
@@ -3281,6 +3295,11 @@ class MyInterface:
         
         try:
             parameters = mapping_request.parameters if mapping_request is not None else self.collect_test_parameters()
+            use_model = motion_model_enabled(self.system_config) and getattr(mapping_request, "metadata_key", None) != "motion_modelling" and not (mapping_request is not None and mapping_request.context().get("purpose") == "nonlinear_motion_identification")
+            if use_model:
+                validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
+                if self.rotary_sensor.calibration.sha256 not in CALIBRATION_HASHES:
+                    raise ValueError("Motion model requires its original rotary calibration; review/refit after calibration changes")
         except ValueError as exc:
             CTkMessagebox(title="Input Error", message=str(exc))
             return
@@ -3322,6 +3341,7 @@ class MyInterface:
             f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             f"Cycles: {parameters.cycles}  |  Constant-speed span: "
             f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n\n"
+            + ("Experimental direction-cubic targets; +/-9 degrees maximum; instantaneous speed varies.\n" if use_model else "Legacy fixed conversion.\n") +
             "Fixture clear  |  Physical E-stop accessible"
         )
         if mapping_request is None and not self.show_resizable_confirmation(
@@ -3359,6 +3379,8 @@ class MyInterface:
         self.buttons[0].configure(state="disabled")
         self.buttons[1].configure(state="disabled")
         self.manual_mode_toggle.configure(state="disabled")
+        self.run_motion_model_enabled = use_model
+        self.run_motion_model = None
         self.run_metadata = None
         self.metadata_file_name = None
         self.strain_file_name = None
@@ -3436,10 +3458,14 @@ class MyInterface:
                 'method':self.reference_manager.require_verified().verification_method,
                 'calibration_sha256':self.rotary_sensor.calibration.sha256,
                 'tolerance_deg':ZERO_TOLERANCE_DEG, 'angle_at_initialization_deg':self.rotary_sensor.measurement(require=True)['angle_deg']}
+            self.run_metadata["experimental_motion_model"] = (model_provenance() if self.run_motion_model_enabled else {"enabled":False,"mode":"legacy_fixed_conversion"})
+            self.run_metadata["experimental_motion_model"]["enabled"] = self.run_motion_model_enabled
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
             self.run_metadata["rotary_sensor"] = self.rotary_sensor.metadata()
+            if self.run_motion_model_enabled:
+                self.run_metadata["rotary_sensor"]["angle_use"] = "Calibrated angle anchors experimental feed-forward targets and checks zero return; raw motor-derived columns and torque geometry retain legacy conversion"
             self.run_metadata["rotary_sensor"]["raw_samples_file"] = Path(self.rotary_samples_file_name).name
             if 'protocol_batch' in self.run_metadata:
                 self.run_metadata['protocol_batch_files'] = {
@@ -3882,6 +3908,14 @@ class MyInterface:
             parameters = self.run_parameters
             absolute_min = self.reference_manager.target_for_angle(-parameters.min_angle_deg)
             absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
+            if getattr(self, "run_motion_model_enabled", False) is True:
+                validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
+                anchor = self._test_feedback()
+                if abs(anchor.velocity_turns_s*float(self.system_config["motion"]["afo_degrees_per_odrive_turn"])) > float(self.system_config["reference"]["stationary_velocity_limit_deg_s"]):
+                    raise RuntimeError("Model anchor requires stationary motor feedback")
+                self.run_motion_model = RunModel.anchored(anchor.position_turns, self.rotary_sensor.measurement(require=True)["angle_deg"])
+                self.run_metadata["experimental_motion_model"].update(self.run_motion_model.metadata())
+                self.update_terminal("Experimental inverse-cubic test motion active; rotary-anchored targets, secant-average speed conversion.\n")
 
             self.update_terminal(
                 f"Commanded AFO range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
@@ -3892,17 +3926,28 @@ class MyInterface:
                 f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
             self.current_cycle = 0
-            self.command_position_and_wait(
-                absolute_max, "moving_to_initial_max", token
-            )
+            self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_initial_max", token)
+            if self.run_motion_model is not None:
+                # The first approach supplies a known increasing branch. A stationary
+                # zero has no identifiable branch; refine only the coordinate origin,
+                # never coefficients, before locking it for all numbered sweeps.
+                snapshot = self._test_feedback()
+                measured = self.rotary_sensor.measurement(require=True)["angle_deg"]
+                initial_alignment = dict(origin_turns=self.run_motion_model.origin_turns,
+                    anchor_motor_turns=self.run_motion_model.anchor_turns,
+                    anchor_rotary_angle_deg=self.run_motion_model.anchor_angle_deg)
+                self.run_motion_model = RunModel.observed(snapshot.position_turns, measured, 1)
+                details = self.run_metadata["experimental_motion_model"]
+                segments = details["segments"]
+                details.update(self.run_motion_model.metadata())
+                details["segments"] = segments
+                details["initial_alignment"] = initial_alignment
+                details["numbered_cycle_origin_locked_after_initial_positioning"] = True
+                self.update_terminal("Model origin aligned once after initial increasing positioning; frozen for numbered cycles.\n")
             for cycle in range(1, parameters.cycles + 1):
                 self.current_cycle = cycle
-                self.command_position_and_wait(
-                    absolute_min,
-                    "moving_to_min",
-                    token,
-                )
-                self.command_position_and_wait(absolute_max, "moving_to_max", token)
+                self.command_test_angle(-parameters.min_angle_deg, absolute_min, "moving_to_min", token)
+                self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_max", token)
                 if self.test_stop_event.is_set() or self.acquisition_error:
                     raise TestStopped()
                 self.completed_cycles = cycle
@@ -3915,8 +3960,8 @@ class MyInterface:
                 motion["neutral_return_acceleration_deg_s2"],
             )
             neutral_target = mapping.neutral_position_turns
-            self.command_position_and_wait(
-                neutral_target,
+            neutral_target = self.command_test_angle(
+                0.0, neutral_target,
                 "returning_to_machine_zero",
                 token,
                 speed_deg_s=motion["neutral_return_speed_deg_s"],
@@ -4046,6 +4091,46 @@ class MyInterface:
                     self.ui_message_queue.put(("inputs", "normal"))
                     self.ui_message_queue.put(("run_buttons", "normal"))
 
+    def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
+        """Model targets only for normal tests. Manual/homing/identification stay legacy."""
+        model = getattr(self, 'run_motion_model', None)
+        if model is None:
+            self.command_position_and_wait(legacy_target,phase,token,speed_deg_s,acceleration_deg_s2)
+            return legacy_target
+        self.motion_coordinator.assert_active(token)
+        if self.test_stop_event.is_set():
+            raise TestStopped()
+        snapshot = self._test_feedback()
+        rotary = self.rotary_sensor.measurement(require=True)
+        measured = rotary['angle_deg']
+        direction = 1 if angle_deg > measured else -1
+        target = model.target(angle_deg,direction)
+        delta_turns = target-snapshot.position_turns
+        delta_angle = float(angle_deg)-float(measured)
+        if abs(delta_angle) < 0.01 or delta_turns*direction <= 0:
+            raise RuntimeError('Model target direction/anchor is inconsistent with live position; home and review the model')
+        # Always check both start and destination lie in the fitted motor interval.
+        from east_motion_model import curve
+        curve(snapshot.position_turns-model.origin_turns,direction)
+        ratio = abs(delta_turns/delta_angle)
+        if not 0.3 <= ratio <= 0.7:
+            raise RuntimeError('Model trajectory ratio is outside the experimental bounds')
+        speed = self.run_parameters.commanded_afo_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
+        acceleration = self.run_parameters.commanded_afo_acceleration_deg_s2 if acceleration_deg_s2 is None else float(acceleration_deg_s2)
+        self.configure_trajectory(speed,acceleration,turns_per_degree=ratio)
+        self.run_metadata['experimental_motion_model']['segments'].append(dict(
+            phase=phase,cycle=self.current_cycle,target_angle_deg=float(angle_deg),direction=direction,
+            target_motor_turns=target,start_motor_turns=snapshot.position_turns,start_rotary_angle_deg=measured,
+            turns_per_degree_secant=ratio,nominal_speed_deg_s=speed,nominal_acceleration_deg_s2=acceleration,
+            issued_at_monotonic_s=time.monotonic(),motor_feedback_at_monotonic_s=snapshot.captured_monotonic_s,
+            rotary_sample_age_s=rotary.get("sample_age_s"),
+            motor_velocity_turns_s=self.commanded_odrive_velocity,motor_acceleration_turns_s2=self.commanded_odrive_acceleration,
+            motor_rate_capped=self.commanded_odrive_velocity < speed*ratio or self.commanded_odrive_acceleration < acceleration*ratio,
+            outside_training_speed_range=not 0.5 <= speed <= 5.0))
+        self.update_terminal(f'Model target {angle_deg:g} deg -> {target:.6f} motor turns ({phase})\n')
+        self.command_position_and_wait(target,phase,token,speed_deg_s,acceleration_deg_s2, distance_deg=abs(delta_angle))
+        return target
+
     def command_position_and_wait(
         self,
         target_turns,
@@ -4053,6 +4138,7 @@ class MyInterface:
         token,
         speed_deg_s=None,
         acceleration_deg_s2=None,
+        distance_deg=None,
     ):
         if self.test_stop_event.is_set():
             raise TestStopped()
@@ -4064,6 +4150,8 @@ class MyInterface:
         actual_distance_deg = abs(odrive_turns_to_afo_degrees(
             float(target_turns) - snapshot.position_turns, self.system_config
         ))
+        if distance_deg is not None:
+            actual_distance_deg = float(distance_deg)
         # Retain the legacy CSV column name; its value is feedback-derived.
         self.current_nominal_distance_deg = actual_distance_deg
         effective_speed = (
@@ -4152,6 +4240,10 @@ class MyInterface:
                 )
             if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
                 raise RuntimeError("Machine-zero position drifted after ODrive entered idle")
+            if getattr(self, "run_motion_model_enabled", False) and self.strain_test_active:
+                angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
+                if abs(angle) > ZERO_TOLERANCE_DEG:
+                    raise RuntimeError(f"Model return missed rotary zero: {angle:.4f} degrees; use Home / Return to Zero before restarting")
             time.sleep(0.02)
     
     def continuous_strain_read(self):

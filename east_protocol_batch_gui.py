@@ -7,6 +7,7 @@ import sys
 import uuid
 import customtkinter as ctk
 from east_core import APP_DIR, write_json_atomic
+from east_motion_model import enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
 from east_protocol_batch import make_protocol_plan
@@ -87,6 +88,10 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             for request in requests:
                 valid,reason=validate_empty_machine_tare(a.empty_machine_tare,request.parameters,a.system_config)
                 if not valid:raise ValueError(reason)
+            prep_model=deepcopy(a.system_config["motion"].get("experimental_model", {}))
+            if motion_model_enabled(a.system_config):
+                for request in requests:
+                    validate_model_range(request.parameters.min_angle_deg, request.parameters.max_angle_deg)
             prep_reference=deepcopy(a.reference_manager.metadata_snapshot())
             prep_tare=a.empty_machine_tare.to_dict()
             prep_sensor=(a.rotary_sensor.reader.connection_id,a.rotary_sensor.calibration.sha256)
@@ -101,6 +106,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nMounting/setup ID: {requests[0].mounting_setup_id}\n\n'+summary+
                 f'\nTotal: 3 runs, {3*p.cycles} numbered cycles; each run also positions initially and returns to zero.'
                 f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².'
+                + ('\nExperimental cubic targets; +/-9 degrees maximum; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'),confirm_text='Run Sequence'):
                 return
@@ -110,9 +116,11 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if (a.reference_manager.metadata_snapshot()!=prep_reference or a.empty_machine_tare is None
                     or a.empty_machine_tare.to_dict()!=prep_tare or a.odrive_connection_generation!=prep_connection
                     or (a.rotary_sensor.reader.connection_id,a.rotary_sensor.calibration.sha256)!=prep_sensor
+                    or a.system_config["motion"].get("experimental_model", {})!=prep_model
                     or a.loaded_preset_key!=self.preset_key
                     or a.system_config['test_presets'][self.preset_key]!=prep_preset):
                 raise ValueError('Preparation changed during confirmation; review and start again')
+            self.model_snapshot=prep_model
             self.preset_snapshot=prep_preset
             self.requests,self.records=requests,[]
             self.manifest_path=path;self.identity_snapshot=deepcopy(identity);self.settings_snapshot=deepcopy(settings)
@@ -135,7 +143,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
     def check_setup_continuity(self):
         a=self.app
         reason=None
-        if a.loaded_preset_key!=self.preset_key or a.system_config['test_presets'][self.preset_key]!=self.preset_snapshot:
+        if a.system_config["motion"].get("experimental_model", {})!=self.model_snapshot:
+            reason="Frozen motion model configuration changed"
+        elif a.loaded_preset_key!=self.preset_key or a.system_config['test_presets'][self.preset_key]!=self.preset_snapshot:
             reason='Frozen protocol definition changed'
         elif self.current_identity()!=self.identity_snapshot or a._motion_field_values()!=self.settings_snapshot:
             reason='Frozen identifiers/settings changed'
@@ -173,6 +183,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             reference=self.reference_snapshot,unloaded_tare=self.tare_snapshot,started_at=self.started_at,
             updated_at=datetime.now().astimezone().isoformat(),completed_at=datetime.now().astimezone().isoformat() if finished else None,
             runs=rows,outcome=self.batch_status,error=self.batch_error,independent_remount_trials=False,
-            automatic_baseline_correction=False,baseline_reference_equivalence_assumed=False)
+            automatic_baseline_correction=False,baseline_reference_equivalence_assumed=False,
+            experimental_motion_model=model_provenance() if self.model_snapshot.get("enabled",False) else {"enabled":False})
         self.save_action=action
         self.save_future=self.submit_manifest('save three-speed batch manifest',lambda:write_json_atomic(self.manifest_path,body))

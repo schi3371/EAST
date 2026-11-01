@@ -83,6 +83,7 @@ class FullApplicationIntegration(unittest.TestCase):
             app.output_tabs.value='Session Terminal'
         with patch.object(self.module.MyInterface,'setup_ui',view):
             self.app=self.module.MyInterface(Field())
+        self.app.system_config['motion']['experimental_model']['enabled']=False  # Legacy regression fixture; sensor is fixed at zero.
         self.app.create_plot_window=lambda:None;self.app.update_plot=lambda:None
         self.app.system_config['logging']['output_directory']=str(Path(self.folder.name)/'logs')
         self.app.system_config['load_cell']['tare_samples']=2

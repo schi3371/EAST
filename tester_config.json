@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.10.0-three-speed-protocol",
+  "software_version": "1.11.0-model-motion",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -11,7 +11,7 @@
   },
   "motion": {
     "afo_degrees_per_odrive_turn": 2.055,
-    "conversion_status": "accepted; 2.055 AFO degrees per ODrive turn",
+    "conversion_status": "legacy manual/identification conversion; normal tests use optional experimental model",
     "minimum_speed_deg_s": 0.1,
     "maximum_speed_deg_s": 20.0,
     "minimum_acceleration_deg_s2": 0.1,
@@ -28,7 +28,12 @@
     "manual_continuous_increment_deg": 0.2,
     "manual_update_interval_ms": 50,
     "neutral_return_speed_deg_s": 2.0,
-    "neutral_return_acceleration_deg_s2": 5.0
+    "neutral_return_acceleration_deg_s2": 5.0,
+    "experimental_model": {
+      "enabled": true,
+      "model_id": "direction-cubic-20261102-v1",
+      "status": "experimental; rotary-anchored inverse targets, not prospective validation or continuous angle control"
+    }
   },
   "reference": {
     "feedback_poll_interval_ms": 8,

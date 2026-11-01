@@ -266,6 +266,8 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     missing = sorted(required_sections.difference(config))
     if missing:
         raise ValueError(f"Tester configuration is missing: {', '.join(missing)}")
+    from east_motion_model import enabled as validate_motion_model
+    validate_motion_model(config)
     if config["motion"]["afo_degrees_per_odrive_turn"] <= 0:
         raise ValueError("afo_degrees_per_odrive_turn must be positive")
     if not 0 < config["motion"]["minimum_acceleration_deg_s2"] <= config["motion"]["maximum_acceleration_deg_s2"]:

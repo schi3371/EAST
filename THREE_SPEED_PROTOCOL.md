@@ -1,5 +1,7 @@
 # Three-speed AFO protocol
 
+**v1.11.0 update:** Normal tests now enable experimental direction-cubic targets. Loading a preset reduces ROM to +/-9 degrees and marks it modified. See [model operation and rollback](MODEL_MOTION.md). The original +/-10-degree preset definitions apply in legacy mode. Speeds remain requested nominal values; model mode uses a per-segment average conversion and does not guarantee constant instantaneous rotary speed.
+
 EAST v1.10.0 provides **Three-Speed AFO Protocol** and **Three-Speed Empty-Machine Baseline** presets. Both run 0.5, 5 and 20 nominal degrees/s, in that order. Defaults are three numbered cycles per speed (nine total), ±10 nominal degrees, and 100 degrees/s² acceleration. These are provisional experimental settings pending bench verification; the existing motor/angle conversion is unchanged.
 
 ## Operator workflow

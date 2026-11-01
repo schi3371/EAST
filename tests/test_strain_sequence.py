@@ -59,6 +59,8 @@ class StrainSequenceTests(unittest.TestCase):
     def run_sequence(self, failure=None):
         app = Mock()
         app.system_config = self.config
+        app.run_motion_model_enabled = False
+        app.run_motion_model = None
         app.run_motion_token = "token"
         app.test_stop_event = Event()
         app.operator_stop_requested = False
@@ -88,6 +90,10 @@ class StrainSequenceTests(unittest.TestCase):
             if failure and len(moves) == 3:
                 raise failure
         app.command_position_and_wait.side_effect = move
+        def angle_move(angle, target, phase, token, **kwargs):
+            move(target,phase,token,**kwargs)
+            return target
+        app.command_test_angle.side_effect = angle_move
         gui_method("strain_test_control")(app)
         return app, moves
 
