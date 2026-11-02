@@ -139,6 +139,55 @@ class ApplicationTests(unittest.TestCase):
         self.pump(future.done,20)
         return future.result()['evidence']
 
+    def test_main_zero_check_does_not_require_movement_acknowledgement(self):
+        self.prepare(.075)
+        self.app.rotary_homing=None
+        self.app.homing_acknowledged.set(False)
+        self.app.open_rotary_homing()
+        state=self.app.rotary_homing
+        self.assertTrue(state.verify_only)
+        self.pump(lambda:not state.active,8)
+        self.assertEqual(state.future.result()['evidence']['outcome'],'sensor_zero_reached')
+        self.assertEqual(self.position_targets,[])
+        self.assertTrue(self.app.rotary_reference_verified())
+
+    def test_passive_check_accepts_full_band_without_commanding_motion(self):
+        window=self.prepare(.075)
+        window.verify_only=True
+        evidence=self.run_home(window)
+        self.assertEqual(evidence['outcome'],'sensor_zero_reached',evidence)
+        self.assertTrue(evidence['verification_only_no_motion'])
+        self.assertEqual(self.position_targets,[])
+        self.assertTrue(evidence['zero_reference_written'])
+
+    def test_passive_check_never_homes_if_angle_leaves_band(self):
+        window=self.prepare(.12)
+        window.verify_only=True
+        evidence=self.run_home(window)
+        self.assertEqual(evidence['outcome'],'failed',evidence)
+        self.assertEqual(self.position_targets,[])
+        self.assertFalse(evidence['zero_reference_written'])
+
+    def test_homing_can_recover_inward_from_endpoint_tolerance(self):
+        window=self.prepare(15.05)
+        future=self.app.start_rotary_homing(window,HomingPolicy())
+        self.pump(future.done,50)
+        evidence=future.result()["evidence"]
+        self.assertEqual(evidence['outcome'],'sensor_zero_reached',evidence)
+        self.assertTrue(self.position_targets)
+        self.assertLess(self.position_targets[0],self.origin)
+
+    def test_homing_admission_above_test_range_allows_only_inward_targets(self):
+        from east_calibration_motion import CalibrationPositioningReference
+        self.prepare(16.0)
+        ref=CalibrationPositioningReference.establish(self.app,16.,acknowledged=True,homing_recovery=True)
+        position=self.app.get_feedback().position_turns
+        self.assertLess(ref.target(position,-1,.1),position)
+        with self.assertRaisesRegex(ValueError,'travel limits'):
+            ref.target(position,1,.1)
+        with self.assertRaisesRegex(ValueError,'Positioning angle'):
+            CalibrationPositioningReference.establish(self.app,16.,acknowledged=True)
+
     def test_unreferenced_fixture_converges_and_writes_rotary_machine_zero(self):
         window=self.prepare()
         before=self.app.reference_manager.metadata_snapshot()

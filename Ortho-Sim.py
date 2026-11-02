@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.13.1-suite-zero-recovery"
+APP_VERSION = "1.13.2-passive-zero-check"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -654,7 +654,7 @@ class MyInterface:
         )
         self.reference_action_button = ctk.CTkButton(
             machine_zero_frame,
-            text="Home / Return to Zero",
+            text="Check Zero / Home",
             command=self.open_rotary_homing,
             fg_color=AMBER,
             hover_color="#b45309",
@@ -2606,8 +2606,10 @@ class MyInterface:
                 raise ValueError('Connect ODrive first')
             if self.rotary_calibration is not None and not self.rotary_calibration.closed:
                 raise ValueError('Close Rotary Sensor Calibration; use the live angle in this panel')
-            if not self.homing_acknowledged.get():
-                raise ValueError('Confirm the clear fixture/AFO and unchanged sensor mounting in the zero panel')
+            value = self.rotary_sensor.measurement()
+            verify_only = bool(value['valid'] and abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG)
+            if not verify_only and not self.homing_acknowledged.get():
+                raise ValueError('Outside zero band: confirm the clear fixture/AFO and unchanged sensor mounting, then press Check Zero / Home')
             if self.manual_mode.get():
                 self.manual_mode.set(False)
                 self.update_terminal('Manual Mode exited for automatic rotary homing.\n')
@@ -2617,7 +2619,7 @@ class MyInterface:
             if condition not in ('Empty fixture','AFO fitted'):
                 raise ValueError('Select the fixture condition')
             state = SimpleNamespace(closed=False, active=True, phase='homing', future=None,
-                                    fixture_condition=condition, resume_parameters=parameters)
+                                    fixture_condition=condition, resume_parameters=parameters, verify_only=verify_only)
             self.rotary_homing = state
             self.homing_acknowledged.set(False)
             self.operator_context = {'operator':self.operator_input.get().strip(),
@@ -2731,7 +2733,8 @@ class MyInterface:
         if self.recovery_window is not None and self.recovery_window.winfo_exists():
             raise ValueError("Close Machine Zero Setup before automatic homing")
         value = self.rotary_sensor.measurement(require=True)
-        reference = CalibrationPositioningReference.establish(self, value['angle_deg'], acknowledged=True)
+        reference = CalibrationPositioningReference.establish(self, value['angle_deg'], acknowledged=True,
+            homing_recovery=True)
         reference.check(self, stationary=True)
         value = self.rotary_sensor.measurement(require=True)
         source = value['sample'][4]
@@ -2782,6 +2785,8 @@ class MyInterface:
         failure = None
         deadline = time.monotonic()+policy.timeout_s
         armed = False
+        verify_only = getattr(self.rotary_homing, 'verify_only', False) is True
+        body['verification_only_no_motion'] = verify_only
         observing_idle = False
 
         def check():
@@ -2803,8 +2808,6 @@ class MyInterface:
             value = self.rotary_sensor.measurement(require=True)
             if value['sample'][4] != source or self.rotary_sensor.calibration.sha256 != calibration:
                 raise RotaryError('Rotary connection or calibration changed during homing')
-            if abs(value['angle_deg']) > reference.maximum_angle:
-                raise RotaryError('Rotary angle exceeds permitted homing range')
             self._mark_control_health()
             return snapshot, value
 
@@ -2832,6 +2835,8 @@ class MyInterface:
 
         def move(delta):
             nonlocal armed
+            if verify_only:
+                raise RotaryError("Zero verification cannot command movement; use Check Zero / Home after confirming clearance")
             snapshot, value = check()
             step = delta/reference.factor
             target = reference.target(snapshot.position_turns, 1 if step > 0 else -1, abs(step))
@@ -2864,12 +2869,19 @@ class MyInterface:
             self._validate_live_motion_config()
             self._revalidate_hardware_identity(require_reference=False)
             check()
-            self.configure_trajectory(self.system_config['reference']['recovery_speed_deg_s'],
-                                      self.system_config['reference']['recovery_acceleration_deg_s2'])
+            if not verify_only:
+                self.configure_trajectory(self.system_config['reference']['recovery_speed_deg_s'],
+                                          self.system_config['reference']['recovery_acceleration_deg_s2'])
             self.rotary_sensor.start_recording(raw_path, time.monotonic())
             recording_started = True
             self.update_terminal(f'Rotary homing started. Evidence: {path}\n')
-            result = home(policy, observe, move, check)
+            if verify_only:
+                observation = observe(policy.dwell_s)
+                if observation['min_deg'] < -policy.tolerance_deg or observation['max_deg'] > policy.tolerance_deg:
+                    raise RotaryError('Zero check crossed ±0.10 degrees; zeroing is required')
+                result = dict(nominal_travel_deg=0.0)
+            else:
+                result = home(policy, observe, move, check)
             idle = self.safe_idle_motor('rotary homing finished',token=token)
             armed = False
             if not idle or not idle.confirmed:
@@ -3341,11 +3353,16 @@ class MyInterface:
             return
 
         try:
-            self.rotary_sensor.measurement(require=True)
+            zero_value = self.rotary_sensor.measurement(require=True)
             ready = self.rotary_zero_ready(rotary_only=bool(getattr(mapping_request,"rotary_targeted",False) or getattr(mapping_request,"command_model_enabled",None) is True))
         except (ReferenceError, RotaryError) as exc:
             self.update_terminal(f"Test blocked: {exc}\n")
             return False
+        if mapping_request is None and getattr(self, '_starting_after_homing', False) is not True:
+            if abs(zero_value['angle_deg']) <= ZERO_TOLERANCE_DEG:
+                self.update_terminal('Checking stationary rotary zero without movement before test.\n')
+                self.open_rotary_homing(resume_test=True)
+                return False
         if not ready:
             if mapping_request is not None or getattr(self, '_starting_after_homing', False) is True:
                 self.update_terminal("Test blocked: rotary zero is not stable; use Home / Return to Zero.\n")

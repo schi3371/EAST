@@ -70,6 +70,9 @@ class ApplicationTests(unittest.TestCase):
                 self.angle=curve(target-model.origin_turns,segment['direction'])
                 self.commands.append((target,self.angle,segment['phase']))
         a._submit_position=submit
+        # These exercise the motion phase after the separate zero preflight.
+        # Passive preflight itself is covered by rotary-homing integration tests.
+        a._starting_after_homing=True
         a.start_rotary_homing=Mock(side_effect=AssertionError('No hidden re-home'))
         a._tare_worker=Mock(side_effect=AssertionError('No hidden re-tare'))
         a.min_angle_input.value='9';a.max_angle_input.value='9'

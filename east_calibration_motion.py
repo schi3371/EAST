@@ -22,10 +22,11 @@ class CalibrationPositioningReference:
     last_position_turns: float
     last_uptime: Optional[float]
     active: bool = True
+    homing_recovery: bool = False
     _lock: object = field(default_factory=threading.RLock, init=False, repr=False)
 
     @classmethod
-    def establish(cls, app, angle, *, acknowledged):
+    def establish(cls, app, angle, *, acknowledged, homing_recovery=False):
         if not acknowledged:
             raise ValueError("Confirm empty fixture and current calibration positioning angle")
         if app.startup_block_reason or app.odrive_adapter is None or app.strain_test_active:
@@ -42,11 +43,13 @@ class CalibrationPositioningReference:
         angle = finite_number(angle, "Current positioning angle")
         factor = app.system_config["motion"]["afo_degrees_per_odrive_turn"]
         maximum = app.system_config["motion"]["maximum_afo_angle_deg"]
-        if abs(angle) > maximum:
+        if not isinstance(homing_recovery, bool):
+            raise ValueError("Invalid homing recovery mode")
+        if not homing_recovery and abs(angle) > maximum:
             raise ValueError(f"Positioning angle must be within ±{maximum:g} degrees")
         return cls(app.odrive_adapter, fixture, operator,
                    feedback.position_turns - angle / factor, factor, maximum,
-                   feedback.position_turns, feedback.system_uptime)
+                   feedback.position_turns, feedback.system_uptime, homing_recovery=homing_recovery)
 
     @staticmethod
     def stationary(app, feedback):
@@ -97,7 +100,9 @@ class CalibrationPositioningReference:
         if direction not in (-1, 1) or not math.isfinite(step) or step <= 0:
             raise ValueError("Invalid calibration step")
         target = position + direction * step
-        if abs(self.angle(target)) > self.maximum_angle + 1e-9:
+        outside = abs(self.angle(target)) > self.maximum_angle + 1e-9
+        inward_recovery = self.homing_recovery and abs(self.angle(target)) < abs(self.angle(position))
+        if outside and not inward_recovery:
             raise ValueError("Full calibration step exceeds estimated travel limits; no movement commanded")
         return target
 

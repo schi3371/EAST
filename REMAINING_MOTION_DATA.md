@@ -54,3 +54,11 @@ Only a fully recorded Updated empty-fixture run with a post-idle zero miss great
 The endpoint/homing progress check now requires three insufficient observations AND at least 0.15 nominal degrees of unsuccessful correction travel. This provisional bounded allowance addresses the logged small-step plateau near +15 degrees; it is not a measured sensor-resolution specification. Wrong-direction, noise, travel, correction-count, timeout and final acceptance checks remain. Confirm its behaviour in the lab before treating collection as validated.
 
 Offline verification: all 339 regression tests passed, including the small-step plateau, stuck motion, cancellation and separate recovery cases. No physical hardware was exercised by software tests.
+
+## Passive zero checking (v1.13.2)
+
+The main button is now **Check Zero / Home**. If the live sensor is already within ±0.1 degrees, it runs a recorded stationary check without movement or a clearance checkbox. It requires at least five fresh samples over 0.5 seconds, all inside the band, then repeats the check after confirmed idle and saves the rotary zero reference. Ordinary single-test Start performs this check automatically before starting. Sequence admission continues to require valid prepared zero and tare; sequence motion and continuity rules remain unchanged.
+
+If the live angle is outside the band, the existing clearance acknowledgement and bounded homing remain required. A passive check that subsequently leaves the band fails without commanding a correction. Sensor/calibration/session identity and healthy stationary controller feedback remain required; this does not calibrate or detect physical sensor remounting.
+
+Homing has no fixed starting-angle admission limit. Beyond the configured test range, motor targets must move inward toward zero; outward targets remain blocked. Sensor validity, direction/progress checks and the existing bounded homing travel/time policy remain required. Ordinary calibration positioning and test travel keep their original limits. This is not a claim of mechanical clearance at arbitrary angles.
