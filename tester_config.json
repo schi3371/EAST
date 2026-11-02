@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "software_version": "1.13.4-automatic-zero",
+  "software_version": "1.14.0-model-comparison",
   "hardware": {
     "odrive_serial_number": "3943355F3231",
     "odrive_axis": 0,
@@ -170,6 +170,25 @@
       "additional_inter_run_rest_s": 0.0,
       "status": "provisional; requires empty fixture clearance through +/-15 degrees plus stopping tolerance",
       "allow_bounded_zero_recovery": true
+    },
+    "model_comparison": {
+      "display_name": "Model Comparison \u2014 Current vs Wider Cubic (Empty)",
+      "version": "1.0",
+      "test_type": "empty_machine_baseline",
+      "execution_kind": "speed_sequence",
+      "protocol_kind": "model_comparison",
+      "cycles": 3,
+      "minimum_angle_deg": 15.0,
+      "maximum_angle_deg": 15.0,
+      "acceleration_deg_s2": 100.0,
+      "speeds_deg_s": [
+        0.5,
+        5.0,
+        20.0
+      ],
+      "additional_inter_run_rest_s": 0.0,
+      "allow_bounded_zero_recovery": false,
+      "status": "frozen experimental comparison; empty fixture only"
     }
   },
   "rotary_sensor": {

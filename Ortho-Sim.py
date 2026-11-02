@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.13.4-automatic-zero"
+APP_VERSION = "1.14.0-model-comparison"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -3500,6 +3500,8 @@ class MyInterface:
         self.run_stationary_holds = bool(getattr(mapping_request,"stationary_holds",False))
         self.run_motion_model_enabled = use_model
         self.run_motion_model = None
+        self.run_model_variant = getattr(mapping_request,'model_variant','current')
+        self.run_segmented_comparison = getattr(mapping_request,'stage','') in ('commissioning','model_comparison')
         self.run_metadata = None
         self.metadata_file_name = None
         self.strain_file_name = None
@@ -3579,7 +3581,7 @@ class MyInterface:
                 'tolerance_deg':ZERO_TOLERANCE_DEG, 'angle_at_initialization_deg':self.rotary_sensor.measurement(require=True)['angle_deg']}
             self.run_metadata["experimental_motion_model"] = (model_provenance() if self.run_motion_model_enabled else {"enabled":False,"mode":"legacy_fixed_conversion"})
             self.run_metadata["experimental_motion_model"]["enabled"] = self.run_motion_model_enabled
-            self.run_metadata["motion_method"] = UPDATED_METHOD if self.run_motion_model_enabled else ORIGINAL_METHOD
+            self.run_metadata["motion_method"] = ("Wider cubic candidate (frozen)" if getattr(self,"run_model_variant","current")=="candidate" else UPDATED_METHOD) if self.run_motion_model_enabled else ORIGINAL_METHOD
             self.run_metadata["rotary_targeted_acquisition"] = {"enabled":self.run_rotary_targeted,"stationary_holds":self.run_stationary_holds,"endpoint_accuracy_not_independent_model_validation":self.run_rotary_targeted,"endpoint_records":[],"holds":[],"bulk_fraction":0.8,"fine_speed_deg_s":1.0}
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
@@ -4036,7 +4038,11 @@ class MyInterface:
                 anchor = self._test_feedback()
                 if abs(anchor.velocity_turns_s*float(self.system_config["motion"]["afo_degrees_per_odrive_turn"])) > float(self.system_config["reference"]["stationary_velocity_limit_deg_s"]):
                     raise RuntimeError("Model anchor requires stationary motor feedback")
-                self.run_motion_model = RunModel.anchored(anchor.position_turns, self.rotary_sensor.measurement(require=True)["angle_deg"])
+                model_class=RunModel
+                if getattr(self,'run_model_variant','current')=='candidate':
+                    from east_wide_candidate import WideRunModel
+                    model_class=WideRunModel
+                self.run_motion_model = model_class.anchored(anchor.position_turns, self.rotary_sensor.measurement(require=True)["angle_deg"])
                 self.run_metadata["experimental_motion_model"].update(self.run_motion_model.metadata())
                 self.update_terminal("Experimental inverse-cubic test motion active; rotary-anchored targets, secant-average speed conversion.\n")
 
@@ -4062,7 +4068,7 @@ class MyInterface:
                     initial_alignment = dict(origin_turns=self.run_motion_model.origin_turns,
                         anchor_motor_turns=self.run_motion_model.anchor_turns,
                         anchor_rotary_angle_deg=self.run_motion_model.anchor_angle_deg)
-                    self.run_motion_model = RunModel.observed(snapshot.position_turns, measured, 1)
+                    self.run_motion_model = type(self.run_motion_model).observed(snapshot.position_turns, measured, 1)
                     details = self.run_metadata["experimental_motion_model"]
                     segments = details["segments"]
                     details.update(self.run_motion_model.metadata())
@@ -4330,7 +4336,17 @@ class MyInterface:
             outside_training_speed_range=not 0.5 <= speed <= 5.0,
             extrapolated=abs(target-model.origin_turns)>X_LIMIT or abs(snapshot.position_turns-model.origin_turns)>X_LIMIT))
         self.update_terminal(f'Model target {angle_deg:g} deg -> {target:.6f} motor turns ({phase})\n')
-        self.command_position_and_wait(target,phase,token,speed_deg_s,acceleration_deg_s2, distance_deg=abs(delta_angle))
+        if getattr(self,'run_segmented_comparison',False) and abs(delta_angle)/speed > 30:
+            # Bound every move without extending the global timeout. Stops at
+            # intermediate positions are labelled; no rotary endpoint correction.
+            import math
+            count=math.ceil(abs(delta_angle)/speed/30)
+            self.run_metadata['experimental_motion_model']['segments'][-1]['submoves']=count
+            for i in range(1,count+1):
+                subtarget=snapshot.position_turns+delta_turns*i/count
+                self.command_position_and_wait(subtarget,phase,token,speed_deg_s,acceleration_deg_s2,distance_deg=abs(delta_angle)/count)
+        else:
+            self.command_position_and_wait(target,phase,token,speed_deg_s,acceleration_deg_s2, distance_deg=abs(delta_angle))
         return target
 
     def command_position_and_wait(
