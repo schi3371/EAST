@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.15.2-comparison-extrapolation"
+APP_VERSION = "1.15.3-run-time-display"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -383,14 +383,21 @@ class MyInterface:
         controls.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         controls.grid_columnconfigure(0, weight=1)
 
+        status_panel=ctk.CTkFrame(controls,fg_color="transparent")
+        status_panel.grid(row=0,column=0,sticky="ew",padx=6,pady=2)
+        status_panel.grid_columnconfigure(0,weight=1)
         self.status_label = ctk.CTkLabel(
-            controls,
+            status_panel,
             text="DISCONNECTED",
             text_color=RED,
             font=("Arial", 13, "bold"),
             anchor="w",
         )
         self.status_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
+
+        self.run_timing_label=ctk.CTkLabel(status_panel,text="Elapsed / estimated remaining: shown when a test starts",
+            font=("Arial",11),anchor="w",justify="left",wraplength=390)
+        self.run_timing_label.grid(row=1,column=0,sticky="ew",padx=12,pady=(0,6))
 
         inputs_frame = ctk.CTkFrame(controls, fg_color=PANEL_SOFT, corner_radius=8)
         inputs_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
@@ -1164,6 +1171,9 @@ class MyInterface:
         if not hasattr(self, "buttons"):
             return
         self._retire_stop_worker()
+        if hasattr(self,"run_timing_label"):
+            from east_run_timing import timing_text
+            self.run_timing_label.configure(text=timing_text(self))
         connected = self.odrive_adapter is not None
         verified = self.rotary_reference_verified()
         tare_ready = self.empty_machine_tare is not None and not (
