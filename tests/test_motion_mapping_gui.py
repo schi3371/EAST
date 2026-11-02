@@ -189,13 +189,15 @@ class MotionWindowIntegration(unittest.TestCase):
         self.assertEqual(window.batch_status, 'completed', window.status.options)
         self.assertFalse(window.cancelled.is_set())
 
-    def test_real_cleanup_warning_cancels_remaining_sequence(self):
+    def test_cleanup_warning_text_is_display_only_and_real_stop_cancels(self):
         window = self.prepare_window()
         window.start('sequence')
         self.pump_window(window, lambda: self.app.strain_thread is not None)
         self.app.update_terminal('Stop/cleanup is still running; SIMULATED delayed cleanup.\n')
-        self.assertTrue(window.cancelled.is_set())
+        self.assertFalse(window.cancelled.is_set())
+        self.app.stop_logging()
         self.pump_window(window, lambda: not window.active)
+        self.assertTrue(window.cancelled.is_set())
         self.assertNotEqual(window.batch_status, 'completed')
         self.assertEqual(len(window.records), 1)
 

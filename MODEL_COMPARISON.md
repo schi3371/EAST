@@ -45,3 +45,9 @@ Verified run 6 from batch 1db165a1 completed all three cycles and finalised 25,8
 Original open-loop comparison runs now qualify their post-idle return using the rotary sensor as well as motor idle; a motor-coordinate return alone is not a rotary-zero pass. A completed cycle acquisition with only a rotary return miss follows the same separately recorded homing recovery as the cubics. Original raw uncorrected data and the return failure remain distinct.
 
 Batch 7a906c69 run 7 completed its cycles with -0.171-degree return error and separately recovered zero. Run 8 completed its three cycles but ended at about +0.271 degrees on the rotary sensor; older code marked it completed using motor-only return checks. Run 9 was not started. Keep run 8's acquired sweeps and annotate its unqualified rotary return; do not retroactively claim it passed rotary zero. After updating and restoring zero/tare, start a new comparison batch at run 9.
+
+## Measured-zero handoff — v1.17.0 / comparison protocol 3.0
+
+Every open-loop comparison run now receives a separately recorded stationary rotary-zero preparation. In-band verification is passive; an out-of-band pose uses official homing under the confirmed empty-fixture plan. Old/new motor references and transaction evidence are saved before the next run. Original targets account for the measured starting offset while retaining the 2.055 slope and speed conversion. Both cubics retain their coefficients and initial positive-endpoint origin refinement.
+
+Post-idle zero qualification uses a full stationary window, allowing transient motion to settle within existing deadlines. Failed model returns remain failed even when a separate recovery succeeds. Keep older and protocol-3.0 results labelled by their software/protocol and alignment procedure. See [the reliability review](docs/reliability/20261103/RELIABILITY_REVIEW_20261103.md) for fault paths, test evidence and the two saved Run 9 attempts.

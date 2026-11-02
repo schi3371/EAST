@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.16.1-original-rotary-return-check"
+APP_VERSION = "1.17.0-reliability-audit"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -1898,11 +1898,18 @@ class MyInterface:
             raise FeedbackError("Position command blocked while idle feedback is being rechecked")
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive disconnected during motion")
-        self.motion_coordinator.submit_command(
-            token,
-            lambda: self.odrive_adapter.command_position(
-                target_turns, cancelled=lambda: self._motion_cancelled(token)),
-        )
+        from east_execution import MotionCommandCancelled
+        try:
+            self.motion_coordinator.submit_command(
+                token,
+                lambda: self.odrive_adapter.command_position(
+                    target_turns, cancelled=lambda: self._motion_cancelled(token)),
+            )
+        except (MotionCommandCancelled,MotionConflictError) as exc:
+            if (self.operator_stop_requested and self.test_stop_event.is_set()
+                    and not self.monitor_error and not getattr(self,'acquisition_error',None)):
+                raise TestStopped() from exc
+            raise
         self._mark_control_health()
 
     def _powered_wait_requirements(self):
@@ -1959,6 +1966,9 @@ class MyInterface:
                 self.update_terminal(f"Rotary sensor not ready: {notice}\n")
             self.last_rotary_notice = notice
         if self.strain_test_active and not value["valid"] and not self.test_stop_event.is_set():
+            if self.run_metadata is not None:
+                self.run_metadata.setdefault('rotary_failure_evidence',{k:value.get(k) for k in
+                    ('reason','sample_age_s','angle_deg','sample_status','achieved_rate_hz','sample')})
             self._request_coordinated_stop("Rotary sensor: " + value["reason"], fault=True)
         self._refresh_motion_controls()
 
@@ -2606,9 +2616,8 @@ class MyInterface:
         value = self.rotary_sensor.measurement(require=True)
         if not self.rotary_reference_verified():
             return False
-        snapshot = self.get_feedback()
-        return (abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
-                and (rotary_only or motion_model_enabled(self.system_config) or abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG))
+        self.get_feedback()  # Motor health/freshness remains required; its derived angle is not physical zero.
+        return abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
 
     def _poll_connection_zero(self):
         """One stationary-only verification per successful connection; never auto-home."""
@@ -2714,6 +2723,9 @@ class MyInterface:
                 state.phase = 'homing'
                 state.future = self.start_rotary_homing(state,HomingPolicy())
                 return
+            if result['evidence']['outcome']=='sensor_zero_reached':
+                from east_motion_mapping import ready_for_next
+                if not ready_for_next(self):return
             state.active = False
             if self.engine.cancel_event.is_set():
                 raise RuntimeError('Stop cancelled test preparation')
@@ -2732,6 +2744,26 @@ class MyInterface:
             self.set_test_inputs_state('normal')
         self.update_reference_display()
 
+
+    def start_comparison_zero_preparation(self,owner):
+        from types import SimpleNamespace
+        from east_rotary_homing import HomingPolicy
+        from east_motion_mapping import ready_for_next
+        if (self.motion_mapping is not owner or not owner.active or not owner.comparison_suite or owner.pilot_suite
+                or not owner.pending_zero_preparation or owner.cancelled.is_set() or not ready_for_next(self)):
+            raise RuntimeError('Comparison preparation ownership/cleanup changed')
+        request=owner.requests[len(owner.records)]
+        if request.parameters.test_type!='empty_machine_baseline':raise RuntimeError('Automatic comparison preparation requires empty fixture')
+        value=self.rotary_sensor.measurement(require=True)
+        state=SimpleNamespace(closed=False,active=True,phase='homing',future=None,fixture_condition='Empty fixture',
+            resume_parameters=None,managed_by_batch=True,parent_batch_id=request.batch_id,parent_run_id=request.run_id,
+            purpose='pre_run_zero_preparation',verify_only=abs(value['angle_deg'])<=ZERO_TOLERANCE_DEG)
+        self.rotary_homing=state
+        try:state.future=self.start_rotary_homing(state,HomingPolicy(),batch_owner=owner)
+        except Exception:
+            state.active=False
+            raise
+        return state.future
 
     def start_suite_zero_recovery(self, owner):
         from types import SimpleNamespace
@@ -2765,7 +2797,7 @@ class MyInterface:
             raise ValueError("Home action is no longer current")
         allowed_batch = (batch_owner is not None and self.motion_mapping is batch_owner
                          and batch_owner.active and batch_owner.remaining_suite
-                         and batch_owner.pending_zero_recovery and not batch_owner.cancelled.is_set()
+                         and (batch_owner.pending_zero_recovery or getattr(batch_owner,'pending_zero_preparation',False)) and not batch_owner.cancelled.is_set()
                          and getattr(window,'managed_by_batch',False))
         if batch_owner is not None and not allowed_batch:
             raise ValueError('Invalid suite zero-recovery ownership')
@@ -2822,7 +2854,7 @@ class MyInterface:
                 'corrections':[], 'observations':[], 'idle_confirmed':False}
         state=getattr(self,'rotary_homing',None)
         if getattr(state,'managed_by_batch',False):
-            body['purpose']='separate_suite_zero_recovery'
+            body['purpose']=getattr(state,'purpose','separate_suite_zero_recovery')
             body['parent_batch_id']=state.parent_batch_id
             body['parent_run_id']=state.parent_run_id
         recording_started = False
@@ -2857,26 +2889,22 @@ class MyInterface:
             return snapshot, value
 
         def observe(duration):
-            start = time.monotonic()
-            baseline = check()[1]['sample'][3]
-            samples, angles = set(), []
-            while time.monotonic()-start < duration:
-                snapshot, value = check()
-                if abs(snapshot.velocity_turns_s*reference.factor) > self.system_config['reference']['settle_velocity_limit_deg_s']:
-                    raise FeedbackError('Motor is not stationary during rotary zero observation')
-                sample = value['sample']
-                if sample[3] > baseline and sample[3] not in samples:
-                    samples.add(sample[3])
-                    angles.append(value['angle_deg'])
-                    body['observations'].append({'host_monotonic_s':time.monotonic(),
-                        'rotary_sequence':sample[3], 'rotary_sample_host_s':sample[0],
-                        'angle_deg':value['angle_deg'], 'motor_turns':snapshot.position_turns,
-                        'motor_feedback_host_s':snapshot.captured_monotonic_s})
-                if self.engine.cancel_event.wait(0.01):
-                    check()
-            if len(angles) < 5:
-                raise RotaryError('Not enough fresh rotary samples for a zero observation')
-            return dict(mean_deg=statistics.mean(angles), min_deg=min(angles), max_deg=max(angles), samples=len(angles), duration_s=time.monotonic()-start)
+            from east_zero_window import collect_stationary_window
+            def read():
+                snapshot,value=check();sample=value['sample']
+                body['observations'].append({'host_monotonic_s':time.monotonic(),
+                    'rotary_sequence':sample[3],'rotary_sample_host_s':sample[0],
+                    'angle_deg':value['angle_deg'],'motor_turns':snapshot.position_turns,
+                    'motor_velocity_turns_s':snapshot.velocity_turns_s,
+                    'stationary':abs(snapshot.velocity_turns_s*reference.factor)<=self.system_config['reference']['settle_velocity_limit_deg_s'],
+                    'motor_feedback_host_s':snapshot.captured_monotonic_s})
+                return dict(stationary=abs(snapshot.velocity_turns_s*reference.factor)<=self.system_config['reference']['settle_velocity_limit_deg_s'],
+                    angle_deg=value['angle_deg'],sequence=sample[3],motor_turns=snapshot.position_turns)
+            result=collect_stationary_window(read,duration,max(duration,deadline-time.monotonic()),
+                position_tolerance_turns=afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config),
+                sleep=lambda t:self.engine.cancel_event.wait(t))
+            body['stationary_observation_resets']=body.get('stationary_observation_resets',0)+result['stationary_resets']
+            return result
 
         def move(delta):
             nonlocal armed
@@ -2961,6 +2989,7 @@ class MyInterface:
             if body['outcome'] == 'sensor_zero_reached':
                 try:
                     snapshot, latest = check()
+                    reference.stationary(self,snapshot)
                     if abs(latest['angle_deg']) > policy.tolerance_deg:
                         raise RotaryError('Sensor left zero before reference commit')
                     mapping = self.reference_manager.establish_from_rotary_zero(
@@ -3520,6 +3549,8 @@ class MyInterface:
         self.run_stationary_holds = bool(getattr(mapping_request,"stationary_holds",False))
         self.run_motion_model_enabled = use_model
         self.run_motion_model = None
+        self.run_feedback_window = None
+        self.run_original_zero_anchor = None
         self.run_model_variant = getattr(mapping_request,'model_variant','current')
         self.run_segmented_comparison = getattr(mapping_request,'stage','') in ('commissioning','model_comparison','rotary_feedback_pilot')
         self.run_feedback_pilot = getattr(mapping_request,'feedback_pilot',False)
@@ -3667,6 +3698,9 @@ class MyInterface:
             self.last_rotary_logged_key = None
             if self.test_stop_event.is_set() or self.engine.cancel_event.is_set():
                 raise TestStopped("Test cancelled before recording/motion startup")
+            service=getattr(self,'feedback_service',None)
+            if service is not None and hasattr(service,'begin_run_statistics'):
+                self.run_feedback_window=service.begin_run_statistics()
             self.rotary_sensor.start_recording(self.rotary_samples_file_name, self.test_started_monotonic,
                 allow_linear_extrapolation=(getattr(self,'run_segmented_comparison',False)
                     and (self.run_motion_mapping_context or {}).get('stage') in ('commissioning','model_comparison')))
@@ -4069,6 +4103,17 @@ class MyInterface:
                 self.run_metadata["experimental_motion_model"].update(self.run_motion_model.metadata())
                 self.update_terminal("Experimental inverse-cubic test motion active; rotary-anchored targets, secant-average speed conversion.\n")
 
+            if (getattr(self,'run_segmented_comparison',False) and not self.run_motion_model_enabled
+                    and (self.run_motion_mapping_context or {}).get('stage') in ('commissioning','model_comparison')):
+                from east_motion_coordinates import LinearPoseAnchor
+                anchor=self._test_feedback();measured=self.rotary_sensor.measurement(require=True)['angle_deg']
+                if abs(anchor.velocity_turns_s*float(self.system_config['motion']['afo_degrees_per_odrive_turn']))>self.system_config['reference']['stationary_velocity_limit_deg_s']:
+                    raise RuntimeError('Original pose anchor requires stationary feedback')
+                self.run_original_zero_anchor=LinearPoseAnchor(anchor.position_turns,measured,
+                    float(self.system_config['motion']['afo_degrees_per_odrive_turn']))
+                self.run_metadata['original_run_anchor']=self.run_original_zero_anchor.metadata()
+                self.run_metadata['original_run_segments']=[]
+
             self.update_terminal(
                 f"Commanded AFO range: -{parameters.min_angle_deg:g}\N{DEGREE SIGN} to "
                 f"+{parameters.max_angle_deg:g}\N{DEGREE SIGN}\n"
@@ -4320,9 +4365,10 @@ class MyInterface:
             self.update_terminal(f'Completed stationary hold repeat {cycle}/3\n')
 
     def command_rotary_feedback_pilot(self,target_angle,phase,token):
+        from east_execution import MotionCommandCancelled
         try:
             return self._command_rotary_feedback_pilot(target_angle,phase,token)
-        except Exception as exc:
+        except (MotionCommandCancelled,MotionConflictError) as exc:
             # Stop may cancel a pending transport write or invalidate ownership
             # between the loop guard and dispatch. Preserve actual health faults.
             if (self.operator_stop_requested and self.test_stop_event.is_set()
@@ -4376,6 +4422,11 @@ class MyInterface:
         if getattr(self,'run_segmented_comparison',False) and self.run_motion_mapping_context.get('stage')=='rotary_feedback_pilot':
             return self.command_rotary_feedback_pilot(angle_deg,phase,token)
         if model is None:
+            original_anchor=getattr(self,'run_original_zero_anchor',None)
+            if original_anchor is not None:
+                legacy_target=original_anchor.target(float(angle_deg))
+                self.run_metadata['original_run_segments'].append(dict(phase=phase,cycle=self.current_cycle,
+                    target_angle_deg=float(angle_deg),target_motor_turns=legacy_target,conversion_degrees_per_turn=original_anchor.degrees_per_turn))
             speed=self.run_parameters.commanded_afo_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
             start=self._test_feedback().position_turns
             distance=abs(legacy_target-start)*2.055
@@ -4522,32 +4573,33 @@ class MyInterface:
         )
 
     def observe_idle_neutral(self, neutral_target, cancelled=lambda: False):
-        duration_s = self.system_config["reference"]["post_idle_observation_ms"] / 1000.0
-        tolerance_turns = afo_degrees_to_odrive_turns(
-            self.system_config["motion"]["position_tolerance_deg"], self.system_config
-        )
-        deadline = time.monotonic() + duration_s
-        while time.monotonic() < deadline:
-            if cancelled():
-                raise TestStopped()
-            snapshot = self.get_feedback()
-            if snapshot.current_state != int(AXIS_STATE_IDLE):
-                raise RuntimeError("ODrive left idle during post-test observation")
-            if snapshot.active_errors:
-                raise RuntimeError(
-                    f"ODrive error during post-test observation: {snapshot.active_errors}"
-                )
-            if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
-                raise RuntimeError("Machine-zero position drifted after ODrive entered idle")
-            if (getattr(self, "run_motion_model_enabled", False) is True or getattr(self,"run_rotary_targeted",False) is True or getattr(self,"run_segmented_comparison",False)) and self.strain_test_active:
-                angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
-                if abs(angle) > ZERO_TOLERANCE_DEG:
-                    self.run_metadata['zero_return_check'] = dict(passed=False,
-                        unassisted_angle_deg=float(angle),tolerance_deg=ZERO_TOLERANCE_DEG,
-                        phase='post_idle_observation',recorded_at_monotonic_s=time.monotonic())
-                    raise RotaryZeroMiss(f"Model return missed rotary zero: {angle:.4f} degrees; use Home / Return to Zero before restarting")
-            time.sleep(0.02)
-    
+        from east_zero_window import collect_stationary_window
+        cfg=self.system_config['reference'];duration=cfg['post_idle_observation_ms']/1000.
+        tolerance_turns=afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config)
+        rotary_required=self.strain_test_active
+        factor=self.system_config['motion']['afo_degrees_per_odrive_turn']
+        def read():
+            if cancelled():raise TestStopped()
+            snapshot=self.get_feedback()
+            if snapshot.current_state!=int(AXIS_STATE_IDLE) or snapshot.active_errors:
+                raise FeedbackError('Controller left error-free idle during post-test observation')
+            if not rotary_required and abs(snapshot.position_turns-neutral_target)>tolerance_turns:
+                raise RuntimeError('Machine-zero position drifted after ODrive entered idle')
+            value=self.rotary_sensor.measurement(require=True) if rotary_required else None
+            return dict(stationary=abs(snapshot.velocity_turns_s*factor)<=cfg['settle_velocity_limit_deg_s'],
+                motor_turns=snapshot.position_turns,angle_deg=value['angle_deg'] if value else None,
+                sequence=value['sample'][3] if value else None)
+        observation=collect_stationary_window(read,duration,cfg['idle_confirmation_timeout_s']+duration,
+            position_tolerance_turns=tolerance_turns)
+        if rotary_required:
+            passed=observation['min_deg']>=-ZERO_TOLERANCE_DEG and observation['max_deg']<=ZERO_TOLERANCE_DEG
+            self.run_metadata['zero_return_check']=dict(passed=passed,unassisted_angle_deg=observation['mean_deg'],
+                tolerance_deg=ZERO_TOLERANCE_DEG,phase='post_idle_stationary_window',
+                nominal_motor_target_turns=neutral_target,**observation)
+            if not passed:
+                raise RotaryZeroMiss(f"Model return missed rotary zero: mean {observation['mean_deg']:+.4f} degrees, "
+                    f"observed range [{observation['min_deg']:+.4f}, {observation['max_deg']:+.4f}]; separate zero preparation required")
+
     def continuous_strain_read(self):
         acquisition = AcquisitionLoop(
             self.voltage_ratio_input.getVoltageRatio,
@@ -4558,6 +4610,8 @@ class MyInterface:
         try:
             acquisition.run()
         except Exception as exc:
+            if isinstance(exc,RotaryError) and self.run_metadata is not None:
+                self.run_metadata.setdefault('rotary_failure_evidence',exc.details)
             self.acquisition_error = f"data acquisition error: {exc}"
             self.update_terminal(f"Error reading strain data: {exc}\n")
             self._request_coordinated_stop(self.acquisition_error, fault=True)
@@ -4614,7 +4668,10 @@ class MyInterface:
             self.run_metadata["maximum_acquisition_lateness_s"] = self.maximum_acquisition_lateness_s
             recorder = getattr(self, "csv_recorder", None)
             service = getattr(self, "feedback_service", None)
-            self.run_metadata["motor_feedback_statistics"] = service.statistics() if service else None
+            self.run_metadata["motor_feedback_connection_statistics"] = service.statistics() if service else None
+            window=getattr(self,'run_feedback_window',None)
+            self.run_metadata["motor_feedback_statistics"] = (service.finish_run_statistics(window)
+                if service is not None and window is not None else self.run_metadata['motor_feedback_connection_statistics'])
             engine = getattr(self, "engine", None)
             if engine is not None and hasattr(engine, "evidence"):
                 self.run_metadata["engine_evidence"] = dict(engine.evidence)
@@ -4779,7 +4836,7 @@ class MyInterface:
 
         if len(angle_data) >= 2:
             max_render_points = 2500
-            step = max(1, len(angle_data) // max_render_points)
+            step = max(1, (len(angle_data)+max_render_points-1) // max_render_points)
             samples = list(zip(angle_data[::step], torque_data[::step]))
             if samples[-1] != (angle_data[-1], torque_data[-1]):
                 samples.append((angle_data[-1], torque_data[-1]))

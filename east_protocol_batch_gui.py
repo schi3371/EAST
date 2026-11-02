@@ -23,6 +23,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.comparison_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('model_comparison','rotary_feedback_pilot')
         self.remaining_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('remaining_motion_data','model_comparison','rotary_feedback_pilot')
         self.pending_zero_recovery=False;self.recovery_future=None;self.reference_history=[]
+        self.pending_zero_preparation=False;self.preparation_future=None;self.prepared_for_run=None;self.preparation_records=[]
         self.cancelled=threading.Event()
         self.request=None;self.requests=[];self.records=[]
         self.save_future=None;self.save_action=None;self.manifest_path=None
@@ -78,7 +79,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 raise ValueError('The active preset changed; reopen the sequence from Start')
             if not ready_for_next(a) or a.rotary_homing_active() or a.monitor_error or a.feedback_retry_pending:
                 raise ValueError('Finish current work and resolve feedback/cleanup before starting')
-            if a.manual_mode.get() or not a.rotary_zero_ready() or a.empty_machine_tare is None:
+            if a.manual_mode.get() or not a.rotary_reference_verified() or (not self.comparison_suite and not a.rotary_zero_ready()) or a.empty_machine_tare is None:
                 raise ValueError('Home to zero, capture valid unloaded tare, and turn Manual Mode off first')
             if a.rotary_calibration is not None and not a.rotary_calibration.closed:
                 raise ValueError('Close Rotary Sensor Calibration before starting')
@@ -118,6 +119,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nMounting/setup ID: {requests[0].mounting_setup_id}\n\n'+summary+
                 f'\nTotal: {len(requests)} runs, {sum(r.parameters.cycles for r in requests if not r.stationary_holds)} numbered sweep cycles'+ (' plus 30 stationary target holds.' if any(r.stationary_holds for r in requests) else '.')+
                 '\nNormal return/settling/recording between runs. One mounting; no independent remount claims.'
+                + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
                 ('\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. Allow 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
@@ -149,6 +151,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.started_at=datetime.now().astimezone().isoformat()
             self.batch_status='running';self.batch_error=None
             self.request=None;self.awaiting_run=False;self.cancelled.clear()
+            a.operator_stop_requested=False;a.acquisition_error=None
+            self.pending_zero_preparation=False;self.preparation_future=None;self.prepared_for_run=None;self.preparation_records=[];self.reference_history=[]
             self.active=True;self.release_pending=True
             a.set_test_inputs_state('disabled');a._refresh_motion_controls()
             self.output.configure(text=f'Batch manifest: {path}')
@@ -170,11 +174,14 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
 
     def next_run(self):
         if not self.pending_zero_recovery:
+            if self.comparison_suite and not self.pilot_suite and self._prepare_comparison_next_run():return
             return super().next_run()
         from east_motion_mapping import ready_for_next,quiescent
         a=self.app
         if self.cancelled.is_set():
-            if quiescent(a):self.finish('cancelled','Stop cancelled separate zero recovery')
+            if quiescent(a) and (self.recovery_future is None or self.recovery_future.done()):
+                self._record_aborted_zero_transaction('post_run_zero_recovery',self.recovery_future,self.records[-1].setdefault('zero_recovery_attempt',{}))
+                self.finish('error' if a.monitor_error or a.acquisition_error else 'cancelled',a.monitor_error or a.acquisition_error or 'Stop cancelled separate zero recovery')
             return
         try:
             if self.recovery_future is None:
@@ -200,7 +207,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                     or a.system_config['motion'].get('experimental_model',{})!=self.model_snapshot):
                 raise RuntimeError('Setup changed during separate zero recovery')
             new_reference=deepcopy(a.reference_manager.metadata_snapshot())
-            entry=dict(after_run=self.request.run_id,old_reference=self.reference_snapshot,new_reference=new_reference,
+            entry=dict(kind='post_run_zero_recovery',after_run=self.request.run_id,old_reference=self.reference_snapshot,new_reference=new_reference,
                 evidence_file=getattr(a.rotary_homing,'evidence_path',None),
                 evidence=result['message'],final_observation=e['final_observation'],reference_equivalence_assumed=False)
             self.reference_history.append(entry);self.reference_snapshot=new_reference
@@ -212,6 +219,87 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         except Exception as exc:
             self.pending_zero_recovery=False
             self.finish('error',f'Separate zero recovery stopped: {exc}')
+
+    def _prepare_comparison_next_run(self):
+        """One durable zero transaction per open-loop run, not an encoder-angle guess."""
+        from east_motion_mapping import ready_for_next,quiescent
+        a=self.app
+        if self.cancelled.is_set():
+            if quiescent(a) and (self.preparation_future is None or self.preparation_future.done()):
+                if self.preparation_records:self._record_aborted_zero_transaction('pre_run_zero_preparation',self.preparation_future,self.preparation_records[-1])
+                self.pending_zero_preparation=False
+                self.finish('error' if a.monitor_error or a.acquisition_error else 'cancelled',a.monitor_error or a.acquisition_error or 'Stop during zero preparation')
+            return True
+        if len(self.records)>=len(self.requests):return False
+        request=self.requests[len(self.records)]
+        try:
+            if not self.pending_zero_preparation:
+                if not ready_for_next(a):return True
+                if not self.check_setup_continuity():return True
+                if self.prepared_for_run==request.run_id:
+                    if a.rotary_zero_ready(rotary_only=True):return False
+                    raise RuntimeError('Rotary zero moved outside the band after preparation; inspect fixture settling before retrying')
+                self.pending_zero_preparation=True;self.preparation_future=None
+                self.preparation_records.append(dict(before_run=request.run_id,status='requested',old_reference=deepcopy(self.reference_snapshot)))
+                self.status.configure(text=f'Preparing measured zero before {request.run_id}; saving preparation intent first.')
+                self.save('next')
+                return True
+            if self.preparation_future is None:
+                if not ready_for_next(a):return True
+                if not self.check_setup_continuity():return True
+                self.preparation_future=a.start_comparison_zero_preparation(self)
+                record=self.preparation_records[-1]
+                record.update(status='running',evidence_file=a.rotary_homing.evidence_path,
+                    verification_only=a.rotary_homing.verify_only)
+                return True
+            if not self.preparation_future.done() or not quiescent(a):return True
+            result=self.preparation_future.result();e=result['evidence'];a.rotary_homing.active=False
+            if e.get('outcome')!='sensor_zero_reached' or not e.get('idle_confirmed') or not e.get('zero_reference_written'):
+                raise RuntimeError('Zero preparation did not finish with saved evidence and confirmed idle')
+            # Only the explicitly owned zero transaction may change the reference.
+            if (self.current_identity()!=self.identity_snapshot or a._motion_field_values()!=self.settings_snapshot
+                    or a.empty_machine_tare is None or a.empty_machine_tare.to_dict()!=self.tare_snapshot
+                    or a.odrive_connection_generation!=self.connection_generation
+                    or (a.rotary_sensor.reader.connection_id,a.rotary_sensor.calibration.sha256)!=self.sensor_identity
+                    or a.system_config['test_presets'][self.preset_key]!=self.preset_snapshot
+                    or a.system_config['motion'].get('experimental_model',{})!=self.model_snapshot):
+                raise RuntimeError('Setup changed during zero preparation')
+            new=deepcopy(a.reference_manager.metadata_snapshot());record=self.preparation_records[-1]
+            record.update(status='completed',new_reference=new,final_observation=e['final_observation'],
+                reference_equivalence_assumed=False)
+            self.reference_history.append(dict(kind='pre_run_zero_preparation',**record))
+            self.reference_snapshot=new;self.prepared_for_run=request.run_id
+            self.pending_zero_preparation=False;self.preparation_future=None
+            self.save('next')
+            return True
+        except Exception as exc:
+            if self.preparation_records:self.preparation_records[-1].update(status='failed',error=str(exc))
+            self.pending_zero_preparation=False
+            self.finish('error',f'Before {request.run_id}: zero preparation failed: {exc}')
+            return True
+
+    def _record_aborted_zero_transaction(self,kind,future,record):
+        a=self.app
+        record.update(status='error' if a.monitor_error or a.acquisition_error else 'cancelled',
+            error=a.monitor_error or a.acquisition_error or 'Operator Stop before next-run dispatch')
+        if future is not None and future.done():
+            try:
+                evidence=future.result()['evidence']
+                record.update(zero_reference_written=evidence.get('zero_reference_written',False),
+                    transaction_outcome=evidence.get('outcome'))
+            except Exception as exc:record['transaction_error']=str(exc)
+        new=deepcopy(a.reference_manager.metadata_snapshot())
+        if new!=self.reference_snapshot:
+            self.reference_history.append(dict(kind=kind+'_aborted',old_reference=self.reference_snapshot,
+                new_reference=new,reference_equivalence_assumed=False,
+                evidence_file=record.get('evidence_file'),transaction_status=record['status']))
+            self.reference_snapshot=new
+        record['actual_reference_after']=new
+
+    def abort_preparation_for_batch_error(self):
+        if self.pending_zero_preparation and self.preparation_records:
+            self._record_aborted_zero_transaction('pre_run_zero_preparation',self.preparation_future,self.preparation_records[-1])
+            self.pending_zero_preparation=False
 
     def finish(self,status,error):
         state=getattr(self.app,'rotary_homing',None)
@@ -267,7 +355,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=sum(r.parameters.cycles for r in self.requests if not r.stationary_holds),
             stationary_target_holds=30 if any(r.stationary_holds for r in self.requests) else 0,initial_zero_stability_s=30 if any(r.stationary_holds for r in self.requests) else 0,
             additional_inter_run_rest_s=0.0,inter_run_behaviour='Normal zero return, settling, confirmed idle, recorder finalization and cleanup; no extra conditioning/rest',
-            reference=self.reference_snapshot,initial_reference=self.initial_reference_snapshot,reference_history=self.reference_history,
+            reference=self.reference_snapshot,initial_reference=self.initial_reference_snapshot,reference_history=self.reference_history,zero_preparations=self.preparation_records,
             unloaded_tare=self.tare_snapshot,started_at=self.started_at,
             updated_at=datetime.now().astimezone().isoformat(),completed_at=datetime.now().astimezone().isoformat() if finished else None,
             runs=rows,outcome=self.batch_status,error=self.batch_error,independent_remount_trials=False,

@@ -552,7 +552,7 @@ class GuiWorkerTests(unittest.TestCase):
     def test_rotary_fault_poll_requests_async_stop_without_motor_io(self):
         app = SimpleNamespace(rotary_sensor=SimpleNamespace(
                                   reader=None, measurement=lambda: {"valid": False, "reason": "stale"}),
-                              last_rotary_notice="stale", strain_test_active=True,
+                              last_rotary_notice="stale", strain_test_active=True, run_metadata={},
                               test_stop_event=threading.Event(),
                               _request_coordinated_stop=Mock(), safe_idle_motor=Mock(),
                               _refresh_motion_controls=Mock())
@@ -561,6 +561,7 @@ class GuiWorkerTests(unittest.TestCase):
         app._poll_rotary_sensor()
         self.assertLess(time.monotonic() - started, 0.05)
         app._request_coordinated_stop.assert_called_once_with("Rotary sensor: stale", fault=True)
+        self.assertEqual(app.run_metadata["rotary_failure_evidence"]["reason"],"stale")
         app.safe_idle_motor.assert_not_called()
 
     def test_fault_persists_incomplete_metadata_before_stalled_idle_finishes(self):

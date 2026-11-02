@@ -52,6 +52,7 @@ class GuiTests(unittest.TestCase):
 
     def test_plan_admitted_and_candidate_runs_through_normal_recorders(self):
         a=self.prepare();a.loaded_preset_key='model_comparison'
+        a.start_rotary_homing=a.__class__.start_rotary_homing.__get__(a)
         # Long synthetic sequence validates orchestration, not host callback freshness.
         a.rotary_sensor.config['stale_after_ms']=1000
         a.cycles_input.value='3';a.min_angle_input.value='15';a.max_angle_input.value='15';a.acceleration_input.value='100'
@@ -70,7 +71,7 @@ class GuiTests(unittest.TestCase):
         a._submit_position=submit
         w,_=window_for(a,self.module.ctk,'model_comparison')
         w.start();self.assertTrue(w.active,w.status.options)
-        self.pump(lambda:(w.tick(),not w.active)[1],120)
+        self.pump(lambda:(w.tick(),not w.active)[1],160)
         self.assertEqual(w.batch_status,'completed',w.batch_error)
         self.assertEqual(len(w.records),22)
         self.assertTrue(w.records,w.batch_error)

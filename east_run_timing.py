@@ -18,6 +18,8 @@ def timing_text(app,now=None):
     now=time.monotonic() if now is None else now
     active=getattr(app,'strain_test_active',False);m=getattr(app,'run_metadata',None) or {}
     if not active:
+        if getattr(getattr(app,'rotary_homing',None),'active',False) is True:
+            return 'Zero preparation/recovery in progress — completion depends on settling'
         if m.get('duration_s') is not None:return 'Last run: '+clock_text(m['duration_s'])+' | '+str(m.get('run_status','finished'))
         return 'Elapsed / estimated remaining: shown when a test starts'
     started=getattr(app,'test_started_monotonic',None)

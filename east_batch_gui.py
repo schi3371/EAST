@@ -19,9 +19,8 @@ class RecordedBatchWindow:
             self.terminal.delete('1.0', '300.0')
         self.terminal.see('end')
         self.terminal.configure(state='disabled')
-        if self.active and 'Stop/cleanup is still running' in message:
-            self.cancelled.set()
-            self.app.stop_logging()
+        # Terminal text is presentation, not a control signal. Cancellation is
+        # driven by explicit Stop/health/lifecycle state in tick()/next_run().
 
     def next_run(self):
         if self.cancelled.is_set():
@@ -65,10 +64,17 @@ class RecordedBatchWindow:
         if self.closed:
             return
         app = self.app
+        if getattr(self,'failure_finalizing',False):
+            self._finish_failed_batch_when_quiescent()
+            self.window.after(200,self.tick)
+            return
         try:
             self.identity.configure(text=f'Operator: {app.operator_input.get()} | Fixture: {app.fixture_id_input.get()} | '
                                      f'Load calibration: {app.calibration_id_input.get()}')
             if self.active:
+                if (getattr(app,'operator_stop_requested',False) and app.test_stop_event.is_set()
+                        and not app.monitor_error and not getattr(app,'acquisition_error',None)):
+                    self.cancelled.set()
                 for v in self.fields.values():v.configure(state='disabled')
                 for button in self.run_buttons:button.configure(state='disabled')
                 if app.shutdown_requested or app.monitor_error or app.feedback_retry_pending:
@@ -112,7 +118,7 @@ class RecordedBatchWindow:
                         if state == 'failure' and not self.cancelled.is_set() and self.handle_failed_run(reason):
                             pass
                         elif state == 'failure' or self.cancelled.is_set():
-                            self.finish('cancelled' if self.cancelled.is_set() and not app.monitor_error else 'error',reason or 'Stop requested')
+                            self.finish('cancelled' if self.cancelled.is_set() and not app.monitor_error and not getattr(app,'acquisition_error',None) else 'error',reason or 'Stop requested')
                         else:
                             self.save('next')
                     else:
@@ -125,9 +131,9 @@ class RecordedBatchWindow:
                             f'{time.monotonic()-self.launched_at:.0f} s elapsed\n'
                             f'Motor: {s.position_turns if s else "unavailable"} turns | Rotary: {angle} deg | '
                             f'{rotary.get("reason", "")}')
-                elif self.cancelled.is_set() and quiescent(app):
-                    self.finish('cancelled','Stop requested between runs')
                 else:
+                    # Subclasses own preparation/recovery cancellation as well as
+                    # run dispatch. Do not bypass their evidence finalisation.
                     self.next_run()
             else:
                 for button in self.run_buttons:button.configure(state='normal')
@@ -139,11 +145,49 @@ class RecordedBatchWindow:
                     app._refresh_motion_controls()
         except Exception as exc:
             self.cancelled.set()
-            self.active = False
-            self.status.configure(text=f'Sequence stopped: {exc}')
-            app.update_terminal(f'Batch window error: {exc}\n')
+            self.failure_finalizing=True;self.fatal_save_started=False;self.fatal_finished=False
+            self.batch_status='error';self.batch_error=f'Batch orchestration error: {exc}'
+            app.update_terminal(self.batch_error+'; stopping and preserving the batch manifest.\n')
             app.stop_logging()
         self.window.after(200,self.tick)
+
+    def _finish_failed_batch_when_quiescent(self):
+        """A UI/scheduler exception must not abandon a running manifest/owner."""
+        app=self.app
+        if getattr(self,'fatal_finished',False):return
+        future=self.save_future
+        if future is not None:
+            if not future.done():return
+            try:future.result()
+            except Exception as exc:
+                self.batch_error+=f'; manifest write failed: {exc}'
+            self.save_future=None
+            if self.fatal_save_started:
+                self.fatal_finished=True;self.active=False;self.request=None
+                if quiescent(app):
+                    self.release_pending=False;app.set_test_inputs_state('normal');app._refresh_motion_controls()
+                app.update_terminal(self.batch_error+'\n')
+                try:self.status.configure(text='ERROR: '+self.batch_error)
+                except Exception:pass  # The original failure may be a destroyed widget.
+                return
+        if not quiescent(app):return
+        if self.awaiting_run and self.request is not None:
+            m=app.run_metadata or {}
+            self.records.append(dict(context=self.request.context(),outcome='failure',error=self.batch_error,
+                strain_file=app.strain_file_name,rotary_file=app.rotary_samples_file_name,metadata_file=app.metadata_file_name,
+                started_at=m.get('started_at'),completed_at=m.get('completed_at'),
+                completed_cycles=m.get('completed_cycles'),run_status=m.get('run_status','error')))
+            self.awaiting_run=False
+        try:
+            hook=getattr(self,'abort_preparation_for_batch_error',None)
+            if hook is not None:hook()
+            self.fatal_save_started=True;self.finish('error',self.batch_error)
+        except Exception as exc:
+            self.batch_error+=f'; final manifest could not be written: {exc}'
+            self.fatal_finished=True;self.active=False
+            app.update_terminal(self.batch_error+'; raw run files remain authoritative.\n')
+            if quiescent(app):
+                self.release_pending=False;app.set_test_inputs_state('normal');app._refresh_motion_controls()
 
     def close(self):
         if self.active or self.save_future is not None:

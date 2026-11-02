@@ -87,7 +87,8 @@ class ComparisonRecoveryTests(unittest.TestCase):
         self.assertEqual(m['run_status'],'error');self.assertEqual(m['completed_cycles'],1)
         self.assertAlmostEqual(m['zero_return_check']['unassisted_angle_deg'],.271 if original else -.704)
         if not original:self.assertEqual(len(m['experimental_motion_model']['segments']),4)
-        self.assertEqual(len(w.reference_history),1)
+        self.assertEqual(sum(h.get('kind')=='post_run_zero_recovery' for h in w.reference_history),1)
+        self.assertEqual(len(w.preparation_records),2)
         self.assertIs(a.empty_machine_tare,tare)
         self.assertEqual(w.records[1]['run_status'],'completed')
 

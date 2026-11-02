@@ -336,7 +336,8 @@ class ODriveAdapter:
             # A queued command may have waited for another Fibre call while Stop
             # was latched. Only a call already dispatched to transport may finish.
             if cancelled():
-                raise RuntimeError("Motion was cancelled before target dispatch")
+                from east_execution import MotionCommandCancelled
+                raise MotionCommandCancelled("Motion was cancelled before target dispatch")
             self.axis.controller.input_pos = target
 
     def enter_closed_loop_holding_current(

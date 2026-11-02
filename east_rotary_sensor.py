@@ -22,7 +22,10 @@ ROTARY_CSV_COLUMNS = [
 
 
 class RotaryError(RuntimeError):
-    pass
+    def __init__(self,message,details=None):
+        super().__init__(message)
+        self.details=details or {}
+
 
 
 class RotaryCalibration:
@@ -129,7 +132,11 @@ class RotaryReader:
 
     def _emit(self, kind, payload):
         with self.lock:
-            for events in [self.events, *self.listeners]:
+            # The GUI reads the latest snapshot and ignores sample events.
+            # Only archival subscribers need every raw event. A slow UI must not
+            # overflow its notification queue and disconnect a healthy sensor.
+            targets=self.listeners if kind=='sample' else [self.events,*self.listeners]
+            for events in targets:
                 try:
                     events.put_nowait((kind, payload))
                 except queue.Full:
@@ -396,7 +403,14 @@ class RotarySensorService:
                 reason = "Rotary recording contains an invalid/out-of-range sample"
             result.update(valid=not bool(reason), reason=reason or "Ready")
         if require and not result["valid"]:
-            raise RotaryError(result["reason"])
+            raise RotaryError(result["reason"],details={
+                'observed_at_monotonic_s':time.monotonic() if now is None else now,
+                'reason':result['reason'],'sample_age_s':result.get('sample_age_s'),
+                'stale_after_ms':self.config['stale_after_ms'],
+                'angle_deg':result.get('angle_deg'),'sample_status':result.get('sample_status'),
+                'achieved_rate_hz':result.get('achieved_rate_hz'),
+                'latest_sample':result.get('sample'),
+                'reader_maximum_gap_s':getattr(reader,'maximum_gap_s',None)})
         return result
 
     def start_recording(self, path, started, *, allow_linear_extrapolation=False):

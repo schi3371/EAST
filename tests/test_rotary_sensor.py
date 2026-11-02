@@ -192,10 +192,21 @@ class DeliveredReaderTests(unittest.TestCase):
 
     def test_event_buffers_cannot_silently_drop_samples(self):
         reader=configured_reader()
-        reader.events=queue.Queue(maxsize=1)
+        subscriber=reader.subscribe()
+        while not subscriber.events.empty():subscriber.events.get_nowait()
+        subscriber.events.maxsize=1
         deliver(reader,[0.4,0.4])
         self.assertTrue(reader.stop.is_set())
         self.assertIn("overflow",reader.error)
+
+    def test_unserviced_gui_queue_cannot_break_archival_sample_delivery(self):
+        reader=configured_reader();subscriber=reader.subscribe()
+        deliver(reader,[.4]*5000)
+        self.assertFalse(reader.stop.is_set());self.assertIsNone(reader.error)
+        self.assertEqual(sum(k=='sample' for k,v in subscriber.events.queue),5000)
+        self.assertFalse(any(k=='sample' for k,v in reader.events.queue))
+        reader._emit('progress','still attached')
+        self.assertTrue(any(k=='progress' for k,v in reader.events.queue))
 
     def test_subscription_close_does_not_disconnect_shared_sensor(self):
         reader=configured_reader()
@@ -206,10 +217,10 @@ class DeliveredReaderTests(unittest.TestCase):
         self.assertFalse(any(kind=="sample" for kind,_ in subscription.events.queue))
 
     def test_equal_host_timestamps_retain_distinct_events_without_fault(self):
-        reader=configured_reader()
+        reader=configured_reader();subscriber=reader.subscribe()
         with patch("east_rotary_sensor.time.monotonic_ns",side_effect=[10_000_000_000,10_000_000_000,10_008_000_000]):
             for value in (0.4,0.4001,0.4002): reader._sample(None,value)
-        samples=[p for kind,p in reader.events.queue if kind=="sample"]
+        samples=[p for kind,p in subscriber.events.queue if kind=="sample"]
         self.assertEqual([p[3] for p in samples],[1,2,3])
         self.assertEqual(samples[0][5],samples[1][5])
         self.assertTrue(samples[1][6])

@@ -108,6 +108,7 @@ class MotionMappingWindow(RecordedBatchWindow):
             self.requests, self.records = requests, []
             self.manifest_path = path
             self.cancelled.clear()
+            app.operator_stop_requested=False;app.acquisition_error=None
             self.active = True
             self.awaiting_run = False
             self.release_pending = True

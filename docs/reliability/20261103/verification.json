@@ -1,0 +1,39 @@
+{
+  "software_version": "1.17.0-reliability-audit",
+  "comparison_protocol_version": "3.0",
+  "interpreter": "Python 3.11 /usr/local/bin/python3",
+  "runs": {
+    "full_discovery": {
+      "tests": 380,
+      "seconds": 370.823,
+      "outcome": "FAILED (failures=2, errors=1)"
+    },
+    "mapping_after_fixture_update": {
+      "tests": 11,
+      "seconds": 21.227,
+      "outcome": "OK"
+    },
+    "responsive_stop_after_metadata_fixture_update": {
+      "tests": 28,
+      "seconds": 3.295,
+      "outcome": "OK"
+    },
+    "suite_recovery_after_fake_scheduler_isolation": {
+      "tests": 6,
+      "seconds": 12.874,
+      "outcome": "OK"
+    },
+    "new_statistics_isolation": {
+      "tests": 1,
+      "seconds": 0.05,
+      "outcome": "OK"
+    }
+  },
+  "interpretation": "380 discovery cases, plus one subsequently added statistics case. Initial discovery had two failures and one error. Two fixtures were updated for the intentional display-only terminal and added run metadata; multi-run fake recovery sensor freshness was isolated from unconstrained host scheduling. Affected groups (11 + 28 + 6) and the new statistics case pass. No production changes followed discovery. A full clean discovery was not repeated after these test-only corrections.",
+  "source_checks": {
+    "top_level_modules_compile": 26,
+    "reviewed_manifest_hashes_match": 18,
+    "git_diff_check": "passed"
+  },
+  "hardware_test": "not performed; Windows bench run required"
+}

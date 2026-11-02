@@ -82,7 +82,8 @@ class IntegrationTests(unittest.TestCase):
 
     def test_stop_transport_cancellation_is_not_upgraded_to_fault(self):
         a=self.app
-        a._command_rotary_feedback_pilot=Mock(side_effect=RuntimeError('Pending motion cancelled by Stop'))
+        from east_execution import MotionCommandCancelled
+        a._command_rotary_feedback_pilot=Mock(side_effect=MotionCommandCancelled('Pending motion cancelled by Stop'))
         a.operator_stop_requested=True;a.test_stop_event.set();a.acquisition_error=None
         with self.assertRaises(self.module.TestStopped):a.command_rotary_feedback_pilot(0,'x',None)
         a.monitor_error='actual feedback fault'

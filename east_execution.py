@@ -26,6 +26,10 @@ class Lifecycle(str, Enum):
 class DispatchRejected(RuntimeError):
     pass
 
+class MotionCommandCancelled(DispatchRejected):
+    """An explicit cancellation, distinct from a failed transport/controller."""
+    pass
+
 
 @dataclass
 class Request:
@@ -69,7 +73,7 @@ class TransportOwner:
                 request = item[2]
                 if request.motion:
                     if not request.future.done():
-                        request.future.set_exception(DispatchRejected('Pending motion cancelled by Stop'))
+                        request.future.set_exception(MotionCommandCancelled('Pending motion cancelled by Stop'))
                 else: retained.append(item)
                 self.pending.task_done()
             for item in retained: self.pending.put_nowait(item)
@@ -83,7 +87,7 @@ class TransportOwner:
                 req.future.set_exception(DispatchRejected('Connection retired or replaced'))
                 return req.future
             if motion and (req.operation != self.operation or not self.motion_allowed() or not guard()):
-                req.future.set_exception(DispatchRejected('Motion admission cancelled'))
+                req.future.set_exception(MotionCommandCancelled('Motion admission cancelled'))
                 return req.future
             try: self.pending.put_nowait((priority, next(self.sequence), req))
             except queue.Full: req.future.set_exception(DispatchRejected('Transport queue is full'))
@@ -117,7 +121,7 @@ class TransportOwner:
                     if self.closing or req.connection != self.connection:
                         raise DispatchRejected('Retired controller request')
                     if req.motion and (req.operation != self.operation or not self.motion_allowed() or not req.guard()):
-                        raise DispatchRejected('Motion cancelled before transport dispatch')
+                        raise MotionCommandCancelled('Motion cancelled before transport dispatch')
                     self.executing = req
                     self.last_queue_wait_s = time.monotonic()-req.submitted
                 # Never hold a lifecycle/coordinator lock across Fibre.
@@ -306,7 +310,11 @@ class FeedbackMonitor:
         self.allow_motion_retry,self.on_motion_delay=allow_motion_retry,on_motion_delay
         self.error = None
         self.samples = 0
-        self.motion_rejections=[]
+        from collections import deque
+        self.motion_rejections=deque(maxlen=128)
+        self.motion_rejection_count=0
+        self.statistics_lock=threading.RLock()
+        self.run_window=None
         self.first_position_at = self.last_position_at = None
         self.maximum_gap_s = 0.0
 
@@ -342,10 +350,15 @@ class FeedbackMonitor:
                                 or last_good.active_errors or last_good.current_state!=expected_state
                                 or (expected_disarm is not None and (bad.disarm_reason!=expected_disarm or last_good.disarm_reason!=expected_disarm))):raise
                         motion_retry_pending=True
-                        self.motion_rejections.append(dict(duration_s=bad.capture_duration_s,
+                        rejection=dict(duration_s=bad.capture_duration_s,
                             transport_queue_wait_s=bad.transport_queue_wait_s,io_lock_wait_s=bad.lock_wait_s,
                             property_brackets=bad.property_brackets_monotonic_s,
-                            prior_good_position_at=last_good.captured_monotonic_s,rejected_position_at=bad.captured_monotonic_s))
+                            prior_good_position_at=last_good.captured_monotonic_s,rejected_position_at=bad.captured_monotonic_s)
+                        with self.statistics_lock:
+                            self.motion_rejections.append(rejection);self.motion_rejection_count+=1
+                            w=self.run_window
+                            if w is not None and not w['closed']:
+                                w['rejections'].append(rejection);w['rejection_count']+=1
                         self.on_motion_delay(exc)
                         continue
                     if not retry.reject_and_retry(exc,last_good,expected_state,self.owner()): raise
@@ -373,11 +386,18 @@ class FeedbackMonitor:
                     raise FeedbackError(f'ODrive disarm reason changed during powered motion ({expected_disarm} -> {snapshot.disarm_reason})')
                 self.publish(snapshot)
                 last_good = snapshot
-                self.samples += 1
-                if self.last_position_at is not None:
-                    self.maximum_gap_s=max(self.maximum_gap_s,snapshot.captured_monotonic_s-self.last_position_at)
-                self.first_position_at = self.first_position_at or snapshot.captured_monotonic_s
-                self.last_position_at = snapshot.captured_monotonic_s
+                with self.statistics_lock:
+                    self.samples += 1
+                    if self.last_position_at is not None:
+                        self.maximum_gap_s=max(self.maximum_gap_s,snapshot.captured_monotonic_s-self.last_position_at)
+                    self.first_position_at = self.first_position_at or snapshot.captured_monotonic_s
+                    self.last_position_at = snapshot.captured_monotonic_s
+                    w=self.run_window
+                    if w is not None and not w['closed'] and snapshot.captured_monotonic_s>=w['started_at_monotonic_s']:
+                        w['samples']+=1
+                        if w['last'] is not None:w['maximum_gap_s']=max(w['maximum_gap_s'],snapshot.captured_monotonic_s-w['last'])
+                        w['first']=w['first'] if w['first'] is not None else snapshot.captured_monotonic_s
+                        w['last']=snapshot.captured_monotonic_s
                 if delayed:
                     delayed=False
                     self.on_restored()
@@ -396,9 +416,37 @@ class FeedbackMonitor:
             self.error = str(exc)
             self.on_fault('Feedback monitor failure: '+str(exc))
 
+    def begin_run_statistics(self):
+        from collections import deque
+        with self.statistics_lock:
+            window=dict(started_at_monotonic_s=time.monotonic(),samples=0,first=None,last=None,
+                maximum_gap_s=0.,rejections=deque(maxlen=128),rejection_count=0,closed=False,error=None)
+            self.run_window=window
+            return window
+
+    def finish_run_statistics(self,window):
+        with self.statistics_lock:
+            if not window['closed']:
+                window['closed']=True;window['ended_at_monotonic_s']=time.monotonic();window['error']=self.error
+            return self._window_statistics(window)
+
+    def _window_statistics(self,w):
+        duration=w['last']-w['first'] if w['last'] is not None and w['first'] is not None else 0.
+        return dict(scope='run_window',started_at_monotonic_s=w['started_at_monotonic_s'],
+            ended_at_monotonic_s=w.get('ended_at_monotonic_s'),samples=w['samples'],
+            achieved_rate_hz=(w['samples']-1)/duration if duration>0 else 0.,maximum_gap_s=w['maximum_gap_s'],
+            error=w['error'],comparison_rejected_bundles=list(w['rejections']),
+            comparison_rejected_bundle_count=w['rejection_count'],
+            rejected_history_truncated=w['rejection_count']>len(w['rejections']),
+            timestamp_basis='host position-read completion; original times preserved')
+
     def statistics(self):
-        duration = (self.last_position_at-self.first_position_at
-                    if self.last_position_at is not None and self.first_position_at is not None else 0)
-        return {'comparison_rejected_bundles':self.motion_rejections,'samples':self.samples,'achieved_rate_hz':(self.samples-1)/duration if duration>0 else 0,
-                'maximum_gap_s':self.maximum_gap_s,'error':self.error,
-                'timestamp_basis':'host position-read completion; original times preserved'}
+        with self.statistics_lock:
+            duration = (self.last_position_at-self.first_position_at
+                        if self.last_position_at is not None and self.first_position_at is not None else 0)
+            return {'scope':'connection_lifetime','comparison_rejected_bundles':list(self.motion_rejections),
+                    'comparison_rejected_bundle_count':self.motion_rejection_count,
+                    'rejected_history_truncated':self.motion_rejection_count>len(self.motion_rejections),
+                    'samples':self.samples,'achieved_rate_hz':(self.samples-1)/duration if duration>0 else 0,
+                    'maximum_gap_s':self.maximum_gap_s,'error':self.error,
+                    'timestamp_basis':'host position-read completion; original times preserved'}

@@ -44,6 +44,9 @@ class RecoveryTests(unittest.TestCase):
 
     def run_case(self,error,stop_recovery=False):
         a=self.prepare();a.loaded_preset_key='remaining_motion_data'
+        # This multi-run fake-device test exercises recovery/ownership, not callback scheduling.
+        # Dedicated stale-sample tests retain the production 100 ms threshold.
+        a.rotary_sensor.config['stale_after_ms']=1000
         a.cycles_input.value='3';a.min_angle_input.value='10';a.max_angle_input.value='10';a.acceleration_input.value='100'
         a.start_rotary_homing=a.__class__.start_rotary_homing.__get__(a)
         reader=a.rotary_sensor.reader;raw=reader._sample

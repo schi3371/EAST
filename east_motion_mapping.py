@@ -61,6 +61,10 @@ def workers_finished(app):
         worker = getattr(app, name, None)
         if worker is not None and worker.is_alive():
             return False
+    for recorder in (getattr(app,'csv_recorder',None),
+                     getattr(getattr(app,'rotary_sensor',None),'recording',None)):
+        thread=getattr(recorder,'thread',None)
+        if thread is not None and thread.is_alive():return False
     return not any(w.is_alive() for w in app.metadata_workers)
 
 
@@ -121,7 +125,8 @@ def zero_recovery_candidate(app,request):
             or m.get('protocol_batch')!=request.context() or m.get('run_status')!='error'
             or m.get('outcome_pending_cleanup') or z.get('passed') is not False
             or not isinstance(angle,(float,int)) or not math.isfinite(angle)
-            or not abs(angle)>.1 or (request.stage=='updated_10_repeat' and abs(angle)>.25) or m.get('completed_cycles')!=request.parameters.cycles):
+            or not (abs(angle)>.1 or z.get('min_deg',0)<-.1 or z.get('max_deg',0)>.1)
+            or (request.stage=='updated_10_repeat' and abs(angle)>.25) or m.get('completed_cycles')!=request.parameters.cycles):
         return False
     idle=m.get('idle_confirmation',{});csv=m.get('csv_recorder',{})
     rotary=m.get('rotary_sensor',{}).get('recording_statistics',{})
