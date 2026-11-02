@@ -1,0 +1,2327 @@
+{
+  "achieved_average_sample_rate_hz": 63.10225934706519,
+  "acquisition_overruns": 6070,
+  "baseline_matching": {
+    "acceleration_deg_s2": 100.0,
+    "automatic_subtraction_applied": false,
+    "calibration_id": "0",
+    "correction_equation": "AFO torque = loaded-machine torque - matched empty-machine torque",
+    "fixture_id": "0",
+    "machine_zero_reference_generation": 82,
+    "machine_zero_reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+    "maximum_angle_deg": 15.0,
+    "minimum_angle_deg": 15.0,
+    "movement_direction_source": "Match increasing_machine_angle and decreasing_machine_angle CSV rows separately.",
+    "purpose": "Preserves the dimensions required to pair loaded-machine and unloaded empty-machine torque-angle sweeps during later analysis.",
+    "session_mapping_verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:23f2cac9709a406f855c46915b46c3de",
+    "session_mapping_verified_at": "2026-11-02T16:07:10.719+11:00",
+    "speed_deg_s": 20.0,
+    "tare_captured_at": "2026-11-02T16:07:16.081+11:00",
+    "tare_phidget_channel": 1,
+    "tare_phidget_serial_number": 513296,
+    "test_type": "empty_machine_baseline",
+    "total_rom_deg": 30.0
+  },
+  "calibration": {
+    "calibration_id": "0",
+    "calibration_status": "provisional; calibration certificate and direction must be verified",
+    "empty_machine_tare": {
+      "calibration_id": "0",
+      "captured_at": "2026-11-02T16:07:16.081+11:00",
+      "fixture_id": "0",
+      "offset_v_per_v": -6.748014375000001e-07,
+      "operator_id": "SC",
+      "phidget_channel": 1,
+      "phidget_serial_number": 513296,
+      "sample_count": 16
+    },
+    "force_angle_polynomial_deg": [
+      -0.0328,
+      -1.0013,
+      90.272
+    ],
+    "geometry_status": "provisional; verify dimensions and polynomial experimentally",
+    "lever_arm_m": 0.4792,
+    "mass_kg_per_voltage_ratio": 25014.7939492599,
+    "standard_gravity_m_s2": 9.80665,
+    "tare_offset_v_per_v": -6.748014375000001e-07,
+    "tare_samples": 16
+  },
+  "completed_at": "2026-11-02T16:22:35.173+11:00",
+  "completed_cycles": 3,
+  "csv_file": "MotionSuite_B408453cc_R9_EMPTY_MACHINE_BASELINE_20261102T161925_228501+1100_strain_data.csv",
+  "csv_recorder": {
+    "error": null,
+    "pending_rows": 0,
+    "rows_persisted": 11951,
+    "worker_complete": true
+  },
+  "cycle_definition": "Cycle 0: startup to positive endpoint. Each numbered cycle: positive to negative to positive endpoint, with both sweeps settled. Final machine-zero return is excluded from analysis sweeps.",
+  "duration_s": 189.39099999999962,
+  "engine_evidence": {
+    "feedback_health": {
+      "connection_generation": 1,
+      "healthy": true,
+      "position_at": 17066.296,
+      "recorded_at": 17066.296
+    },
+    "feedback_latest": {
+      "connection_generation": 1,
+      "position_at": 17066.296,
+      "recorded_at": 17066.296
+    },
+    "feedback_recovery": {
+      "connection_generation": 1,
+      "position_at": 16077.171,
+      "validated": true
+    },
+    "idle": {
+      "active_errors": 0,
+      "connection_generation": 1,
+      "observed_at": "2026-11-02T16:22:34.619+11:00",
+      "observed_monotonic_s": 17065.765,
+      "state": 1
+    },
+    "persistence_health": {
+      "healthy": true,
+      "operation": "idle checkpoint"
+    },
+    "rotary_health": {
+      "age_s": 0.0,
+      "rate_hz": 124.57254518808011,
+      "reason": "Ready",
+      "valid": true
+    },
+    "rotary_zero": {
+      "calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+      "final_angle_deg": 0.01164239845809334,
+      "reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+      "verified": true
+    },
+    "tare": {
+      "identity": {
+        "calibration_id": "0",
+        "captured_at": "2026-11-02T16:07:16.081+11:00",
+        "fixture_id": "0",
+        "offset_v_per_v": -6.748014375000001e-07,
+        "operator_id": "SC",
+        "phidget_channel": 1,
+        "phidget_serial_number": 513296,
+        "sample_count": 16
+      },
+      "valid": true
+    }
+  },
+  "error": null,
+  "experimental_motion_model": {
+    "enabled": false,
+    "mode": "legacy_fixed_conversion"
+  },
+  "gui_timing": {
+    "drains": 11936,
+    "maximum_drain_s": 0.07799999999951979,
+    "maximum_gap_s": 0.6869999999998981
+  },
+  "hardware": {
+    "connected_phidget_serial_number": 513296,
+    "odrive_axis": 0,
+    "odrive_connection_timeout_s": 5.0,
+    "odrive_serial_number": "3943355F3231",
+    "phidget_attachment_timeout_ms": 5000,
+    "phidget_channel": 1,
+    "phidget_serial_number": null
+  },
+  "idle_confirmation": {
+    "confirmed": true,
+    "monitor_error": null,
+    "motion_owner": null
+  },
+  "last_idle_observation": {
+    "active_errors": 0,
+    "connection_generation": 1,
+    "observed_at": "2026-11-02T16:22:34.619+11:00",
+    "observed_monotonic_s": 17065.765,
+    "state": 1
+  },
+  "machine_zero_reference": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-02T16:07:10.704+11:00",
+      "established_by": "SC",
+      "fixture_id": "0",
+      "generation": 82,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": -0.04606825113296509,
+      "reference_generation": 82,
+      "reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:23f2cac9709a406f855c46915b46c3de",
+      "verified_at": "2026-11-02T16:07:10.719+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "machine_zero_reference_final": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-02T16:07:10.704+11:00",
+      "established_by": "SC",
+      "fixture_id": "0",
+      "generation": 82,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": -0.04606825113296509,
+      "reference_generation": 82,
+      "reference_id": "2b5f08eb-3902-4f1e-8fb6-11cb1be63590",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:23f2cac9709a406f855c46915b46c3de",
+      "verified_at": "2026-11-02T16:07:10.719+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "maximum_acquisition_lateness_s": 0.02299999999740976,
+  "motion_conversion": {
+    "afo_degrees_per_odrive_turn": 2.055,
+    "controller_velocity_safety_multiplier": 1.25,
+    "conversion_status": "legacy manual/identification conversion; normal tests use optional experimental model",
+    "experimental_model": {
+      "enabled": true,
+      "model_id": "direction-cubic-20261102-v1",
+      "status": "experimental; rotary-anchored inverse targets, not prospective validation or continuous angle control"
+    },
+    "manual_acceleration_deg_s2": 10.0,
+    "manual_continuous_increment_deg": 0.2,
+    "manual_speed_deg_s": 5.0,
+    "manual_update_interval_ms": 50,
+    "maximum_acceleration_deg_s2": 100.0,
+    "maximum_afo_angle_deg": 15.0,
+    "maximum_cycles": 100,
+    "maximum_motion_timeout_s": 60.0,
+    "maximum_speed_deg_s": 20.0,
+    "minimum_acceleration_deg_s2": 0.1,
+    "minimum_constant_speed_span_deg": 5.0,
+    "minimum_speed_deg_s": 0.1,
+    "motion_timeout_margin_s": 5.0,
+    "neutral_return_acceleration_deg_s2": 5.0,
+    "neutral_return_speed_deg_s": 2.0,
+    "position_tolerance_deg": 0.05
+  },
+  "motion_method": "Original (2.055 degrees/turn)",
+  "motor_feedback_statistics": {
+    "achieved_rate_hz": 48.741847460694494,
+    "error": null,
+    "maximum_gap_s": 0.09400000000096043,
+    "samples": 48212,
+    "timestamp_basis": "host position-read completion; original times preserved"
+  },
+  "motor_timing_provenance": {
+    "brackets": "host monotonic seconds; not hardware synchronisation",
+    "capture_duration": "transport queue wait plus IO lock wait and all requested property reads",
+    "limits": "production 150 ms capture and 250 ms position freshness unchanged",
+    "position_timestamp": "host completion of position remote read, not end of the multi-property bundle",
+    "uptime": "omitted during powered monitor captures; read during idle/identity/recovery diagnostics"
+  },
+  "move_distance_definition": "Nominal Move Distance (deg) stores absolute target minus validated pre-command feedback position, converted to AFO degrees.",
+  "odrive_active_configuration": {
+    "capabilities": {
+      "pos_abs": null,
+      "pos_abs_available": true,
+      "raw_phase_available": false,
+      "watchdog_feed_available": true
+    },
+    "controller": {
+      "control_mode": 3,
+      "input_mode": 5,
+      "velocity_limit_turns_s": 12.165450096130371
+    },
+    "fingerprint": {
+      "axis": 0,
+      "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+      "details": {
+        "absolute_setpoints": false,
+        "circular_setpoint_range": 1.0,
+        "circular_setpoints": false,
+        "commutation_encoder": 10,
+        "commutation_mapper_offset_valid": true,
+        "commutation_mapper_scale": 7.0,
+        "load_encoder": 10,
+        "motor_type": 0,
+        "pos_vel_mapper_offset_valid": false,
+        "pos_vel_mapper_scale": 1.0,
+        "rs485_encoder_protocol_mode": 2
+      },
+      "firmware": "0.6.8",
+      "odrive_serial": "62960821023281"
+    },
+    "health": {
+      "pos_vel_mapper_active_errors": null,
+      "pos_vel_mapper_status": 9,
+      "rs485_encoder_active_errors": null,
+      "rs485_encoder_status": 0
+    },
+    "snapshot": {
+      "active_errors": 0,
+      "capture_duration_s": 0.014999999999417923,
+      "capture_started_monotonic_s": 16876.375,
+      "captured_at": "2026-11-02T16:19:25.233+11:00",
+      "captured_monotonic_s": 16876.39,
+      "current_state": 1,
+      "disarm_reason": 0,
+      "lock_wait_s": 0.0,
+      "position_finished_monotonic_s": 16876.39,
+      "position_started_monotonic_s": 16876.375,
+      "position_turns": -0.04757338762283325,
+      "property_brackets_monotonic_s": {
+        "active_errors": [
+          16876.39,
+          16876.39
+        ],
+        "current_state": [
+          16876.39,
+          16876.39
+        ],
+        "disarm_reason": [
+          16876.39,
+          16876.39
+        ],
+        "position": [
+          16876.375,
+          16876.39
+        ],
+        "uptime": [
+          16876.39,
+          16876.39
+        ],
+        "velocity": [
+          16876.39,
+          16876.39
+        ]
+      },
+      "raw_phase": null,
+      "system_uptime": 10853120.0,
+      "transport_queue_wait_s": 0.0,
+      "velocity_finished_monotonic_s": 16876.39,
+      "velocity_started_monotonic_s": 16876.39,
+      "velocity_turns_s": -0.005666441284120083
+    },
+    "trajectory": {
+      "acceleration_limit_turns_s2": 48.661800384521484,
+      "deceleration_limit_turns_s2": 48.661800384521484,
+      "velocity_limit_turns_s": 9.732359886169434
+    },
+    "watchdog": {
+      "enabled": false,
+      "timeout_s": 0.0
+    }
+  },
+  "odrive_final_configuration_error": "Live diagnostic omitted during finalization to avoid blocking run outcome",
+  "outcome_pending_cleanup": false,
+  "plot_angle_source": "Measured Fixture Angle from calibrated rotary sensor",
+  "protocol": {
+    "actual_commanded_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 3,
+      "maximum_angle_deg": 15.0,
+      "minimum_angle_deg": 15.0,
+      "speed_deg_s": 20.0
+    },
+    "execution_kind": "staged_validation_suite",
+    "loaded_at": "2026-11-02T16:06:00.717+11:00",
+    "original_preset_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 3,
+      "maximum_angle_deg": 10.0,
+      "minimum_angle_deg": 10.0,
+      "speeds_deg_s": [
+        0.5,
+        5.0,
+        20.0
+      ]
+    },
+    "preset_display_name": "Remaining Motion Data (Empty Machine)",
+    "preset_key": "remaining_motion_data",
+    "preset_modified": false,
+    "preset_version": "1.1",
+    "repeat": 1,
+    "settings_status": "provisional_not_scientifically_validated",
+    "stage": "wide_15_identification",
+    "test_type": "empty_machine_baseline"
+  },
+  "protocol_batch": {
+    "additional_inter_run_rest_s": 0.0,
+    "automatic_baseline_correction": false,
+    "baseline_batch_id": null,
+    "baseline_link_status": "not_linked",
+    "batch_id": "408453ccddf64dd19baf04a052b8cd4d",
+    "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\motion_suite_408453ccddf64dd19baf04a052b8cd4d.json",
+    "command_model_enabled": false,
+    "endpoint_feedback_is_not_feedforward_validation": true,
+    "independent_remount_trials": false,
+    "mounting_setup_id": "setup_a43ae5729131",
+    "planned_speed_deg_s": 20.0,
+    "planned_speed_sequence_deg_s": [
+      0.5,
+      5.0,
+      20.0,
+      0.5,
+      5.0,
+      20.0,
+      0.5,
+      5.0,
+      20.0,
+      5.0
+    ],
+    "protocol_key": "remaining_motion_data",
+    "protocol_version": "1.1",
+    "purpose": "three_speed_empty_baseline",
+    "repeat": 1,
+    "rotary_targeted": true,
+    "run_id": "R9 wide_15_identification 20 deg/s",
+    "run_index": 9,
+    "same_mounting_across_speed_conditions": true,
+    "settings_status": "provisional_not_scientifically_validated",
+    "stage": "wide_15_identification",
+    "stationary_holds": false,
+    "total_runs": 10
+  },
+  "protocol_batch_files": {
+    "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\motion_suite_408453ccddf64dd19baf04a052b8cd4d.json",
+    "metadata_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\MotionSuite_B408453cc_R9_EMPTY_MACHINE_BASELINE_20261102T161925_228501+1100_metadata.json",
+    "rotary_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\MotionSuite_B408453cc_R9_EMPTY_MACHINE_BASELINE_20261102T161925_228501+1100_rotary_samples.csv",
+    "strain_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\MotionSuite_B408453cc_R9_EMPTY_MACHINE_BASELINE_20261102T161925_228501+1100_strain_data.csv"
+  },
+  "rotary_sensor": {
+    "angle_use": "Calibrated fixture angle defines rotary homing/zero and plot angle; test trajectory conversion and torque geometry remain motor-based",
+    "calibration": {
+      "motor_control_changed": false,
+      "profile": {
+        "accepted_on": "2026-10-14",
+        "calibration_id": "P3022_RATIO_20261014_V1",
+        "channel": 0,
+        "checked_angle_range_deg": [
+          -15.33,
+          15.4
+        ],
+        "fit_angle_range_deg": [
+          -5.7,
+          15.4
+        ],
+        "fit_max_abs_error_deg": 0.10805882011706025,
+        "fit_method": "OLS on equal-weight means of first 12 positions (36 captures); sensor-derived extensions excluded",
+        "fit_r_squared": 0.9999028472198792,
+        "fit_rmse_deg": 0.06436985602580216,
+        "hub_port": 0,
+        "hub_serial": 750256,
+        "input_mode": "Voltage ratio",
+        "intercept_deg": -143.89867375834794,
+        "motor_conversion_changed": false,
+        "mounting_reference": "Existing EAST fixture-shaft coupling at physical 90 degrees; operator confirmed unchanged 2026-10-14",
+        "original_export_sha256": "756458fa13cf215af9afae19db6de589016fe455ce45be55be9a8c6d124539e4",
+        "reference_instrument": "WOLF WDAM425 digital angle measure",
+        "schema_version": 1,
+        "sensor_label_serial": "20211220116",
+        "sensor_model": "P3022-V1-CW360",
+        "sign_convention": "Dorsiflexion positive; plantarflexion negative; physical 90 degrees is zero",
+        "slope_deg_per_ratio": 361.80006173743607,
+        "source_data": "analysis/rotary_sensor_calibration/calibration_results.csv",
+        "source_data_sha256": "7c36281ccc4f5d25c49697ca5234c8a84313477c7f9b1b8d489c7db7d8c8f18c",
+        "status": "accepted_for_measurement",
+        "validation": {
+          "basis": "Operator reported independent remeasurement agreed with six negative sensor-derived estimates",
+          "dynamic_validation": "pending Windows hardware bench test",
+          "quantified_validation_error_deg": null,
+          "raw_remeasurement_values_supplied": false
+        }
+      },
+      "profile_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+      "range_margin_deg": 0.25
+    },
+    "connection": {
+      "change_trigger": 0.0,
+      "channel": 0,
+      "channel_sku": "VOLTAGERATIOINPUT_PORT",
+      "connection_id": "23f2cac9709a406f855c46915b46c3de",
+      "host_clock": "GetTickCount64()",
+      "host_clock_resolution_s": 0.015625,
+      "hub_port": 0,
+      "hub_serial": 750256,
+      "input_mode": "Voltage ratio",
+      "interval_ms": 8,
+      "maximum_interval_ms": 60000,
+      "minimum_interval_ms": 1,
+      "requested_interval_ms": 8,
+      "sku": "HUB0007",
+      "timestamp_basis": "host arrival of Phidget change event; not hardware-synchronised",
+      "timestamp_tie_count": 49586,
+      "timestamp_units": "integer host monotonic nanoseconds plus seconds for joining"
+    },
+    "join_method": "Latest delivered sample at load-cell read; age and sequence recorded; no interpolation",
+    "profile_error": null,
+    "raw_samples_file": "MotionSuite_B408453cc_R9_EMPTY_MACHINE_BASELINE_20261102T161925_228501+1100_rotary_samples.csv",
+    "recording_statistics": {
+      "achieved_event_rate_hz": 124.99537914754514,
+      "delivered_samples": 23670,
+      "invalid_samples": 0,
+      "maximum_inter_sample_gap_s": 0.032,
+      "recording_error": null,
+      "tied_timestamp_events": 11786
+    },
+    "required_for_normal_tests": true
+  },
+  "rotary_targeted_acquisition": {
+    "bulk_fraction": 0.8,
+    "enabled": true,
+    "endpoint_accuracy_not_independent_model_validation": true,
+    "endpoint_records": [
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": 11.992422721529852,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": 5.788167291964179
+          }
+        ],
+        "cycle": 0,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.032664280448227
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.27547452977684
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.51943204930809
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.763192158255844
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.3421393003494275,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.931859128494078
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.16341609985216188,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.012077368816821
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.12133544589734147,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.0719839425642705
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.0780711610953837,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.10991981061613
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03380122773472394,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.126239088004252
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.030780197219217875,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.142175463785203
+          }
+        ],
+        "phase": "moving_to_initial_max",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": -2.0121813072917085,
+              "before_deg": -2.462057509219715,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.5720997721963474,
+              "before_deg": -2.0121813072917085,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.1290394165926845,
+              "before_deg": -1.5720997721963474,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.684278600698855,
+              "before_deg": -1.1290394165926845,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.32683219970432376,
+              "before_deg": -0.684278600698855,
+              "nominal_step_deg": 0.3421393003494275
+            },
+            {
+              "after_deg": -0.24267089179468293,
+              "before_deg": -0.32683219970432376,
+              "nominal_step_deg": 0.16341609985216188
+            },
+            {
+              "after_deg": -0.1561423221907674,
+              "before_deg": -0.24267089179468293,
+              "nominal_step_deg": 0.12133544589734147
+            },
+            {
+              "after_deg": -0.06760245546944788,
+              "before_deg": -0.1561423221907674,
+              "nominal_step_deg": 0.0780711610953837
+            },
+            {
+              "after_deg": -0.06156039443843575,
+              "before_deg": -0.06760245546944788,
+              "nominal_step_deg": 0.03380122773472394
+            },
+            {
+              "after_deg": 0.02189481980233232,
+              "before_deg": -0.06156039443843575,
+              "nominal_step_deg": 0.030780197219217875
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 16891.828,
+            "duration_s": 0.5,
+            "max_deg": 15.032133761549488,
+            "mean_deg": 15.021894819802332,
+            "min_deg": 15.008254957474833,
+            "samples": 30,
+            "sd_deg": 0.006910381179185763,
+            "started_at_monotonic_s": 16891.328
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 16891.828,
+            "duration_s": 0.5,
+            "max_deg": 0.03213376154948833,
+            "mean_deg": 0.02189481980233232,
+            "min_deg": 0.008254957474832736,
+            "samples": 30,
+            "sd_deg": 0.006910381179185763,
+            "started_at_monotonic_s": 16891.328
+          },
+          "nominal_travel_deg": 2.7695434321482564,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": 15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": 15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": -24.019339328153023,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": -4.546214173475846
+          }
+        ],
+        "cycle": 1,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -4.79012296727684
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.0347146802285
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.278845768485336
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.521812897238998
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.766579609427719
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.00948331883934
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.253206711325912
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.49660490087059
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.739776115927963
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.985312443290024
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.40995718839329864,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.184428786431701
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.27945590612460514,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.321962396580176
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.18962698079622875,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.414115235644425
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.10255376593808574,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.463112993621963
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.10335692317191025,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.519457803884868
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.05917996853679508,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.547295505258434
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.05869795748680495,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.577276213369664
+          }
+        ],
+        "phase": "moving_to_min",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": 4.4644952386966015,
+              "before_deg": 4.97703326615591,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 4.0214636714849465,
+              "before_deg": 4.4644952386966015,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.5850798886334694,
+              "before_deg": 4.0214636714849465,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.1423692730894874,
+              "before_deg": 3.5850798886334694,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.6941834166112084,
+              "before_deg": 3.1423692730894874,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.248132180497185,
+              "before_deg": 2.6941834166112084,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.8890576792248321,
+              "before_deg": 2.248132180497185,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.5343971387056854,
+              "before_deg": 1.8890576792248321,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.1751008890084016,
+              "before_deg": 1.5343971387056854,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.8199143767865973,
+              "before_deg": 1.1751008890084016,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.5589118122492103,
+              "before_deg": 0.8199143767865973,
+              "nominal_step_deg": -0.40995718839329864
+            },
+            {
+              "after_deg": 0.3792539615924575,
+              "before_deg": 0.5589118122492103,
+              "nominal_step_deg": -0.27945590612460514
+            },
+            {
+              "after_deg": 0.20510753187617148,
+              "before_deg": 0.3792539615924575,
+              "nominal_step_deg": -0.18962698079622875
+            },
+            {
+              "after_deg": 0.2067138463438205,
+              "before_deg": 0.20510753187617148,
+              "nominal_step_deg": -0.10255376593808574
+            },
+            {
+              "after_deg": 0.11835993707359016,
+              "before_deg": 0.2067138463438205,
+              "nominal_step_deg": -0.10335692317191025
+            },
+            {
+              "after_deg": 0.1173959149736099,
+              "before_deg": 0.11835993707359016,
+              "nominal_step_deg": -0.05917996853679508
+            },
+            {
+              "after_deg": 0.028488801738014047,
+              "before_deg": 0.1173959149736099,
+              "nominal_step_deg": -0.05869795748680495
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 16917.937,
+            "duration_s": 0.5,
+            "max_deg": -14.957473355866568,
+            "mean_deg": -14.971511198261986,
+            "min_deg": -14.985693760682096,
+            "samples": 30,
+            "sd_deg": 0.007710897856033798,
+            "started_at_monotonic_s": 16917.437
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 16917.937,
+            "duration_s": 0.5,
+            "max_deg": 0.042526644133431546,
+            "mean_deg": 0.028488801738014047,
+            "min_deg": 0.014306239317903646,
+            "samples": 30,
+            "sd_deg": 0.007710897856033798,
+            "started_at_monotonic_s": 16917.437
+          },
+          "nominal_travel_deg": 6.2028286904477286,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": -15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": -15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": 23.968294205088387,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": 4.086194033469486
+          }
+        ],
+        "cycle": 1,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.33077238133934
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.57411954930809
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.817038040671616
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.0597019009926605
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.30355880788353
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.547934036765366
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.791011791739731
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.037007790122299
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.279929619345932
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.52327726415184
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.766012650046616
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.3429955604955399,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.936012296069705
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.16788433061461827,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.018823605028581
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.12455274322053267,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.079774646469085
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.07467257470899824,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.116963983892205
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03226260489153088,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.132398783174103
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.033819317737813215,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.1496338925123775
+          }
+        ],
+        "phase": "moving_to_max",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": -5.280465984990661,
+              "before_deg": -5.819343056944456,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.839817629798581,
+              "before_deg": -5.280465984990661,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.309945489058803,
+              "before_deg": -4.839817629798581,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.8680008781616575,
+              "before_deg": -4.309945489058803,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.385719061671711,
+              "before_deg": -3.8680008781616575,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.9040184594744893,
+              "before_deg": -3.385719061671711,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.464088257953337,
+              "before_deg": -2.9040184594744893,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.0208645087734034,
+              "before_deg": -2.464088257953337,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.5739208325070901,
+              "before_deg": -2.0208645087734034,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.1343796633103924,
+              "before_deg": -1.5739208325070901,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.6859911209910798,
+              "before_deg": -1.1343796633103924,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.33576866122923654,
+              "before_deg": -0.6859911209910798,
+              "nominal_step_deg": 0.3429955604955399
+            },
+            {
+              "after_deg": -0.24910548644106534,
+              "before_deg": -0.33576866122923654,
+              "nominal_step_deg": 0.16788433061461827
+            },
+            {
+              "after_deg": -0.14934514941799648,
+              "before_deg": -0.24910548644106534,
+              "nominal_step_deg": 0.12455274322053267
+            },
+            {
+              "after_deg": -0.06452520978306175,
+              "before_deg": -0.14934514941799648,
+              "nominal_step_deg": 0.07467257470899824
+            },
+            {
+              "after_deg": -0.06763863547562643,
+              "before_deg": -0.06452520978306175,
+              "nominal_step_deg": 0.03226260489153088
+            },
+            {
+              "after_deg": 0.024454263464880555,
+              "before_deg": -0.06763863547562643,
+              "nominal_step_deg": 0.033819317737813215
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 16944.078,
+            "duration_s": 0.5,
+            "max_deg": 15.04443496364857,
+            "mean_deg": 15.02445426346488,
+            "min_deg": 15.011872958092198,
+            "samples": 31,
+            "sd_deg": 0.008642114700256115,
+            "started_at_monotonic_s": 16943.578
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 16944.078,
+            "duration_s": 0.5,
+            "max_deg": 0.04443496364856969,
+            "mean_deg": 0.024454263464880555,
+            "min_deg": 0.011872958092197905,
+            "samples": 31,
+            "sd_deg": 0.008642114700256115,
+            "started_at_monotonic_s": 16943.578
+          },
+          "nominal_travel_deg": 6.276187131669033,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": 15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": 15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": -24.01991820825181,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": -4.538561773479232
+          }
+        ],
+        "cycle": 2,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -4.783112984214096
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.027306061301498
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.271446686301498
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.51399992040184
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.75783536962059
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.0025071912148285
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.245930653128891
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.489782791648178
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.7324571423867035
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.97743986180809
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.41156719866803115,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.177438370229219
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.27858155597540435,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.314477824764978
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.19194250119134804,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.407916837135009
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.1032954560646484,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.457125303467263
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.10458237499392364,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.513887195838515
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.05936086856766476,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.541336762467362
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.06013873870040154,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.574064397729058
+          }
+        ],
+        "phase": "moving_to_min",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": 4.457886357568862,
+              "before_deg": 4.985728527639667,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 4.0201203428686245,
+              "before_deg": 4.457886357568862,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.5836855967826455,
+              "before_deg": 4.0201203428686245,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.138871872492693,
+              "before_deg": 3.5836855967826455,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.6937974965453595,
+              "before_deg": 3.138871872492693,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.3411007912000272,
+              "before_deg": 2.6937974965453595,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.8902516194285681,
+              "before_deg": 2.3411007912000272,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.5369176791357866,
+              "before_deg": 1.8902516194285681,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.1785321541100462,
+              "before_deg": 1.5369176791357866,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.8231343973360623,
+              "before_deg": 1.1785321541100462,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.5571631119508087,
+              "before_deg": 0.8231343973360623,
+              "nominal_step_deg": -0.41156719866803115
+            },
+            {
+              "after_deg": 0.38388500238269607,
+              "before_deg": 0.5571631119508087,
+              "nominal_step_deg": -0.27858155597540435
+            },
+            {
+              "after_deg": 0.2065909121292968,
+              "before_deg": 0.38388500238269607,
+              "nominal_step_deg": -0.19194250119134804
+            },
+            {
+              "after_deg": 0.2091647499878473,
+              "before_deg": 0.2065909121292968,
+              "nominal_step_deg": -0.1032954560646484
+            },
+            {
+              "after_deg": 0.11872173713532952,
+              "before_deg": 0.2091647499878473,
+              "nominal_step_deg": -0.10458237499392364
+            },
+            {
+              "after_deg": 0.12027747740080308,
+              "before_deg": 0.11872173713532952,
+              "nominal_step_deg": -0.05936086856766476
+            },
+            {
+              "after_deg": 0.028789912757138936,
+              "before_deg": 0.12027747740080308,
+              "nominal_step_deg": -0.06013873870040154
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 16970.265,
+            "duration_s": 0.5,
+            "max_deg": -14.946619354014445,
+            "mean_deg": -14.971210087242861,
+            "min_deg": -14.99039716148468,
+            "samples": 31,
+            "sd_deg": 0.009298665234937883,
+            "started_at_monotonic_s": 16969.765
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 16970.265,
+            "duration_s": 0.5,
+            "max_deg": 0.053380645985555475,
+            "mean_deg": 0.028789912757138936,
+            "min_deg": 0.0096028385153204,
+            "samples": 31,
+            "sd_deg": 0.009298665234937883,
+            "started_at_monotonic_s": 16969.765
+          },
+          "nominal_travel_deg": 6.209468694161422,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": -15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": -15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": 23.97755628666887,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": 4.094609286477722
+          }
+        ],
+        "cycle": 2,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.338758450064926
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.58205411962059
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.82698820165184
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.070150356803207
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.313681583915024
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.556359749350815
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.799658756766586
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.046348076377182
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.2897691541054535
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.533172112021713
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.774780254874496
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.30014034318273897,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.924026393191105
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.21330229836472636,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.027624863863614
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.12501705329976343,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.08824033420723
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03279946949927037,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.105317711669879
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03365047770900098,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.121083599895372
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03429568781910053,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.1385026732909305
+          }
+        ],
+        "phase": "moving_to_max",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": -5.281213705118255,
+              "before_deg": -5.822321877452763,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.754376016509175,
+              "before_deg": -5.281213705118255,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.309093508268262,
+              "before_deg": -4.754376016509175,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.785673857661793,
+              "before_deg": -4.309093508268262,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.339235923417263,
+              "before_deg": -3.785673857661793,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.907214360019834,
+              "before_deg": -3.339235923417263,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.4625620841445226,
+              "before_deg": -2.907214360019834,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.9278939529089438,
+              "before_deg": -2.4625620841445226,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.4851592173608417,
+              "before_deg": -1.9278939529089438,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.0448726622304996,
+              "before_deg": -1.4851592173608417,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.6002806863654779,
+              "before_deg": -1.0448726622304996,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.4266045967294527,
+              "before_deg": -0.6002806863654779,
+              "nominal_step_deg": 0.30014034318273897
+            },
+            {
+              "after_deg": -0.25003410659952685,
+              "before_deg": -0.4266045967294527,
+              "nominal_step_deg": 0.21330229836472636
+            },
+            {
+              "after_deg": -0.06559893899854075,
+              "before_deg": -0.25003410659952685,
+              "nominal_step_deg": 0.12501705329976343
+            },
+            {
+              "after_deg": -0.06730095541800196,
+              "before_deg": -0.06559893899854075,
+              "nominal_step_deg": 0.03279946949927037
+            },
+            {
+              "after_deg": -0.06859137563820106,
+              "before_deg": -0.06730095541800196,
+              "nominal_step_deg": 0.03365047770900098
+            },
+            {
+              "after_deg": 0.02036942405816866,
+              "before_deg": -0.06859137563820106,
+              "nominal_step_deg": 0.03429568781910053
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 16996.328,
+            "duration_s": 0.5,
+            "max_deg": 15.035751762166882,
+            "mean_deg": 15.020369424058169,
+            "min_deg": 14.994868355190533,
+            "samples": 31,
+            "sd_deg": 0.00904377412591895,
+            "started_at_monotonic_s": 16995.828
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 16996.328,
+            "duration_s": 0.5,
+            "max_deg": 0.03575176216688192,
+            "mean_deg": 0.02036942405816866,
+            "min_deg": -0.005131644809466707,
+            "samples": 31,
+            "sd_deg": 0.00904377412591895,
+            "started_at_monotonic_s": 16995.828
+          },
+          "nominal_travel_deg": 6.239205329874601,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": 15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": 15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": -24.01876044805424,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": -4.54965562452837
+          }
+        ],
+        "cycle": 3,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -4.792817097220688
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.03737638524559
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.28163908055809
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.524898510489731
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -5.770307999167709
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.01320646337059
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.256992798362045
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.500022392783432
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.74294279149559
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -6.98849533132103
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.4114004983170032,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.188439900067949
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.23243784842403947,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.30202131055525
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.1903023409114697,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.393821624618301
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.14885211383841934,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.467941931156165
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.10333358123244274,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.519827915003416
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.05819707836907728,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.5475057660624625
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.059853383490418466,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -7.578240438190678
+          }
+        ],
+        "phase": "moving_to_min",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": 4.46363897855049,
+              "before_deg": 4.898793808289026,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 4.025981503868769,
+              "before_deg": 4.46363897855049,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.5854055086890373,
+              "before_deg": 4.025981503868769,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 3.1450224735422303,
+              "before_deg": 3.5854055086890373,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.694964593518703,
+              "before_deg": 3.1450224735422303,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.2570927620262147,
+              "before_deg": 2.694964593518703,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.8930012998977706,
+              "before_deg": 2.2570927620262147,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.5332876185163524,
+              "before_deg": 1.8930012998977706,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.091228243083501,
+              "before_deg": 1.5332876185163524,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.8228009966340064,
+              "before_deg": 1.091228243083501,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.46487569684807895,
+              "before_deg": 0.8228009966340064,
+              "nominal_step_deg": -0.4114004983170032
+            },
+            {
+              "after_deg": 0.3806046818229394,
+              "before_deg": 0.46487569684807895,
+              "nominal_step_deg": -0.23243784842403947
+            },
+            {
+              "after_deg": 0.2977042276768387,
+              "before_deg": 0.3806046818229394,
+              "nominal_step_deg": -0.1903023409114697
+            },
+            {
+              "after_deg": 0.20666716246488548,
+              "before_deg": 0.2977042276768387,
+              "nominal_step_deg": -0.14885211383841934
+            },
+            {
+              "after_deg": 0.11639415673815456,
+              "before_deg": 0.20666716246488548,
+              "nominal_step_deg": -0.10333358123244274
+            },
+            {
+              "after_deg": 0.11970676698083693,
+              "before_deg": 0.11639415673815456,
+              "nominal_step_deg": -0.05819707836907728
+            },
+            {
+              "after_deg": 0.02982746196644115,
+              "before_deg": 0.11970676698083693,
+              "nominal_step_deg": -0.059853383490418466
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 17022.359,
+            "duration_s": 0.5,
+            "max_deg": -14.954578955372682,
+            "mean_deg": -14.970172538033559,
+            "min_deg": -14.99003536142294,
+            "samples": 30,
+            "sd_deg": 0.007737983401775734,
+            "started_at_monotonic_s": 17021.859
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 17022.359,
+            "duration_s": 0.5,
+            "max_deg": 0.045421044627318,
+            "mean_deg": 0.02982746196644115,
+            "min_deg": 0.009964638577059759,
+            "samples": 30,
+            "sd_deg": 0.007737983401775734,
+            "started_at_monotonic_s": 17021.859
+          },
+          "nominal_travel_deg": 6.20437684458287,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": -15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": -15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 100.0,
+            "nominal_delta_deg": 23.961637083952407,
+            "speed_deg_s": 20.0,
+            "target_motor_turns": 4.081855925651642
+          }
+        ],
+        "cycle": 3,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.32649992040184
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.569717865500717
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 4.812219124350815
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.055995922599106
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.299874287162094
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.544569473777084
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 5.78847501805809
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.034812431845932
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.2777218633034515
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.521396618399887
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.76424406102684
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.34286893047393185,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 6.9338750034715755
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.16829359261994092,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.016770180553728
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.12379296309088339,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.077757451396667
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.07871870539942805,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.116548718145195
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03414746650348466,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.132949779833661
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": 0.03212838873959534,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 7.1494237917651855
+          }
+        ],
+        "phase": "moving_to_max",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": -5.367949239918776,
+              "before_deg": -5.819487776969151,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.836730269271754,
+              "before_deg": -5.367949239918776,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -4.30155561794974,
+              "before_deg": -4.836730269271754,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.8739320649802043,
+              "before_deg": -4.30155561794974,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -3.4371320175415754,
+              "before_deg": -3.8739320649802043,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.9018546616859044,
+              "before_deg": -3.4371320175415754,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.465323824615787,
+              "before_deg": -2.9018546616859044,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -2.0234332892117397,
+              "before_deg": -2.465323824615787,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.5776956131512225,
+              "before_deg": -2.0234332892117397,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -1.1352503176525097,
+              "before_deg": -1.5776956131512225,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.6857378609478637,
+              "before_deg": -1.1352503176525097,
+              "nominal_step_deg": 0.5
+            },
+            {
+              "after_deg": -0.33658718523988185,
+              "before_deg": -0.6857378609478637,
+              "nominal_step_deg": 0.34286893047393185
+            },
+            {
+              "after_deg": -0.24758592618176678,
+              "before_deg": -0.33658718523988185,
+              "nominal_step_deg": 0.16829359261994092
+            },
+            {
+              "after_deg": -0.1574374107988561,
+              "before_deg": -0.24758592618176678,
+              "nominal_step_deg": 0.12379296309088339
+            },
+            {
+              "after_deg": -0.06829493300696932,
+              "before_deg": -0.1574374107988561,
+              "nominal_step_deg": 0.07871870539942805
+            },
+            {
+              "after_deg": -0.06425677747919067,
+              "before_deg": -0.06829493300696932,
+              "nominal_step_deg": 0.03414746650348466
+            },
+            {
+              "after_deg": 0.02640526057199466,
+              "before_deg": -0.06425677747919067,
+              "nominal_step_deg": 0.03212838873959534
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 17048.5,
+            "duration_s": 0.5,
+            "max_deg": 15.05094736475985,
+            "mean_deg": 15.026405260571995,
+            "min_deg": 15.005722357042686,
+            "samples": 30,
+            "sd_deg": 0.009500534053930391,
+            "started_at_monotonic_s": 17048.0
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 17048.5,
+            "duration_s": 0.5,
+            "max_deg": 0.050947364759849734,
+            "mean_deg": 0.02640526057199466,
+            "min_deg": 0.005722357042685644,
+            "samples": 30,
+            "sd_deg": 0.009500534053930391,
+            "started_at_monotonic_s": 17048.0
+          },
+          "nominal_travel_deg": 6.279950046827264,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": 15.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": 15.0
+      },
+      {
+        "bulk": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -12.017313247807284,
+            "speed_deg_s": 2.0,
+            "target_motor_turns": 1.3018172066251061
+          }
+        ],
+        "cycle": 3,
+        "fine": [
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 1.0593049711844638
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 0.815155524697037
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 0.571358282055588
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.5,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 0.32827975222084066
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.4414706835681306,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 0.11070056159159342
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.22176759607807053,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": 0.002130221966625656
+          },
+          {
+            "acceleration_deg_s2": 5.0,
+            "nominal_delta_deg": -0.09279793407073385,
+            "speed_deg_s": 1.0,
+            "target_motor_turns": -0.043056260618805624
+          }
+        ],
+        "phase": "returning_to_machine_zero",
+        "result": {
+          "corrections": [
+            {
+              "after_deg": 2.6590735018277263,
+              "before_deg": 3.1871856603316995,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 2.0286660716745764,
+              "before_deg": 2.6590735018277263,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 1.5074755762872045,
+              "before_deg": 2.0286660716745764,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.8829413671362611,
+              "before_deg": 1.5074755762872045,
+              "nominal_step_deg": -0.5
+            },
+            {
+              "after_deg": 0.44353519215614107,
+              "before_deg": 0.8829413671362611,
+              "nominal_step_deg": -0.4414706835681306
+            },
+            {
+              "after_deg": 0.1855958681414677,
+              "before_deg": 0.44353519215614107,
+              "nominal_step_deg": -0.22176759607807053
+            },
+            {
+              "after_deg": 0.015778979163968643,
+              "before_deg": 0.1855958681414677,
+              "nominal_step_deg": -0.09279793407073385
+            }
+          ],
+          "final_measured_observation": {
+            "completed_at_monotonic_s": 17065.734,
+            "duration_s": 0.5,
+            "max_deg": 0.09630361290467704,
+            "mean_deg": 0.015778979163968643,
+            "min_deg": -0.00970380518441516,
+            "samples": 30,
+            "sd_deg": 0.03086851939146138,
+            "started_at_monotonic_s": 17065.234
+          },
+          "final_observation": {
+            "completed_at_monotonic_s": 17065.734,
+            "duration_s": 0.5,
+            "max_deg": 0.09630361290467704,
+            "mean_deg": 0.015778979163968643,
+            "min_deg": -0.00970380518441516,
+            "samples": 30,
+            "sd_deg": 0.03086851939146138,
+            "started_at_monotonic_s": 17065.234
+          },
+          "nominal_travel_deg": 2.756036213716935,
+          "observation_coordinates": "error relative to target",
+          "outcome": "sensor_zero_reached",
+          "policy": {
+            "dwell_s": 0.5,
+            "maximum_corrections": 80,
+            "maximum_step_deg": 0.5,
+            "maximum_travel_deg": 20.0,
+            "timeout_s": 120.0,
+            "tolerance_deg": 0.1
+          },
+          "target_angle_deg": 0.0,
+          "zero_reference_written": false
+        },
+        "target_angle_deg": 0.0
+      }
+    ],
+    "fine_speed_deg_s": 1.0,
+    "holds": [],
+    "stationary_holds": false
+  },
+  "rotary_zero_reference": {
+    "angle_at_initialization_deg": 0.0051299973468132976,
+    "calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+    "method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:23f2cac9709a406f855c46915b46c3de",
+    "tolerance_deg": 0.1
+  },
+  "run_status": "completed",
+  "sample_count": 11951,
+  "schema_version": 4,
+  "software": {
+    "commit": "aee9a2d69ddec2df39ac468a16ed77076be7288a",
+    "gui_version": "1.13.2-passive-zero-check",
+    "version": "1.13.2-passive-zero-check",
+    "working_tree_dirty": true
+  },
+  "started_at": "2026-11-02T16:19:25.270+11:00",
+  "test_parameter_status": "operator-entered commanded values; not independent physical measurements",
+  "test_parameters": {
+    "afo_id": "EMPTY_MACHINE_BASELINE",
+    "calibration_id": "0",
+    "commanded_afo_acceleration_deg_s2": 100.0,
+    "commanded_afo_speed_deg_s": 20.0,
+    "cycles": 3,
+    "file_prefix": "MotionSuite_B408453cc_R9",
+    "fixture_id": "0",
+    "max_angle_deg": 15.0,
+    "min_angle_deg": 15.0,
+    "operator": "SC",
+    "test_type": "empty_machine_baseline"
+  },
+  "torque_angle_source": "ODrive-derived AFO angle; existing geometry calculation unchanged"
+}
