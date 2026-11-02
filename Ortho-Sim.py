@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.12.0-motion-selector"
+APP_VERSION = "1.12.1-checkpoint-backlog"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"

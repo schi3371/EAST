@@ -18,9 +18,13 @@ class CheckpointWriter:
         self.stop_event = threading.Event()
         self.error = None
         self.last_disk_duration_s = 0.0
+        self.last_progress_monotonic_s = time.monotonic()
+        self.persistence_deadline_s = 3.0
+        self.coalesced_snapshots = 0
         self.thread = threading.Thread(target=self._run, name="east-checkpoint-writer", daemon=True)
 
     def start(self):
+        self.last_progress_monotonic_s = time.monotonic()
         self.thread.start()
 
     def submit(self, motion_state, snapshot, extra):
@@ -28,8 +32,25 @@ class CheckpointWriter:
             raise RuntimeError(f"checkpoint persistence failed: {self.error}")
         if self.stop_event.is_set():
             raise RuntimeError("checkpoint writer is stopped")
+        if time.monotonic() - self.last_progress_monotonic_s > self.persistence_deadline_s:
+            raise RuntimeError(
+                f"checkpoint persistence made no progress within {self.persistence_deadline_s:g} s; "
+                f"last disk write {self.last_disk_duration_s:.3f} s")
+        item = ("checkpoint", motion_state, snapshot, extra)
+        # Only replace the tail periodic snapshot of the same state/owner. Never
+        # cross required writes, audit events, state changes or fault records.
+        # Queue's unfinished task count stays unchanged for one-for-one replacement.
+        if getattr(motion_state,"value",motion_state) in ("idle","moving"):
+            with self.pending.mutex:
+                if self.pending.queue:
+                    tail = self.pending.queue[-1]
+                    if (tail[0] == "checkpoint" and tail[1] == motion_state
+                            and tail[3] == extra):
+                        self.pending.queue[-1] = item
+                        self.coalesced_snapshots += 1
+                        return
         try:
-            self.pending.put_nowait(("checkpoint", motion_state, snapshot, extra))
+            self.pending.put_nowait(item)
         except queue.Full as exc:
             raise RuntimeError(
                 f"checkpoint persistence backlog; last disk write {self.last_disk_duration_s:.3f} s"
@@ -106,6 +127,8 @@ class CheckpointWriter:
                 return
             finally:
                 self.last_disk_duration_s = time.monotonic() - started
+                if self.error is None:
+                    self.last_progress_monotonic_s = time.monotonic()
                 if item[0] == "required":
                     item[5].set()
                 self.pending.task_done()

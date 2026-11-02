@@ -355,7 +355,12 @@ class FeedbackMonitor:
                     self.on_restored()
                 if expected_state is None: self.control_health()
                 if time.monotonic() >= next_checkpoint:
-                    self.checkpoint(snapshot)
+                    try:
+                        self.checkpoint(snapshot)
+                    except Exception as exc:
+                        self.error = str(exc)
+                        self.on_fault("Checkpoint persistence failure: "+str(exc))
+                        return
                     next_checkpoint=time.monotonic()+checkpoint_interval
                 # Actual period includes transport duration and this wait.
                 self.stop.wait(interval)
