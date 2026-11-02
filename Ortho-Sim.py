@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.16.0-comparison-recovery"
+APP_VERSION = "1.16.1-original-rotary-return-check"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -4539,7 +4539,7 @@ class MyInterface:
                 )
             if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
                 raise RuntimeError("Machine-zero position drifted after ODrive entered idle")
-            if (getattr(self, "run_motion_model_enabled", False) is True or getattr(self,"run_rotary_targeted",False) is True) and self.strain_test_active:
+            if (getattr(self, "run_motion_model_enabled", False) is True or getattr(self,"run_rotary_targeted",False) is True or getattr(self,"run_segmented_comparison",False)) and self.strain_test_active:
                 angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
                 if abs(angle) > ZERO_TOLERANCE_DEG:
                     self.run_metadata['zero_return_check'] = dict(passed=False,

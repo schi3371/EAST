@@ -52,6 +52,8 @@ class GuiTests(unittest.TestCase):
 
     def test_plan_admitted_and_candidate_runs_through_normal_recorders(self):
         a=self.prepare();a.loaded_preset_key='model_comparison'
+        # Long synthetic sequence validates orchestration, not host callback freshness.
+        a.rotary_sensor.config['stale_after_ms']=1000
         a.cycles_input.value='3';a.min_angle_input.value='15';a.max_angle_input.value='15';a.acceleration_input.value='100'
         # Fake plant deliberately follows the active frozen model. This checks
         # wiring/recording, not predictive accuracy against independent mechanics.
