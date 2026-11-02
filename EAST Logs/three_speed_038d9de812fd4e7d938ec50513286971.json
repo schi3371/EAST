@@ -1,0 +1,322 @@
+{
+  "additional_inter_run_rest_s": 0.0,
+  "automatic_baseline_correction": false,
+  "baseline_reference_equivalence_assumed": false,
+  "batch_id": "038d9de812fd4e7d938ec50513286971",
+  "common_settings": {
+    "acceleration_deg_s2": "100.0",
+    "cycles": "3",
+    "maximum_angle_deg": "10.0",
+    "minimum_angle_deg": "10.0",
+    "speed_deg_s": "0.5"
+  },
+  "completed_at": "2026-11-02T12:24:57.566981+11:00",
+  "cycles_per_speed": 3,
+  "error": "data acquisition error: ODrive feedback is stale (0.266 s old); Feedback monitor failure: ODrive feedback acquisition took too long (0.265 s)",
+  "experimental_motion_model": {
+    "b": [
+      -0.1427128197,
+      2.3654951387,
+      0.0010129331,
+      -0.0058765584
+    ],
+    "c": [
+      -0.1461277652,
+      -0.0002424609,
+      -0.0006208927,
+      6.1889e-06
+    ],
+    "control": "inverse-cubic feed-forward targets, not continuous rotary feedback",
+    "extrapolation_allowed": true,
+    "fit_nominal_speeds_deg_s": [
+      0.5,
+      5.0
+    ],
+    "fitted_motor_range_turns": [
+      -4.38,
+      4.38
+    ],
+    "inverse_bracket_turns": [
+      -8.0,
+      8.0
+    ],
+    "model_id": "direction-cubic-20261102-v1",
+    "reversals": "branch selected from planned destination direction; transient behaviour unvalidated",
+    "rotary_calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+    "speed_method": "secant average conversion per segment; instantaneous angular speed is not constant",
+    "status": "experimental_not_prospectively_validated",
+    "target_limit_deg": 15.0,
+    "zero_alignment": "provisional zero anchor, refined once after initial increasing positioning; fixed during numbered cycles"
+  },
+  "identity": {
+    "afo_id": "0",
+    "calibration_id": "0",
+    "file_prefix": "",
+    "fixture_id": "0",
+    "operator": "SC"
+  },
+  "independent_remount_trials": false,
+  "inter_run_behaviour": "Normal zero return, settling, confirmed idle, recorder finalization and cleanup; no extra conditioning/rest",
+  "mounting_setup_id": "setup_f2fc24546c45",
+  "outcome": "error",
+  "planned_speed_sequence_deg_s": [
+    0.5,
+    5.0,
+    20.0
+  ],
+  "protocol": {
+    "actual_commanded_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 3,
+      "maximum_angle_deg": 10.0,
+      "minimum_angle_deg": 10.0,
+      "speed_deg_s": 0.5
+    },
+    "execution_kind": "speed_sequence",
+    "loaded_at": "2026-11-02T12:08:57.368+11:00",
+    "original_preset_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 3,
+      "maximum_angle_deg": 10.0,
+      "minimum_angle_deg": 10.0,
+      "speeds_deg_s": [
+        0.5,
+        5.0,
+        20.0
+      ]
+    },
+    "planned_speed_sequence_deg_s": [
+      0.5,
+      5.0,
+      20.0
+    ],
+    "preset_display_name": "Three-Speed Empty-Machine Baseline",
+    "preset_key": "three_speed_empty_baseline",
+    "preset_modified": false,
+    "preset_version": "1.0",
+    "settings_status": "provisional_not_scientifically_validated",
+    "test_type": "empty_machine_baseline"
+  },
+  "reference": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-02T12:08:31.663+11:00",
+      "established_by": "SC",
+      "fixture_id": "0",
+      "generation": 77,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "309b335b-a63c-4675-bedf-8a38920132c4",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 0.028046011924743652,
+      "reference_generation": 77,
+      "reference_id": "309b335b-a63c-4675-bedf-8a38920132c4",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:05a4968cf31c48dbae8d410d60a8aa5f",
+      "verified_at": "2026-11-02T12:08:31.679+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "runs": [
+    {
+      "completed_at": "2026-11-02T12:24:57.089+11:00",
+      "completed_cycles": 2,
+      "context": {
+        "additional_inter_run_rest_s": 0.0,
+        "automatic_baseline_correction": false,
+        "baseline_batch_id": null,
+        "baseline_link_status": "not_linked",
+        "batch_id": "038d9de812fd4e7d938ec50513286971",
+        "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\three_speed_038d9de812fd4e7d938ec50513286971.json",
+        "independent_remount_trials": false,
+        "mounting_setup_id": "setup_f2fc24546c45",
+        "planned_speed_deg_s": 0.5,
+        "planned_speed_sequence_deg_s": [
+          0.5,
+          5.0,
+          20.0
+        ],
+        "protocol_key": "three_speed_empty_baseline",
+        "protocol_version": "1.0",
+        "purpose": "three_speed_empty_baseline",
+        "run_id": "R1_0p5dps",
+        "run_index": 1,
+        "same_mounting_across_speed_conditions": true,
+        "settings_status": "provisional_not_scientifically_validated",
+        "total_runs": 3
+      },
+      "error": "data acquisition error: ODrive feedback is stale (0.266 s old); Feedback monitor failure: ODrive feedback acquisition took too long (0.265 s)",
+      "metadata_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\run_B038d9de8_R1_0p5dps_EMPTY_MACHINE_BASELINE_20261102T122041_299072+1100_metadata.json",
+      "outcome": "failure",
+      "parameters": {
+        "afo_id": "EMPTY_MACHINE_BASELINE",
+        "calibration_id": "0",
+        "commanded_afo_acceleration_deg_s2": 100.0,
+        "commanded_afo_speed_deg_s": 0.5,
+        "cycles": 3,
+        "file_prefix": "run_B038d9de8_R1_0p5dps",
+        "fixture_id": "0",
+        "max_angle_deg": 10.0,
+        "min_angle_deg": 10.0,
+        "operator": "SC",
+        "test_type": "empty_machine_baseline"
+      },
+      "reason": "data acquisition error: ODrive feedback is stale (0.266 s old); Feedback monitor failure: ODrive feedback acquisition took too long (0.265 s)",
+      "rotary_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\run_B038d9de8_R1_0p5dps_EMPTY_MACHINE_BASELINE_20261102T122041_299072+1100_rotary_samples.csv",
+      "run_status": "error",
+      "started_at": "2026-11-02T12:20:41.360+11:00",
+      "status": "failed",
+      "strain_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\run_B038d9de8_R1_0p5dps_EMPTY_MACHINE_BASELINE_20261102T122041_299072+1100_strain_data.csv"
+    },
+    {
+      "completed_at": null,
+      "context": {
+        "additional_inter_run_rest_s": 0.0,
+        "automatic_baseline_correction": false,
+        "baseline_batch_id": null,
+        "baseline_link_status": "not_linked",
+        "batch_id": "038d9de812fd4e7d938ec50513286971",
+        "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\three_speed_038d9de812fd4e7d938ec50513286971.json",
+        "independent_remount_trials": false,
+        "mounting_setup_id": "setup_f2fc24546c45",
+        "planned_speed_deg_s": 5.0,
+        "planned_speed_sequence_deg_s": [
+          0.5,
+          5.0,
+          20.0
+        ],
+        "protocol_key": "three_speed_empty_baseline",
+        "protocol_version": "1.0",
+        "purpose": "three_speed_empty_baseline",
+        "run_id": "R2_5p0dps",
+        "run_index": 2,
+        "same_mounting_across_speed_conditions": true,
+        "settings_status": "provisional_not_scientifically_validated",
+        "total_runs": 3
+      },
+      "metadata_file": null,
+      "parameters": {
+        "afo_id": "EMPTY_MACHINE_BASELINE",
+        "calibration_id": "0",
+        "commanded_afo_acceleration_deg_s2": 100.0,
+        "commanded_afo_speed_deg_s": 5.0,
+        "cycles": 3,
+        "file_prefix": "run_B038d9de8_R2_5p0dps",
+        "fixture_id": "0",
+        "max_angle_deg": 10.0,
+        "min_angle_deg": 10.0,
+        "operator": "SC",
+        "test_type": "empty_machine_baseline"
+      },
+      "reason": "data acquisition error: ODrive feedback is stale (0.266 s old); Feedback monitor failure: ODrive feedback acquisition took too long (0.265 s)",
+      "rotary_file": null,
+      "started_at": null,
+      "status": "skipped",
+      "strain_file": null
+    },
+    {
+      "completed_at": null,
+      "context": {
+        "additional_inter_run_rest_s": 0.0,
+        "automatic_baseline_correction": false,
+        "baseline_batch_id": null,
+        "baseline_link_status": "not_linked",
+        "batch_id": "038d9de812fd4e7d938ec50513286971",
+        "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\three_speed_038d9de812fd4e7d938ec50513286971.json",
+        "independent_remount_trials": false,
+        "mounting_setup_id": "setup_f2fc24546c45",
+        "planned_speed_deg_s": 20.0,
+        "planned_speed_sequence_deg_s": [
+          0.5,
+          5.0,
+          20.0
+        ],
+        "protocol_key": "three_speed_empty_baseline",
+        "protocol_version": "1.0",
+        "purpose": "three_speed_empty_baseline",
+        "run_id": "R3_20p0dps",
+        "run_index": 3,
+        "same_mounting_across_speed_conditions": true,
+        "settings_status": "provisional_not_scientifically_validated",
+        "total_runs": 3
+      },
+      "metadata_file": null,
+      "parameters": {
+        "afo_id": "EMPTY_MACHINE_BASELINE",
+        "calibration_id": "0",
+        "commanded_afo_acceleration_deg_s2": 100.0,
+        "commanded_afo_speed_deg_s": 20.0,
+        "cycles": 3,
+        "file_prefix": "run_B038d9de8_R3_20p0dps",
+        "fixture_id": "0",
+        "max_angle_deg": 10.0,
+        "min_angle_deg": 10.0,
+        "operator": "SC",
+        "test_type": "empty_machine_baseline"
+      },
+      "reason": "data acquisition error: ODrive feedback is stale (0.266 s old); Feedback monitor failure: ODrive feedback acquisition took too long (0.265 s)",
+      "rotary_file": null,
+      "started_at": null,
+      "status": "skipped",
+      "strain_file": null
+    }
+  ],
+  "schema": "east-three-speed-batch-1",
+  "started_at": "2026-11-02T12:20:40.943078+11:00",
+  "test_type": "empty_machine_baseline",
+  "total_numbered_cycles": 9,
+  "unloaded_tare": {
+    "calibration_id": "0",
+    "captured_at": "2026-11-02T12:08:35.222+11:00",
+    "fixture_id": "0",
+    "offset_v_per_v": -1.034874e-06,
+    "operator_id": "SC",
+    "phidget_channel": 1,
+    "phidget_serial_number": 513296,
+    "sample_count": 16
+  },
+  "updated_at": "2026-11-02T12:24:57.566981+11:00"
+}
