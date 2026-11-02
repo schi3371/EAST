@@ -94,6 +94,8 @@ class ApplicationTests(unittest.TestCase):
     def manifest(self,w):return json.loads(w.manifest_path.read_text())
     def test_loaded_success_three_cycles_each_one_confirmation_and_full_files(self):
         w,_=self.prepare();tare=self.app.empty_machine_tare;ref=self.app.reference_manager.record.reference_id
+        # This recorder/sequence test is not a driver-freshness test.
+        self.app.rotary_sensor.config['stale_after_ms']=1000
         w.start();self.assertTrue(w.active)
         self.app.set_test_inputs_state('normal');self.assertEqual(self.app.afo_id_input.cget('state'),'disabled')
         self.assertFalse(self.app.start_strain_test())

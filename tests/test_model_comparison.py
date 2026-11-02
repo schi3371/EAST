@@ -24,15 +24,15 @@ class CandidateTests(unittest.TestCase):
             dict(cycles='3',minimum_angle_deg='15',maximum_angle_deg='15',acceleration_deg_s2='100',speed_deg_s='.5'),
             'SETUP','','out.json','now')
     def test_balanced_frozen_plan(self):
-        p=self.plan();self.assertEqual(len(p),14)
-        self.assertEqual([r.parameters.max_angle_deg for r in p[:2]],[5,10])
-        self.assertTrue(all(r.parameters.cycles==1 for r in p[:2]))
-        self.assertTrue(all(r.parameters.cycles==3 and not r.rotary_targeted and r.command_model_enabled for r in p[2:]))
+        p=self.plan();self.assertEqual(len(p),22)
+        self.assertEqual([r.parameters.max_angle_deg for r in p[:4]],[5,10,5,10])
+        self.assertTrue(all(r.parameters.cycles==1 for r in p[:4]))
+        self.assertTrue(all(r.parameters.cycles==3 and not r.rotary_targeted and r.command_model_enabled==(r.model_variant!='original') for r in p[4:]))
         for speed in [.5,5,20]:
-            for model in ['candidate','current']:
-                self.assertEqual(sum(r.parameters.commanded_afo_speed_deg_s==speed and r.model_variant==model for r in p[2:]),2)
-        self.assertEqual([r.model_variant for r in p[2:8]],['current','candidate']*3)
-        self.assertEqual([r.model_variant for r in p[8:]],['candidate','current']*3)
+            for model in ['original','candidate','current']:
+                self.assertEqual(sum(r.parameters.commanded_afo_speed_deg_s==speed and r.model_variant==model for r in p[4:]),2)
+        self.assertEqual([r.model_variant for r in p[4:13]],['original','current','candidate']*3)
+        self.assertEqual([r.model_variant for r in p[13:]],['candidate','current','original']*3)
 class GuiTests(unittest.TestCase):
     setUp=harness.ApplicationTests.setUp
     tearDown=harness.ApplicationTests.tearDown
@@ -48,24 +48,26 @@ class GuiTests(unittest.TestCase):
         def submit(token,target):
             raw(token,target)
             model=a.run_motion_model
-            if model is not None:
+            if model is None:
+                self.angle=(target-a.reference_manager.require_verified().neutral_position_turns)*2.055
+            else:
                 seg=a.run_metadata['experimental_motion_model']['segments'][-1]
                 from east_motion_model import curve as current_curve
                 self.angle=(curve if a.run_model_variant=='candidate' else current_curve)(target-model.origin_turns,seg['direction'])
         a._submit_position=submit
         w,_=window_for(a,self.module.ctk,'model_comparison')
         w.start();self.assertTrue(w.active,w.status.options)
-        self.pump(lambda:(w.tick(),not w.active)[1],75)
+        self.pump(lambda:(w.tick(),not w.active)[1],120)
         self.assertEqual(w.batch_status,'completed',w.batch_error)
-        self.assertEqual(len(w.records),14)
+        self.assertEqual(len(w.records),22)
         self.assertTrue(w.records,w.batch_error)
-        m=json.loads(Path(w.records[0]['metadata_file']).read_text())
+        m=json.loads(Path(w.records[2]['metadata_file']).read_text())
         self.assertEqual(m['run_status'],'completed',m.get('error'))
         self.assertEqual(m['experimental_motion_model']['model_id'],MODEL_ID)
         self.assertFalse(m['rotary_targeted_acquisition']['enabled'])
-        self.assertEqual(sum(r['outcome']=='success' for r in w.records),14)
+        self.assertEqual(sum(r['outcome']=='success' for r in w.records),22)
         body=json.loads(w.manifest_path.read_text())
         self.assertEqual(body['stationary_target_holds'],0)
-        self.assertEqual(body['total_numbered_cycles'],38)
-        self.assertEqual([r.context()['model_variant'] for r in w.requests[2:8]],['current','candidate']*3)
-        self.assertTrue(any(json.loads(Path(r['metadata_file']).read_text())['experimental_motion_model']['segments'][1].get('submoves',0)>1 for r in w.records[2:]))
+        self.assertEqual(body['total_numbered_cycles'],58)
+        self.assertEqual([r.context()['model_variant'] for r in w.requests[4:13]],['original','current','candidate']*3)
+        self.assertTrue(any(json.loads(Path(r['metadata_file']).read_text())['experimental_motion_model']['segments'][1].get('submoves',0)>1 for r in w.records[4:] if json.loads(Path(r['metadata_file']).read_text())['experimental_motion_model'].get('enabled')))

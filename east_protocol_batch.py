@@ -27,6 +27,7 @@ class ProtocolRequest:
     repeat: int = 0
     stationary_holds: bool = False
     model_variant: str = 'current'
+    feedback_pilot: bool = False
 
     def context(self):
         return dict(purpose='three_speed_empty_baseline' if self.parameters.test_type=='empty_machine_baseline' else 'three_speed_afo_testing',
@@ -39,12 +40,12 @@ class ProtocolRequest:
             same_mounting_across_speed_conditions=True,independent_remount_trials=False,
             automatic_baseline_correction=False,settings_status='provisional_not_scientifically_validated',
             command_model_enabled=self.command_model_enabled,rotary_targeted=self.rotary_targeted,
-            stage=self.stage,repeat=self.repeat,stationary_holds=self.stationary_holds,model_variant=self.model_variant,
+            stage=self.stage,repeat=self.repeat,stationary_holds=self.stationary_holds,model_variant=self.model_variant,feedback_pilot=self.feedback_pilot,
             endpoint_feedback_is_not_feedforward_validation=self.rotary_targeted)
 
 
 def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id=None):
-    if config['test_presets'][preset_key].get('protocol_kind')=='model_comparison':
+    if config['test_presets'][preset_key].get('protocol_kind') in ('model_comparison','rotary_feedback_pilot'):
         return make_comparison_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
     if config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data':
         return make_remaining_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
@@ -103,14 +104,17 @@ def make_remaining_plan(config,preset_key,identity,settings,mounting_setup_id,ba
     return requests
 
 def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
+    pilot=config['test_presets'][key].get('protocol_kind')=='rotary_feedback_pilot'
+    if pilot:
+        return make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id)
     from dataclasses import replace
     if (int(settings['cycles'])!=3 or float(settings['minimum_angle_deg'])!=15 or
             float(settings['maximum_angle_deg'])!=15 or float(settings['acceleration_deg_s2'])!=100):
         raise ValueError('Reload Model Comparison preset: fixed 3 cycles, +/-15, acceleration 100')
     if not str(setup).strip() or str(baseline).strip():raise ValueError('Empty fixture setup ID required; no baseline link')
     batch_id=batch_id or uuid.uuid4().hex
-    plan=[('commissioning',0,5.,5.,'candidate',1),('commissioning',0,5.,10.,'candidate',1)]
-    for repeat,speeds,models in [(1,SPEEDS,('current','candidate')),(2,tuple(reversed(SPEEDS)),('candidate','current'))]:
+    plan=[('commissioning',0,5.,rom,model,1) for model in ('original','candidate') for rom in (5.,10.)]
+    for repeat,speeds,models in [(1,SPEEDS,('original','current','candidate')),(2,tuple(reversed(SPEEDS)),('candidate','current','original'))]:
         plan += [('model_comparison',repeat,sp,15.,model,3) for sp in speeds for model in models]
     requests=[];sequence=tuple(z[2] for z in plan)
     for i,(stage,repeat,sp,rom,model,cycles) in enumerate(plan,1):
@@ -121,5 +125,20 @@ def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded
         meta.update(stage=stage,repeat=repeat,model_variant=model,execution_kind='staged_model_comparison',
             candidate_model_id='wide-direction-cubic-20261102-v1',slow_sweeps_segmented=True)
         requests.append(ProtocolRequest(batch_id,f'R{i} {stage} {model} {sp:g} deg/s',i,len(plan),params,meta,str(path),
-            str(setup).strip(),sequence,None,command_model_enabled=True,stage=stage,repeat=repeat,model_variant=model))
+            str(setup).strip(),sequence,None,command_model_enabled=model!='original',stage=stage,repeat=repeat,model_variant=model))
+    return requests
+
+def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
+    if (int(settings['cycles'])!=1 or float(settings['minimum_angle_deg'])!=5 or float(settings['maximum_angle_deg'])!=5
+            or float(settings['acceleration_deg_s2'])!=5):raise ValueError('Reload fixed feedback pilot preset')
+    if not str(setup).strip() or str(baseline).strip():raise ValueError('Empty fixture setup ID required')
+    batch_id=batch_id or uuid.uuid4().hex;requests=[]
+    for i,feedback in enumerate((False,True),1):
+        p=validate_test_parameters(dict(file_prefix=f'Pilot_B{batch_id[:8]}_R{i}',operator=identity['operator'],fixture_id=identity['fixture_id'],
+            calibration_id=identity['calibration_id'],afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=1,
+            speed_deg_s=.5,acceleration_deg_s2=5,min_angle_deg=5,max_angle_deg=5),config)
+        meta=make_preset_metadata(key,config['test_presets'][key],p,loaded,False)
+        requests.append(ProtocolRequest(batch_id,f'R{i} candidate '+('continuous rotary feedback pilot' if feedback else 'feedforward reference'),i,2,p,meta,
+            str(path),str(setup).strip(),(.5,.5),None,command_model_enabled=True,stage='rotary_feedback_pilot',repeat=1,
+            model_variant='candidate',feedback_pilot=feedback))
     return requests

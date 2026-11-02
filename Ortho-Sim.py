@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.14.0-model-comparison"
+APP_VERSION = "1.15.0-three-method-feedback-pilot"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -1946,7 +1946,7 @@ class MyInterface:
 
     def _test_feedback(self):
         value = self.rotary_sensor.measurement(require=True)
-        if getattr(self,"run_rotary_targeted",False) is True and abs(value["angle_deg"])>15.1:
+        if (getattr(self,"run_rotary_targeted",False) is True or getattr(self,'run_segmented_comparison',False)) and abs(value["angle_deg"])>15.1:
             raise RotaryError("Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
         return self.get_feedback()
 
@@ -3501,7 +3501,8 @@ class MyInterface:
         self.run_motion_model_enabled = use_model
         self.run_motion_model = None
         self.run_model_variant = getattr(mapping_request,'model_variant','current')
-        self.run_segmented_comparison = getattr(mapping_request,'stage','') in ('commissioning','model_comparison')
+        self.run_segmented_comparison = getattr(mapping_request,'stage','') in ('commissioning','model_comparison','rotary_feedback_pilot')
+        self.run_feedback_pilot = getattr(mapping_request,'feedback_pilot',False)
         self.run_metadata = None
         self.metadata_file_name = None
         self.strain_file_name = None
@@ -4296,13 +4297,70 @@ class MyInterface:
             self.completed_cycles=cycle
             self.update_terminal(f'Completed stationary hold repeat {cycle}/3\n')
 
+    def command_rotary_feedback_pilot(self,target_angle,phase,token):
+        try:
+            return self._command_rotary_feedback_pilot(target_angle,phase,token)
+        except Exception as exc:
+            # Stop may cancel a pending transport write or invalidate ownership
+            # between the loop guard and dispatch. Preserve actual health faults.
+            if (self.operator_stop_requested and self.test_stop_event.is_set()
+                    and not self.monitor_error and not self.acquisition_error):
+                raise TestStopped() from exc
+            raise
+
+    def _command_rotary_feedback_pilot(self,target_angle,phase,token):
+        from east_rotary_feedback import step,ramp,PERIOD_S
+        from east_wide_candidate import curve
+        if self.run_parameters.test_type!='empty_machine_baseline' or abs(target_angle)>5 or self.run_parameters.commanded_afo_speed_deg_s!=.5:
+            raise RuntimeError('Feedback pilot restricted to empty +/-5 at 0.5 degrees/s')
+        self.motion_phase=phase
+        snapshot,value=self.check_rotary_acquisition(token)
+        start={'moving_to_initial_max':0.,'moving_to_min':self.run_parameters.max_angle_deg,
+            'moving_to_max':-self.run_parameters.min_angle_deg,'returning_to_machine_zero':self.run_parameters.max_angle_deg}[phase]
+        direction=1 if target_angle>start else -1
+        model=self.run_motion_model
+        if model is None:raise RuntimeError('Feedback pilot requires frozen candidate')
+        self.configure_trajectory(.75,5.)
+        self._write_runtime_checkpoint(MotionState.MOVING,snapshot,clean_shutdown=False,extra={'phase':phase,'control':'rotary_feedback_pilot'})
+        log=self.run_metadata.setdefault('rotary_feedback_pilot',{'enabled':bool(self.run_feedback_pilot),'streamed_reference':True,'period_s':PERIOD_S,'proportional_gain':.3 if self.run_feedback_pilot else 0.,
+            'correction_limit_deg':.1,'tracking_guard_deg':1.,'travel_guard_deg':6.,'samples':[]})
+        begun=previous=time.monotonic();last=snapshot.position_turns;deadline=begun+30.
+        while True:
+            if self.test_stop_event.is_set() or self.acquisition_error:raise TestStopped()
+            if time.monotonic()>deadline:raise RuntimeError('Rotary pilot leg timed out')
+            snapshot,value=self.check_rotary_acquisition(token)
+            now=time.monotonic();elapsed=now-begun
+            desired,duration=ramp(start,target_angle,.5,elapsed)
+            x=snapshot.position_turns-model.origin_turns
+            slope=(curve(x+.0001,direction)-curve(x-.0001,direction))/.0002
+            row=step(desired,value['angle_deg'],model.target(desired,direction),last,max(.001,now-previous),slope,gain=.3 if self.run_feedback_pilot else 0.)
+            row.update(host_monotonic_s=now,motor_feedback_host_s=snapshot.captured_monotonic_s,
+                rotary_sequence=value['sample'][3],rotary_sample_host_s=value['sample'][0],phase=phase,cycle=self.current_cycle,
+                measured_motor_turns=snapshot.position_turns,direction=direction)
+            log['samples'].append(row)
+            last=row['command_target_turns'];self._submit_position(token,last);row['command_issued_at_monotonic_s']=time.monotonic();previous=now
+            if elapsed>=duration+1.:break
+            if self.test_stop_event.wait(PERIOD_S):raise TestStopped()
+        # Stop issuing updates, settle the final command through the existing
+        # supervised wait path. No endpoint acceptance is inferred from this.
+        self.command_position_and_wait(last,phase,token,.75,5.,distance_deg=.5)
+        return last
+
     def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
         """Model targets only for normal tests. Manual/homing/identification stay legacy."""
         if getattr(self,'run_rotary_targeted',False) is True:
             return self.command_rotary_endpoint(angle_deg,phase,token,speed_deg_s,acceleration_deg_s2)
         model = getattr(self, 'run_motion_model', None)
+        if getattr(self,'run_segmented_comparison',False) and self.run_motion_mapping_context.get('stage')=='rotary_feedback_pilot':
+            return self.command_rotary_feedback_pilot(angle_deg,phase,token)
         if model is None:
-            self.command_position_and_wait(legacy_target,phase,token,speed_deg_s,acceleration_deg_s2)
+            speed=self.run_parameters.commanded_afo_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
+            start=self._test_feedback().position_turns
+            distance=abs(legacy_target-start)*2.055
+            import math
+            count=math.ceil(distance/speed/30) if getattr(self,'run_segmented_comparison',False) else 1
+            for i in range(1,count+1):
+                self.command_position_and_wait(start+(legacy_target-start)*i/count,phase,token,speed_deg_s,acceleration_deg_s2,distance_deg=distance/count)
             return legacy_target
         self.motion_coordinator.assert_active(token)
         if self.test_stop_event.is_set():
@@ -4325,6 +4383,7 @@ class MyInterface:
         speed = self.run_parameters.commanded_afo_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
         acceleration = self.run_parameters.commanded_afo_acceleration_deg_s2 if acceleration_deg_s2 is None else float(acceleration_deg_s2)
         self.configure_trajectory(speed,acceleration,turns_per_degree=ratio)
+        fitted_bounds=model.metadata()['fitted_motor_range_turns']
         self.run_metadata['experimental_motion_model']['segments'].append(dict(
             phase=phase,cycle=self.current_cycle,target_angle_deg=float(angle_deg),direction=direction,
             target_motor_turns=target,start_motor_turns=snapshot.position_turns,start_rotary_angle_deg=measured,
@@ -4334,7 +4393,7 @@ class MyInterface:
             motor_velocity_turns_s=self.commanded_odrive_velocity,motor_acceleration_turns_s2=self.commanded_odrive_acceleration,
             motor_rate_capped=self.commanded_odrive_velocity < speed*ratio or self.commanded_odrive_acceleration < acceleration*ratio,
             outside_training_speed_range=not 0.5 <= speed <= 5.0,
-            extrapolated=abs(target-model.origin_turns)>X_LIMIT or abs(snapshot.position_turns-model.origin_turns)>X_LIMIT))
+            extrapolated=not (fitted_bounds[0]<=target-model.origin_turns<=fitted_bounds[1] and fitted_bounds[0]<=snapshot.position_turns-model.origin_turns<=fitted_bounds[1])))
         self.update_terminal(f'Model target {angle_deg:g} deg -> {target:.6f} motor turns ({phase})\n')
         if getattr(self,'run_segmented_comparison',False) and abs(delta_angle)/speed > 30:
             # Bound every move without extending the global timeout. Stops at
