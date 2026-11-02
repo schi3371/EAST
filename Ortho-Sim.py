@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.15.3-run-time-display"
+APP_VERSION = "1.16.0-comparison-recovery"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -1452,7 +1452,12 @@ class MyInterface:
             self.system_config,self.monitor_stop_event,initial,
             lambda:(self.expected_axis_state,self.expected_disarm_reason),
             lambda:self.motion_coordinator.owner,publish,checkpoint,self._mark_control_health,
-            delay,restored,feedback_fault)
+            delay,restored,feedback_fault,
+            allow_motion_retry=lambda:bool(getattr(self,'run_segmented_comparison',False)
+                and (getattr(self,'run_motion_mapping_context',None) or {}).get('stage') in ('commissioning','model_comparison')
+                and not self.operator_stop_requested and not self.test_stop_event.is_set()),
+            on_motion_delay=lambda exc:self.ui_message_queue.put(('terminal',
+                f'Comparison feedback bundle rejected ({exc.snapshot.capture_duration_s:.3f} s). Retrying once without publishing it; prior good feedback must remain fresh.\n')))
         self.feedback_service.run()
 
     def _mark_control_health(self):
@@ -2734,15 +2739,17 @@ class MyInterface:
         from east_motion_mapping import zero_recovery_candidate
         if self.motion_mapping is not owner or not zero_recovery_candidate(self,owner.request):
             raise RuntimeError('Suite zero recovery is not eligible; preserve the failure and stop')
-        if abs(self.rotary_sensor.measurement(require=True)['angle_deg']) > .25:
+        comparison=getattr(owner,'comparison_suite',False) and not getattr(owner,'pilot_suite',False)
+        if not comparison and abs(self.rotary_sensor.measurement(require=True)['angle_deg']) > .25:
             raise RuntimeError('Live zero error exceeds the bounded suite recovery allowance')
         state=SimpleNamespace(closed=False,active=True,phase='homing',future=None,
             fixture_condition='Empty fixture',resume_parameters=None,managed_by_batch=True,
             parent_batch_id=owner.request.batch_id,parent_run_id=owner.request.run_id)
         self.rotary_homing=state
         try:
-            state.future=self.start_rotary_homing(state,HomingPolicy(maximum_step_deg=.1,
-                maximum_travel_deg=.5,maximum_corrections=10,timeout_s=15.),batch_owner=owner)
+            policy=HomingPolicy() if comparison else HomingPolicy(maximum_step_deg=.1,
+                maximum_travel_deg=.5,maximum_corrections=10,timeout_s=15.)
+            state.future=self.start_rotary_homing(state,policy,batch_owner=owner)
         except Exception:
             state.active=False
             raise

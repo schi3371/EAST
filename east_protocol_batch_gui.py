@@ -121,7 +121,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
                 ('\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. Allow 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
-                ('\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite and not self.comparison_suite else '')+
+                ('\nA fully recorded comparison with a failed model zero return may be followed by ONE separately recorded official homing transaction (normal homing movement/time guards). The model return remains failed; no sweep is repeated. Other faults/Stop still halt the batch.' if self.comparison_suite and not self.pilot_suite else '\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite and not self.pilot_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'),confirm_text='Run Sequence'):
                 return
@@ -182,7 +182,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 if not self.check_setup_continuity():return
                 self.recovery_future=a.start_suite_zero_recovery(self)
                 self.records[-1]["zero_recovery_attempt"]={"evidence_file":getattr(a.rotary_homing,"evidence_path",None),
-                    "maximum_live_error_deg":.25,"maximum_travel_deg":.5,"maximum_corrections":10,"timeout_s":15.}
+                    "maximum_live_error_deg":None if self.comparison_suite else .25,
+                    "maximum_travel_deg":20. if self.comparison_suite else .5,
+                    "maximum_corrections":80 if self.comparison_suite else 10,"timeout_s":120. if self.comparison_suite else 15.}
                 self.status.configure(text='Separate zero recovery in progress; original model-return failure preserved.')
                 return
             if not self.recovery_future.done() or not quiescent(a):return

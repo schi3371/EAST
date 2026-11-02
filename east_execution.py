@@ -297,13 +297,16 @@ class RetainedConnectionRecovery:
 class FeedbackMonitor:
     """Independent cached-feedback publisher. Disk submission never waits on fsync."""
     def __init__(self, adapter_provider, config, stop, initial, expectations, owner,
-                 publish, checkpoint, control_health, on_delay, on_restored, on_fault):
+                 publish, checkpoint, control_health, on_delay, on_restored, on_fault,
+                 allow_motion_retry=lambda:False, on_motion_delay=lambda error:None):
         self.adapter_provider, self.config, self.stop = adapter_provider, config, stop
         self.initial, self.expectations, self.owner = initial, expectations, owner
         self.publish, self.checkpoint, self.control_health = publish, checkpoint, control_health
         self.on_delay, self.on_restored, self.on_fault = on_delay, on_restored, on_fault
+        self.allow_motion_retry,self.on_motion_delay=allow_motion_retry,on_motion_delay
         self.error = None
         self.samples = 0
+        self.motion_rejections=[]
         self.first_position_at = self.last_position_at = None
         self.maximum_gap_s = 0.0
 
@@ -316,6 +319,7 @@ class FeedbackMonitor:
         retry = IdleFeedbackRetry(self.config)
         last_good = self.initial
         delayed = False
+        motion_retry_pending=False
         try:
             while not self.stop.is_set():
                 adapter = self.adapter_provider()
@@ -326,11 +330,35 @@ class FeedbackMonitor:
                         include_uptime=expected_state is None,
                         max_capture_duration_s=cfg['maximum_feedback_capture_ms']/1000)
                 except FeedbackAcquisitionTimeout as exc:
+                    if self.allow_motion_retry() and self.owner()=='strain-test':
+                        # Never publish the incoherent bundle. One immediate retry
+                        # is permitted only while the last GOOD observation remains
+                        # fresh; the original freshness/capture limits are unchanged.
+                        if motion_retry_pending or expected_state is None or last_good is None:raise
+                        last_good.validate(time.monotonic(),cfg['feedback_stale_after_ms']/1000,
+                            cfg['maximum_feedback_capture_ms']/1000)
+                        bad=exc.snapshot
+                        if (bad.active_errors or bad.current_state!=expected_state
+                                or last_good.active_errors or last_good.current_state!=expected_state
+                                or (expected_disarm is not None and (bad.disarm_reason!=expected_disarm or last_good.disarm_reason!=expected_disarm))):raise
+                        motion_retry_pending=True
+                        self.motion_rejections.append(dict(duration_s=bad.capture_duration_s,
+                            transport_queue_wait_s=bad.transport_queue_wait_s,io_lock_wait_s=bad.lock_wait_s,
+                            property_brackets=bad.property_brackets_monotonic_s,
+                            prior_good_position_at=last_good.captured_monotonic_s,rejected_position_at=bad.captured_monotonic_s))
+                        self.on_motion_delay(exc)
+                        continue
                     if not retry.reject_and_retry(exc,last_good,expected_state,self.owner()): raise
                     delayed = True
                     self.on_delay(exc,retry.rejected)
                     self.stop.wait(interval)
                     continue
+                if motion_retry_pending:
+                    last_good.validate(time.monotonic(),cfg['feedback_stale_after_ms']/1000,
+                        cfg['maximum_feedback_capture_ms']/1000)
+                    if not self.allow_motion_retry() or self.owner()!='strain-test':
+                        raise FeedbackError('Comparison ownership changed during feedback retry')
+                    motion_retry_pending=False
                 retry.accept_fresh(last_good,snapshot)
                 if snapshot.active_errors: raise FeedbackError(f'ODrive active errors: {snapshot.active_errors}')
                 # A state request may complete while this bundle is returning.
@@ -371,6 +399,6 @@ class FeedbackMonitor:
     def statistics(self):
         duration = (self.last_position_at-self.first_position_at
                     if self.last_position_at is not None and self.first_position_at is not None else 0)
-        return {'samples':self.samples,'achieved_rate_hz':(self.samples-1)/duration if duration>0 else 0,
+        return {'comparison_rejected_bundles':self.motion_rejections,'samples':self.samples,'achieved_rate_hz':(self.samples-1)/duration if duration>0 else 0,
                 'maximum_gap_s':self.maximum_gap_s,'error':self.error,
                 'timestamp_basis':'host position-read completion; original times preserved'}
