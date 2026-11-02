@@ -1,4 +1,4 @@
-# Remaining Motion Data (Empty Machine) — v1.13.0
+# Remaining Motion Data (Empty Machine) — v1.13.1
 
 Close EAST, update the repository and restart. Prepare the empty fixture using the normal connection, rotary homing and valid unloaded tare workflow. Remove the AFO and removable loads. Verify clearance over measured +/-15 degrees plus the 0.1-degree endpoint tolerance before selecting this suite.
 
@@ -15,7 +15,7 @@ Choose **Remaining Motion Data (Empty Machine)** in Protocol, press **Load Prese
 
 There are 27 numbered sweep cycles and 30 stationary target holds. The first two repeat sets complement the already completed Updated batch; they are repeated runs in this prepared setup, not independent rehoming/remount trials. Allow roughly 25–35 minutes, depending on correction count, communications and storage performance. Ordinary return, settling, idle confirmation and recording finalization occur between runs. No extra inter-run rest is silently introduced.
 
-Methods are selected per run by the frozen suite plan, regardless of the main Motion method menu. That menu and competing controls remain locked until the suite completes or finishes fault cleanup. The suite never changes unloaded tare or writes a replacement machine-zero reference between runs.
+Methods are selected per run by the frozen suite plan, regardless of the main Motion method menu. That menu and competing controls remain locked until the suite completes or finishes fault cleanup. The suite never changes unloaded tare. A separately recorded, qualified zero recovery can replace the zero reference as described below.
 
 ## How the wide-range acquisition works
 
@@ -37,10 +37,20 @@ An observed span greater than 0.16 degrees is rejected rather than chased. Centr
 
 Each of ten runs saves its normal strain CSV, raw rotary CSV and metadata JSON. A uniquely named `motion_suite_<batch-id>.json` records the frozen stages, method flags, repeat numbers, identifiers, file links and outcomes. Per-run `rotary_targeted_acquisition` evidence records bulk/fine commands, final error and measured observations, hold statistics and timestamps. The 30-second window supports stability/noise analysis; it is not an independent sensor calibration.
 
-Stop, Escape, window closure, sensor/controller fault, persistence failure or unresolved cleanup cancels all remaining runs. Completed and partial files remain separate. There is no automatic retry or interrupted-batch resume. Correct the cause and begin a new suite if appropriate; do not relabel previous partial files as complete.
+Stop, Escape, window closure, sensor/controller fault, persistence failure or unresolved cleanup cancels all remaining runs. Completed and partial files remain separate. There is no automatic experiment retry or interrupted-batch resume. The separately qualified small-zero-miss recovery below is the sole exception to halting. Correct other causes and begin a new batch at the appropriate starting run; do not relabel partial files as complete.
 
 This suite covers the remaining empty-machine characterisation under one setup. Independent setup-level validation, loaded-AFO comparisons, remount reliability and final validation of any revised wider model still require separate experiments. Software was verified with fake devices; laboratory operation has not been established by those tests.
 
 ## Offline verification
 
 The 331-test regression suite passed. After UI wording and the additional measured-angle guard in the bulk feedback provider were finalized, all seven remaining-protocol tests passed, including the ten-run recording workflow and a guard check independent of the load-cell callback. Dwell durations and mechanical response are simulated in the full-suite fake-device test; these results do not establish laboratory accuracy or operating clearance.
+
+## Start selection and qualified recovery (v1.13.1)
+
+**Start at run** selects the first run of a new batch (default 1). Earlier rows are explicitly skipped; prior files are neither imported nor relabelled. For batch 7f5cf645, runs 1–6 completed; select **7** to collect the remaining wide tests and holds after normal preparation. Run 7 from that batch is partial and must be repeated.
+
+Only a fully recorded Updated empty-fixture run with a post-idle zero miss greater than 0.1 and no greater than 0.25 degrees qualifies for one separate official homing recovery. The original run retains its error and measured miss. Recovery uses at most 0.1 nominal degrees per correction, 0.5 total nominal degrees, ten corrections and 15 seconds. It requires the unchanged fresh-sample ±0.1-degree qualification. The manifest records the separate evidence, old/new reference and acquired_zero_recovered status; the parent becomes completed_with_zero_recovery. This does not establish equivalence across references. Stop, feedback, recording and other faults still halt the batch.
+
+The endpoint/homing progress check now requires three insufficient observations AND at least 0.15 nominal degrees of unsuccessful correction travel. This provisional bounded allowance addresses the logged small-step plateau near +15 degrees; it is not a measured sensor-resolution specification. Wrong-direction, noise, travel, correction-count, timeout and final acceptance checks remain. Confirm its behaviour in the lab before treating collection as validated.
+
+Offline verification: all 339 regression tests passed, including the small-step plateau, stuck motion, cancellation and separate recovery cases. No physical hardware was exercised by software tests.

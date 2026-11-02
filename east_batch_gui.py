@@ -109,7 +109,9 @@ class RecordedBatchWindow:
                             completed_cycles=(app.run_metadata or {}).get('completed_cycles'),
                             run_status=(app.run_metadata or {}).get('run_status')))
                         self.awaiting_run = False
-                        if state == 'failure' or self.cancelled.is_set():
+                        if state == 'failure' and not self.cancelled.is_set() and self.handle_failed_run(reason):
+                            pass
+                        elif state == 'failure' or self.cancelled.is_set():
                             self.finish('cancelled' if self.cancelled.is_set() and not app.monitor_error else 'error',reason or 'Stop requested')
                         else:
                             self.save('next')
@@ -150,6 +152,9 @@ class RecordedBatchWindow:
             return
         self.closed = True
         self.window.destroy()
+
+    def handle_failed_run(self, reason):
+        return False
 
     def check_setup_continuity(self):
         return True

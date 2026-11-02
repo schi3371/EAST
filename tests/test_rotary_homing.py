@@ -40,6 +40,24 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(factor=factor,policy=policy), self.assertRaises(RuntimeError):
                 self.simulated(-9.7,factor,policy)
 
+    def test_small_step_plateau_is_bounded_but_can_clear(self):
+        state = {'angle': .064, 'travel': 0., 'moves': 0}
+        def observe(duration):
+            a=state['angle']
+            return dict(mean_deg=a,min_deg=a-.008,max_deg=a+.008,samples=30)
+        def move(delta):
+            state['moves']+=1
+            state['travel']+=abs(delta)
+            if state['travel'] >= .12:
+                state['angle']=.02
+        result=home(HomingPolicy(),observe,move,lambda:None)
+        self.assertEqual(result['outcome'],'sensor_zero_reached')
+        self.assertEqual(state['moves'],4)
+        state.update(angle=.064,travel=0.,moves=0)
+        with self.assertRaisesRegex(RuntimeError,'Insufficient rotary progress'):
+            home(HomingPolicy(),observe,lambda d:state.__setitem__('moves',state['moves']+1),lambda:None)
+        self.assertLessEqual(state['moves'],5)
+
     def test_noise_is_not_accepted_from_mean_alone(self):
         with self.assertRaisesRegex(RuntimeError,'noise'):
             home(HomingPolicy(),lambda d:dict(mean_deg=0,min_deg=-.2,max_deg=.2,samples=20),

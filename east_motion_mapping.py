@@ -102,3 +102,31 @@ def completed_run(app, request):
             or rotary.get('recording_error')):
         return 'failure', 'Idle, cycle count or data finalization did not pass the batch gate'
     return 'success', None
+
+
+def zero_recovery_candidate(app,request):
+    """Only full, durable acquisitions with a small explicit zero-check failure.
+
+    The run remains failed. This admits a separate ownership transaction, never
+    a repeat of its experiment or an override of Stop/feedback/persistence faults.
+    """
+    import math
+    m=app.run_metadata or {};z=m.get('zero_return_check',{})
+    angle=z.get('unassisted_angle_deg')
+    if (getattr(request,'stage','')!='updated_10_repeat'
+            or request.parameters.test_type!='empty_machine_baseline' or request.parameters.afo_id!='EMPTY_MACHINE_BASELINE'
+            or not ready_for_next(app)
+            or app.monitor_error or app.feedback_retry_pending or app.operator_stop_requested or app.acquisition_error
+            or app.engine.cancel_event.is_set()
+            or m.get('protocol_batch')!=request.context() or m.get('run_status')!='error'
+            or m.get('outcome_pending_cleanup') or z.get('passed') is not False
+            or not isinstance(angle,(float,int)) or not math.isfinite(angle)
+            or not .1 < abs(angle) <= .25 or m.get('completed_cycles')!=request.parameters.cycles):
+        return False
+    idle=m.get('idle_confirmation',{});csv=m.get('csv_recorder',{})
+    rotary=m.get('rotary_sensor',{}).get('recording_statistics',{})
+    return bool(idle.get('confirmed') and idle.get('motion_owner') is None and not idle.get('monitor_error')
+        and csv.get('worker_complete') and not csv.get('pending_rows') and not csv.get('error')
+        and m.get('sample_count') and csv.get('rows_persisted')==m.get('sample_count')
+        and rotary.get('delivered_samples') and not rotary.get('invalid_samples') and not rotary.get('recording_error')
+        and str(m.get('error','')).startswith('Model return missed rotary zero:'))

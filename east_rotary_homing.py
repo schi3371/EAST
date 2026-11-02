@@ -35,6 +35,7 @@ def home(policy, observe, move, check, clock=time.monotonic):
     """
     policy.validate()
     started, travel, corrections, stalled = clock(), 0.0, [], 0
+    stalled_travel = 0.0
 
     def guard():
         check()
@@ -81,7 +82,14 @@ def home(policy, observe, move, check, clock=time.monotonic):
         improvement = abs(error)-abs(after['mean_deg'])
         if improvement < -0.03:
             raise RuntimeError('Measured angle moved away from zero; check direction/coupling')
-        stalled = stalled+1 if improvement < 0.005 else 0
-        if stalled >= 3:
+        # Tiny corrections can remain within the observed sensor/mechanical
+        # response plateau. Require bounded commanded travel as well as three
+        # unsuccessful observations before diagnosing absent motion.
+        if improvement < 0.005:
+            stalled += 1
+            stalled_travel += abs(delta)
+        else:
+            stalled, stalled_travel = 0, 0.0
+        if stalled >= 3 and stalled_travel >= 0.15:
             raise RuntimeError('Insufficient rotary progress; check coupling or motion')
         before = after

@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.13.0-guided-motion-data"
+APP_VERSION = "1.13.1-suite-zero-recovery"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -131,6 +131,10 @@ class MovingAverageFilter:
 
 class TestStopped(Exception):
     """Raised inside a motion wait when an operator or acquisition fault stops a run."""
+
+class RotaryZeroMiss(RuntimeError):
+    """A measured zero qualification failure, separate from controller faults."""
+
 
 class MyInterface:
     def __init__(self, master):
@@ -1698,10 +1702,13 @@ class MyInterface:
                 new_reason = reason not in operation["reasons"]
                 if new_reason:
                     operation["reasons"].append(reason)
-                if fault and (new_reason or not operation["fault"]):
+                # request_stop above invalidated the idle acknowledgement even
+                # for a duplicate non-fault Stop. The running worker must obtain
+                # a fresh acknowledgement before retiring this revision.
+                operation["revision"] += 1
+                self.stop_result = None
+                if fault:
                     operation["fault"] = True
-                    operation["revision"] += 1
-                    self.stop_result = None
                     self.motion_coordinator.begin_async_stop()
                 if fault and operation["metadata_file"] is not None:
                     worker = threading.Thread(target=self._persist_interim_outcome,
@@ -1753,8 +1760,8 @@ class MyInterface:
                                               token=operation["token"])
                 with self.stop_worker_lock:
                     if operation["revision"] != revision:
-                        # A fault arrived during the first idle attempt. Obtain new
-                        # idle evidence and invalidate the reference as a fault.
+                        # Another Stop invalidated the acknowledgement during this
+                        # attempt. Reconfirm idle, including any fault upgrade.
                         continue
                     operation["closed"] = True
                     if self.stop_operation is operation:
@@ -2639,7 +2646,7 @@ class MyInterface:
     def _poll_rotary_homing(self):
         from east_rotary_homing import HomingPolicy
         state = getattr(self, 'rotary_homing', None)
-        if state is None or getattr(state,'active',False) is not True:
+        if state is None or getattr(state,'active',False) is not True or getattr(state,'managed_by_batch',False):
             return
         future = state.future
         if future is None or not future.done():
@@ -2681,7 +2688,27 @@ class MyInterface:
         self.update_reference_display()
 
 
-    def start_rotary_homing(self, window, policy):
+    def start_suite_zero_recovery(self, owner):
+        from types import SimpleNamespace
+        from east_rotary_homing import HomingPolicy
+        from east_motion_mapping import zero_recovery_candidate
+        if self.motion_mapping is not owner or not zero_recovery_candidate(self,owner.request):
+            raise RuntimeError('Suite zero recovery is not eligible; preserve the failure and stop')
+        if abs(self.rotary_sensor.measurement(require=True)['angle_deg']) > .25:
+            raise RuntimeError('Live zero error exceeds the bounded suite recovery allowance')
+        state=SimpleNamespace(closed=False,active=True,phase='homing',future=None,
+            fixture_condition='Empty fixture',resume_parameters=None,managed_by_batch=True,
+            parent_batch_id=owner.request.batch_id,parent_run_id=owner.request.run_id)
+        self.rotary_homing=state
+        try:
+            state.future=self.start_rotary_homing(state,HomingPolicy(maximum_step_deg=.1,
+                maximum_travel_deg=.5,maximum_corrections=10,timeout_s=15.),batch_owner=owner)
+        except Exception:
+            state.active=False
+            raise
+        return state.future
+
+    def start_rotary_homing(self, window, policy, batch_owner=None):
         """Admit bounded rotary homing with the declared fixture/AFO condition."""
         from east_motion_mapping import ready_for_next
         from east_calibration_motion import CalibrationPositioningReference
@@ -2689,7 +2716,13 @@ class MyInterface:
         policy.validate()
         if window is not self.rotary_homing or window.closed:
             raise ValueError("Home action is no longer current")
-        if not ready_for_next(self) or self.motion_mapping_active() or self.monitor_error or self.feedback_retry_pending:
+        allowed_batch = (batch_owner is not None and self.motion_mapping is batch_owner
+                         and batch_owner.active and batch_owner.remaining_suite
+                         and batch_owner.pending_zero_recovery and not batch_owner.cancelled.is_set()
+                         and getattr(window,'managed_by_batch',False))
+        if batch_owner is not None and not allowed_batch:
+            raise ValueError('Invalid suite zero-recovery ownership')
+        if not ready_for_next(self) or (self.motion_mapping_active() and not allowed_batch) or self.monitor_error or self.feedback_retry_pending:
             raise ValueError("Finish cleanup and recover healthy ODrive feedback first")
         if self.startup_block_reason or self.manual_mode.get():
             raise ValueError("Resolve startup and turn Manual Mode off")
@@ -2706,6 +2739,7 @@ class MyInterface:
         base = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else APP_DIR
         path = base/self.system_config['logging']['output_directory']/(
             'rotary_home_'+datetime.now().strftime('%Y%m%dT%H%M%S_%f')+'.json')
+        window.evidence_path=str(path)
         token = self.motion_coordinator.acquire('rotary-home')
         self.stop_started_monotonic = None
         self.stop_diagnostic_recorded = False
@@ -2738,6 +2772,11 @@ class MyInterface:
                     'nominal_deg_per_turn':reference.factor},
                 'raw_rotary_file':str(raw_path), 'outcome':'preparing',
                 'corrections':[], 'observations':[], 'idle_confirmed':False}
+        state=getattr(self,'rotary_homing',None)
+        if getattr(state,'managed_by_batch',False):
+            body['purpose']='separate_suite_zero_recovery'
+            body['parent_batch_id']=state.parent_batch_id
+            body['parent_run_id']=state.parent_run_id
         recording_started = False
         result = None
         failure = None
@@ -4012,7 +4051,7 @@ class MyInterface:
                 speed_deg_s=motion["neutral_return_speed_deg_s"],
                 acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
             )
-            idle_result = self.safe_idle_motor("successful machine-zero return", token=token)
+            idle_result = self.safe_idle_motor("trajectory return complete; verifying final zero", token=token)
             if not idle_result or not idle_result.confirmed:
                 raise RuntimeError("Test finished but ODrive idle could not be confirmed")
             idle_confirmed = True
@@ -4364,7 +4403,10 @@ class MyInterface:
             if (getattr(self, "run_motion_model_enabled", False) is True or getattr(self,"run_rotary_targeted",False) is True) and self.strain_test_active:
                 angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
                 if abs(angle) > ZERO_TOLERANCE_DEG:
-                    raise RuntimeError(f"Model return missed rotary zero: {angle:.4f} degrees; use Home / Return to Zero before restarting")
+                    self.run_metadata['zero_return_check'] = dict(passed=False,
+                        unassisted_angle_deg=float(angle),tolerance_deg=ZERO_TOLERANCE_DEG,
+                        phase='post_idle_observation',recorded_at_monotonic_s=time.monotonic())
+                    raise RotaryZeroMiss(f"Model return missed rotary zero: {angle:.4f} degrees; use Home / Return to Zero before restarting")
             time.sleep(0.02)
     
     def continuous_strain_read(self):

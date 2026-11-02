@@ -20,6 +20,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.app,self.closed,self.active=app,False,False
         self.preset_key=preset_key
         self.remaining_suite=app.system_config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data'
+        self.pending_zero_recovery=False;self.recovery_future=None;self.reference_history=[]
         self.cancelled=threading.Event()
         self.request=None;self.requests=[];self.records=[]
         self.save_future=None;self.save_action=None;self.manifest_path=None
@@ -42,12 +43,12 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.identity.grid(row=2,column=0,columnspan=2,sticky='ew')
         self.fields={}
         for row,key,label,value in [(3,'mounting_setup_id','Mounting/setup ID (reuse if not remounted)',('setup_' if empty else 'mount_')+uuid.uuid4().hex[:12]),
-                (4,'baseline_batch_id','Baseline batch ID (optional, unverified link only)','')]:
+                ((4,'start_run','Start at run (1–10; new batch, earlier runs skipped)','1') if self.remaining_suite else (4,'baseline_batch_id','Baseline batch ID (optional, unverified link only)',''))]:
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
-        self.readonly_fields={'baseline_batch_id'} if empty else set()
-        if empty:self.fields['baseline_batch_id'].configure(state='disabled')
+        self.readonly_fields={'baseline_batch_id'} if empty and not self.remaining_suite else set()
+        if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
         self.run_button=ctk.CTkButton(panel,text='Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
@@ -84,7 +85,13 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             base=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else APP_DIR
             path=base/a.system_config['logging']['output_directory']/(('motion_suite_' if self.remaining_suite else 'three_speed_')+batch_id+'.json')
             requests=make_protocol_plan(a.system_config,self.preset_key,identity,settings,
-                self.fields['mounting_setup_id'].get(),self.fields['baseline_batch_id'].get(),path,a.preset_loaded_at,batch_id=batch_id)
+                self.fields['mounting_setup_id'].get(),'' if self.remaining_suite else self.fields['baseline_batch_id'].get(),path,a.preset_loaded_at,batch_id=batch_id)
+            self.all_requests=requests
+            start_at=int(self.fields["start_run"].get()) if self.remaining_suite else 1
+            if not 1 <= start_at <= len(requests):
+                raise ValueError("Choose a starting run from 1 to 10")
+            requests=requests[start_at-1:]
+            self.selected_start_run=start_at
             from east_core import validate_empty_machine_tare
             for request in requests:
                 valid,reason=validate_empty_machine_tare(a.empty_machine_tare,request.parameters,a.system_config)
@@ -112,10 +119,13 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 + ('\nROM follows each stage above; bulk acceleration is 100 degrees/s².' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
                 ('\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
+                ('\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'),confirm_text='Run Sequence'):
                 return
             # Freeze only if modal nested actions did not change any preparation.
+            if self.remaining_suite and int(self.fields["start_run"].get())!=start_at:
+                raise ValueError("Starting run changed during confirmation; review again")
             if identity!=self.current_identity() or settings!=a._motion_field_values() or not ready_for_next(a) or a.monitor_error:
                 raise ValueError('Preparation/settings changed during confirmation; review and start again')
             if (a.reference_manager.metadata_snapshot()!=prep_reference or a.empty_machine_tare is None
@@ -130,6 +140,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.requests,self.records=requests,[]
             self.manifest_path=path;self.identity_snapshot=deepcopy(identity);self.settings_snapshot=deepcopy(settings)
             self.reference_snapshot=deepcopy(a.reference_manager.metadata_snapshot())
+            self.initial_reference_snapshot=deepcopy(self.reference_snapshot)
             self.tare_snapshot=a.empty_machine_tare.to_dict()
             self.sensor_identity=(a.rotary_sensor.reader.connection_id,a.rotary_sensor.calibration.sha256)
             self.connection_generation=a.odrive_connection_generation
@@ -144,6 +155,66 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.status.configure(text=f'Cannot start sequence: {exc}')
             a.update_terminal(f'Three-speed sequence: {exc}\n')
             if self.active:self.cancelled.set();self.active=False;a.stop_logging()
+
+    def handle_failed_run(self, reason):
+        from east_motion_mapping import zero_recovery_candidate
+        if (not self.remaining_suite or not self.preset_snapshot.get('allow_bounded_zero_recovery')
+                or not zero_recovery_candidate(self.app,self.request)):
+            return False
+        self.pending_zero_recovery=True
+        self.status.configure(text='Data saved; model zero return failed. Saving the failure before separate bounded zero recovery.')
+        self.save('next')
+        return True
+
+    def next_run(self):
+        if not self.pending_zero_recovery:
+            return super().next_run()
+        from east_motion_mapping import ready_for_next,quiescent
+        a=self.app
+        if self.cancelled.is_set():
+            if quiescent(a):self.finish('cancelled','Stop cancelled separate zero recovery')
+            return
+        try:
+            if self.recovery_future is None:
+                if not ready_for_next(a):return
+                if not self.check_setup_continuity():return
+                self.recovery_future=a.start_suite_zero_recovery(self)
+                self.records[-1]["zero_recovery_attempt"]={"evidence_file":getattr(a.rotary_homing,"evidence_path",None),
+                    "maximum_live_error_deg":.25,"maximum_travel_deg":.5,"maximum_corrections":10,"timeout_s":15.}
+                self.status.configure(text='Separate zero recovery in progress; original model-return failure preserved.')
+                return
+            if not self.recovery_future.done() or not quiescent(a):return
+            result=self.recovery_future.result();e=result['evidence']
+            a.rotary_homing.active=False
+            if e.get('outcome')!='sensor_zero_reached' or not e.get('idle_confirmed') or not e.get('zero_reference_written'):
+                raise RuntimeError('Bounded zero recovery did not complete with saved reference and confirmed idle')
+            if (self.current_identity()!=self.identity_snapshot or a._motion_field_values()!=self.settings_snapshot
+                    or a.empty_machine_tare is None or a.empty_machine_tare.to_dict()!=self.tare_snapshot
+                    or a.odrive_connection_generation!=self.connection_generation
+                    or (a.rotary_sensor.reader.connection_id,a.rotary_sensor.calibration.sha256)!=self.sensor_identity
+                    or a.system_config['test_presets'][self.preset_key]!=self.preset_snapshot
+                    or a.system_config['motion'].get('experimental_model',{})!=self.model_snapshot):
+                raise RuntimeError('Setup changed during separate zero recovery')
+            new_reference=deepcopy(a.reference_manager.metadata_snapshot())
+            entry=dict(after_run=self.request.run_id,old_reference=self.reference_snapshot,new_reference=new_reference,
+                evidence_file=getattr(a.rotary_homing,'evidence_path',None),
+                evidence=result['message'],final_observation=e['final_observation'],reference_equivalence_assumed=False)
+            self.reference_history.append(entry);self.reference_snapshot=new_reference
+            self.records[-1]['zero_recovery']=entry
+            self.records[-1]['model_zero_return_passed']=False
+            self.records[-1]['acquisition_complete']=True
+            self.pending_zero_recovery=False;self.recovery_future=None
+            self.save('next')
+        except Exception as exc:
+            self.pending_zero_recovery=False
+            self.finish('error',f'Separate zero recovery stopped: {exc}')
+
+    def finish(self,status,error):
+        state=getattr(self.app,'rotary_homing',None)
+        if getattr(state,'managed_by_batch',False):state.active=False
+        if status=='completed' and any(r.get('zero_recovery') for r in self.records):
+            status='completed_with_zero_recovery'
+        return super().finish(status,error)
 
     def check_setup_continuity(self):
         a=self.app
@@ -176,17 +247,24 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if i<len(self.records):
                 record=deepcopy(self.records[i]);row.update(record)
                 row['status']='completed' if record['outcome']=='success' else ('cancelled' if record.get('run_status')=='aborted' else 'failed')
+                if record.get('zero_recovery'):row['status']='acquired_zero_recovered'
             if i and row.get('started_at') and rows[-1].get('completed_at'):
                 row['observed_gap_since_previous_run_s']=(datetime.fromisoformat(row['started_at'])-datetime.fromisoformat(rows[-1]['completed_at'])).total_seconds()
             rows.append(row)
+        skipped=[dict(context=r.context(),parameters=r.parameters.__dict__,status='skipped_by_operator_before_start',
+            reason='Operator selected a later starting run in a NEW batch; prior experimental data are not imported or certified',
+            metadata_file=None,strain_file=None,rotary_file=None) for r in self.all_requests[:self.selected_start_run-1]]
+        rows=skipped+rows
         body=dict(schema='east-three-speed-batch-1',batch_id=self.requests[0].batch_id,
             mounting_setup_id=self.requests[0].mounting_setup_id,test_type=self.requests[0].parameters.test_type,
             identity=self.identity_snapshot,common_settings=self.settings_snapshot,
+            selected_start_run=self.selected_start_run,selected_run_count=len(self.requests),total_plan_runs=len(self.all_requests),
             protocol=deepcopy(self.requests[0].preset_metadata),planned_speed_sequence_deg_s=list(self.requests[0].speed_sequence),
             cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=sum(r.parameters.cycles for r in self.requests if not r.stationary_holds),
             stationary_target_holds=30 if self.remaining_suite else 0,initial_zero_stability_s=30 if self.remaining_suite else 0,
             additional_inter_run_rest_s=0.0,inter_run_behaviour='Normal zero return, settling, confirmed idle, recorder finalization and cleanup; no extra conditioning/rest',
-            reference=self.reference_snapshot,unloaded_tare=self.tare_snapshot,started_at=self.started_at,
+            reference=self.reference_snapshot,initial_reference=self.initial_reference_snapshot,reference_history=self.reference_history,
+            unloaded_tare=self.tare_snapshot,started_at=self.started_at,
             updated_at=datetime.now().astimezone().isoformat(),completed_at=datetime.now().astimezone().isoformat() if finished else None,
             runs=rows,outcome=self.batch_status,error=self.batch_error,independent_remount_trials=False,
             automatic_baseline_correction=False,baseline_reference_equivalence_assumed=False,
