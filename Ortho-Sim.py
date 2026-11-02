@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.13.2-passive-zero-check"
+APP_VERSION = "1.13.3-endpoint-acceptance"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"

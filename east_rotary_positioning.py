@@ -23,7 +23,9 @@ def reach(target_deg, current, bulk_move, fine_move, observe, check):
     def relative_observe(duration):
         v=observe(duration)
         return {**v,'mean_deg':v['mean_deg']-target,'min_deg':v['min_deg']-target,'max_deg':v['max_deg']-target}
-    result=home(HomingPolicy(),relative_observe,fine_move,check)
+    # Endpoint accuracy requires the sustained full band. The tighter mean
+    # centring used for zero homing is not an endpoint requirement.
+    result=home(HomingPolicy(),relative_observe,fine_move,check,centre_mean_deg=0.1)
     result['observation_coordinates']='error relative to target'
     relative=result['final_observation']
     result['final_measured_observation']={**relative,'mean_deg':relative['mean_deg']+target,'min_deg':relative['min_deg']+target,'max_deg':relative['max_deg']+target}

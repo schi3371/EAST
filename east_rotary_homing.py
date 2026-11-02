@@ -27,13 +27,19 @@ class HomingPolicy:
         return self
 
 
-def home(policy, observe, move, check, clock=time.monotonic):
+def home(policy, observe, move, check, clock=time.monotonic, *, centre_mean_deg=0.04):
     """Each observation covers fresh samples and stationary motor evidence.
 
     move uses the app's existing position/trajectory execution. check enforces
     cancellation, feedback and session identity. The app persists zero only after recording and post-idle checks pass.
     """
     policy.validate()
+    if not math.isfinite(centre_mean_deg) or not 0 < centre_mean_deg <= policy.tolerance_deg:
+        raise ValueError('Centring mean must lie inside the fixed acceptance band')
+    def accepted(value):
+        return (value['min_deg'] >= -policy.tolerance_deg
+                and value['max_deg'] <= policy.tolerance_deg
+                and abs(value['mean_deg']) <= centre_mean_deg)
     started, travel, corrections, stalled = clock(), 0.0, [], 0
     stalled_travel = 0.0
 
@@ -55,11 +61,10 @@ def home(policy, observe, move, check, clock=time.monotonic):
     before = sample()
     for index in range(policy.maximum_corrections+1):
         guard()
-        if (before['min_deg'] >= -policy.tolerance_deg
-                and before['max_deg'] <= policy.tolerance_deg
-                and abs(before['mean_deg']) <= 0.04):
+        if accepted(before):
             return dict(outcome='sensor_zero_reached', policy=asdict(policy),
                         final_observation=before, corrections=corrections,
+                        centring_mean_limit_deg=centre_mean_deg,
                         nominal_travel_deg=travel, zero_reference_written=False)
         if index == policy.maximum_corrections:
             raise RuntimeError('Maximum homing corrections reached')
@@ -79,6 +84,9 @@ def home(policy, observe, move, check, clock=time.monotonic):
         after = sample()
         corrections.append(dict(before_deg=error, nominal_step_deg=delta,
                                 after_deg=after['mean_deg']))
+        if accepted(after):
+            before = after
+            continue
         improvement = abs(error)-abs(after['mean_deg'])
         if improvement < -0.03:
             raise RuntimeError('Measured angle moved away from zero; check direction/coupling')

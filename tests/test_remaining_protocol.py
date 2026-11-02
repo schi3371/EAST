@@ -34,6 +34,16 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(validate_test_parameters(values,c,segmented_rotary_motion=True).max_angle_deg,15)
 
 class PositioningTests(unittest.TestCase):
+    def test_logged_in_band_endpoints_do_not_chase_homing_centre(self):
+        for target,low,mean,high in [(-2.,-1.98657934,-1.95716443,-1.93556553),
+                                   (-5.,-5.07381927,-5.04971023,-5.02208186)]:
+            with self.subTest(target=target):
+                def no_move(delta):self.fail('Already qualified endpoint commanded a correction')
+                result=reach(target,lambda:mean,no_move,no_move,
+                    lambda duration:dict(min_deg=low,mean_deg=mean,max_deg=high,samples=30,duration_s=duration),lambda:None)
+                self.assertEqual(result['corrections'],[])
+                self.assertEqual(result['centring_mean_limit_deg'],.1)
+
     def test_wide_endpoints_use_real_measurement_and_slow_correction(self):
         state={'angle':0.};bulk=[];fine=[]
         def check():
@@ -43,7 +53,9 @@ class PositioningTests(unittest.TestCase):
             a=state['angle'];return dict(mean_deg=a,min_deg=a-.001,max_deg=a+.001,samples=30,duration_s=duration)
         for target in [15.,-15.,0.]:
             result=reach(target,lambda:state['angle'],lambda d:move(d,bulk),lambda d:move(d,fine),observe,check)
-            self.assertLessEqual(abs(state['angle']-target),.04)
+            observation=result['final_observation']
+            self.assertGreaterEqual(observation['min_deg'],-.1)
+            self.assertLessEqual(observation['max_deg'],.1)
         self.assertTrue(all(abs(x)<=.5 for x in fine))
         self.assertLessEqual(max(map(abs,bulk)),24.1)
     def test_edge_noise_is_centred_without_widening_acceptance(self):
