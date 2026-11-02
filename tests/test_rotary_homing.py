@@ -139,6 +139,32 @@ class ApplicationTests(unittest.TestCase):
         self.pump(future.done,20)
         return future.result()['evidence']
 
+    def test_connection_automatically_verifies_zero_without_ack_or_motion(self):
+        self.prepare(.075)
+        a=self.app
+        self.assertTrue(a._connection_zero_pending)
+        a.rotary_homing=None
+        a.homing_acknowledged.set(False)
+        a._poll_connection_zero=a.__class__._poll_connection_zero.__get__(a)
+        self.pump(lambda:a.rotary_reference_verified() and not a.rotary_homing_active(),8)
+        self.assertFalse(a._connection_zero_pending)
+        self.assertEqual(self.position_targets,[])
+        self.assertTrue(a.rotary_homing.future.result()['evidence']['verification_only_no_motion'])
+        reference=a.reference_manager.metadata_snapshot()
+        a._poll_connection_zero()
+        self.assertEqual(reference,a.reference_manager.metadata_snapshot())
+
+    def test_connection_outside_band_never_starts_homing_even_with_ack(self):
+        self.prepare(.2)
+        a=self.app
+        a.rotary_homing=None
+        a.homing_acknowledged.set(True)
+        a.__class__._poll_connection_zero(a)
+        self.assertFalse(a._connection_zero_pending)
+        self.assertIsNone(a.rotary_homing)
+        self.assertEqual(self.position_targets,[])
+        self.assertIn('outside ±0.10',a.terminal.value)
+
     def test_main_zero_check_does_not_require_movement_acknowledgement(self):
         self.prepare(.075)
         self.app.rotary_homing=None
@@ -170,6 +196,8 @@ class ApplicationTests(unittest.TestCase):
 
     def test_homing_can_recover_inward_from_endpoint_tolerance(self):
         window=self.prepare(15.05)
+        # This long fake-device traversal exercises inward recovery, not driver freshness.
+        self.app.rotary_sensor.config["stale_after_ms"]=1000
         future=self.app.start_rotary_homing(window,HomingPolicy())
         self.pump(future.done,50)
         evidence=future.result()["evidence"]

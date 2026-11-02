@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.13.3-endpoint-acceptance"
+APP_VERSION = "1.13.4-automatic-zero"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -2209,6 +2209,7 @@ class MyInterface:
             self._clear_feedback_fault_after_recovery(
                 initial, self.odrive_connection_generation, self.odrive_adapter)
             self._start_feedback_monitor()
+            self._connection_zero_pending=True
             self.engine.transition(Lifecycle.READY)
             self._start_watchdog_if_enabled()
 
@@ -2556,6 +2557,7 @@ class MyInterface:
 
         self._poll_rotary_homing()
         self._poll_rotary_sensor()
+        self._poll_connection_zero()
         self._diagnose_stalled_workers()
         self.update_manual_position_display()
         self.ui_timing["drains"] += 1
@@ -2590,7 +2592,28 @@ class MyInterface:
         return (abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
                 and (rotary_only or motion_model_enabled(self.system_config) or abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG))
 
-    def open_rotary_homing(self, resume_test=False):
+    def _poll_connection_zero(self):
+        """One stationary-only verification per successful connection; never auto-home."""
+        if not getattr(self, '_connection_zero_pending', False):
+            return
+        from east_motion_mapping import ready_for_next
+        if (self.rotary_homing_active() or self.motion_mapping_active() or self.manual_mode.get()
+                or self.startup_block_reason or self.monitor_error or self.feedback_retry_pending
+                or not ready_for_next(self)):
+            return
+        value=self.rotary_sensor.measurement()
+        if not value['valid'] or not self.operator_input.get().strip() or not self.fixture_id_input.get().strip():
+            return
+        if self.rotary_calibration is not None and not self.rotary_calibration.closed:
+            return
+        self._connection_zero_pending=False
+        if abs(value['angle_deg']) > ZERO_TOLERANCE_DEG:
+            self.update_terminal('Automatic zero check: outside ±0.10 degrees; use Check Zero / Home. No movement commanded.\n')
+            return
+        self.update_terminal('Automatically verifying stationary rotary zero after connection. No movement commanded.\n')
+        self.open_rotary_homing(verification_only=True)
+
+    def open_rotary_homing(self, resume_test=False, verification_only=False):
         """One explicit action: refresh unhealthy feedback, home, persist zero."""
         from types import SimpleNamespace
         from east_motion_mapping import workers_finished
@@ -2608,6 +2631,8 @@ class MyInterface:
                 raise ValueError('Close Rotary Sensor Calibration; use the live angle in this panel')
             value = self.rotary_sensor.measurement()
             verify_only = bool(value['valid'] and abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG)
+            if verification_only and not verify_only:
+                raise ValueError('Automatic stationary zero check requires a fresh reading within ±0.10 degrees; no movement commanded')
             if not verify_only and not self.homing_acknowledged.get():
                 raise ValueError('Outside zero band: confirm the clear fixture/AFO and unchanged sensor mounting, then press Check Zero / Home')
             if self.manual_mode.get():
