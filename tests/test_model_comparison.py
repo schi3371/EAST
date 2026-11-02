@@ -39,6 +39,17 @@ class GuiTests(unittest.TestCase):
     pump=harness.ApplicationTests.pump
     ready=harness.ApplicationTests.ready
     prepare=harness.ApplicationTests.prepare
+    def test_comparison_records_angle_beyond_nominal_target_without_fault(self):
+        a=self.app
+        a.run_segmented_comparison=True;a.run_rotary_targeted=False
+        a.rotary_sensor.measurement=Mock(return_value={'angle_deg':15.5})
+        evidence=object();a.get_feedback=Mock(return_value=evidence)
+        self.assertIs(a._test_feedback(),evidence)
+        # Sensor validity remains authoritative; no extrapolated angle is silently accepted.
+        from east_rotary_sensor import RotaryError
+        a.rotary_sensor.measurement=Mock(side_effect=RotaryError('outside_checked_angle_range'))
+        with self.assertRaises(RotaryError):a._test_feedback()
+
     def test_plan_admitted_and_candidate_runs_through_normal_recorders(self):
         a=self.prepare();a.loaded_preset_key='model_comparison'
         a.cycles_input.value='3';a.min_angle_input.value='15';a.max_angle_input.value='15';a.acceleration_input.value='100'

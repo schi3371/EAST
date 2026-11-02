@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.15.0-three-method-feedback-pilot"
+APP_VERSION = "1.15.2-comparison-extrapolation"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -1928,13 +1928,16 @@ class MyInterface:
                         f"configured {payload['interval_ms']} ms; waiting for sample-rate check.\n")
         value = self.rotary_sensor.measurement()
         self.engine.record("rotary_health", {"valid":value["valid"],"reason":value["reason"],"age_s":value.get("sample_age_s"),"rate_hz":value.get("achieved_rate_hz")})
-        notice = "ready" if value["valid"] else value["reason"]
+        notice = (value.get("sample_status") if value.get("sample_status")=="linear_extrapolation_unchecked" else "ready") if value["valid"] else value["reason"]
         label = getattr(self, 'homing_live_label', None)
         if label is not None:
             angle_text = f"{value['angle_deg']:+.3f}°" if value['valid'] else value['reason']
+            if value.get('sample_status')=='linear_extrapolation_unchecked':angle_text += ' — EXTRAPOLATED (unchecked)'
             label.configure(text=f"Rotary: {angle_text} | Zero band ±0.10° | 0.5 s + idle check")
         if notice != self.last_rotary_notice:
-            if value["valid"]:
+            if notice=="linear_extrapolation_unchecked":
+                self.update_terminal("Comparison measurement uses linear extrapolation outside checked calibration range; accuracy there is unverified.\n")
+            elif value["valid"]:
                 self.update_terminal(f"Rotary sensor ready: {value['achieved_rate_hz']:.1f} delivered Hz; "
                     "accepted calibration loaded.\n")
             else:
@@ -1946,7 +1949,7 @@ class MyInterface:
 
     def _test_feedback(self):
         value = self.rotary_sensor.measurement(require=True)
-        if (getattr(self,"run_rotary_targeted",False) is True or getattr(self,'run_segmented_comparison',False)) and abs(value["angle_deg"])>15.1:
+        if getattr(self,"run_rotary_targeted",False) is True and abs(value["angle_deg"])>15.1:
             raise RotaryError("Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
         return self.get_feedback()
 
@@ -3647,7 +3650,9 @@ class MyInterface:
             self.last_rotary_logged_key = None
             if self.test_stop_event.is_set() or self.engine.cancel_event.is_set():
                 raise TestStopped("Test cancelled before recording/motion startup")
-            self.rotary_sensor.start_recording(self.rotary_samples_file_name, self.test_started_monotonic)
+            self.rotary_sensor.start_recording(self.rotary_samples_file_name, self.test_started_monotonic,
+                allow_linear_extrapolation=(getattr(self,'run_segmented_comparison',False)
+                    and (self.run_motion_mapping_context or {}).get('stage') in ('commissioning','model_comparison')))
             self.csv_recorder = CSVRecorder(
                 self.strain_file_name,
                 self.system_config["acquisition"]["csv_flush_rows"],

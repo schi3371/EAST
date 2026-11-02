@@ -48,13 +48,15 @@ class RotaryCalibration:
         if not p.get("calibration_id") or not p.get("mounting_reference"):
             raise RotaryError("Rotary calibration identity/reference is missing")
 
-    def evaluate(self, ratio):
+    def evaluate(self, ratio, *, allow_linear_extrapolation=False):
+        if type(allow_linear_extrapolation) is not bool:
+            raise RotaryError("Extrapolation policy must be explicit boolean")
         value = float(ratio)
-        if not math.isfinite(value) or not 0 <= value <= 1:
+        if not math.isfinite(value) or not 0 < value < 1:
             return None, False, "invalid_voltage_ratio"
         angle = self.slope * value + self.intercept
         if not self.minimum-self.margin <= angle <= self.maximum+self.margin:
-            return angle, False, "outside_checked_angle_range"
+            return angle, allow_linear_extrapolation, ("linear_extrapolation_unchecked" if allow_linear_extrapolation else "outside_checked_angle_range")
         low, high = self.profile["fit_angle_range_deg"]
         return angle, True, ("within_fit_range" if low <= angle <= high else "user_checked_extension")
 
@@ -258,8 +260,10 @@ class RotaryReader:
 
 class RotaryRecording:
     """Write every delivered sample independently of the load-cell logging loop."""
-    def __init__(self, reader, calibration, path, started):
+    def __init__(self, reader, calibration, path, started, *, allow_linear_extrapolation=False):
         self.reader, self.calibration, self.started = reader, calibration, started
+        self.allow_linear_extrapolation=allow_linear_extrapolation
+        self.extrapolated_count=0
         self.stop = threading.Event()
         self.error = None
         self.count = self.invalid_count = 0
@@ -287,7 +291,7 @@ class RotaryRecording:
                     continue
                 if kind != "sample" or sample[0] < self.started:
                     continue
-                angle, valid, reason = self.calibration.evaluate(sample[2])
+                angle, valid, reason = self.calibration.evaluate(sample[2],allow_linear_extrapolation=self.allow_linear_extrapolation)
                 if self.last_ns is not None:
                     self.maximum_gap_s = max(self.maximum_gap_s, (sample[5]-self.last_ns)/1_000_000_000)
                 self.first = sample[0] if self.first is None else self.first
@@ -297,6 +301,7 @@ class RotaryRecording:
                 self.count += 1
                 self.timestamp_ties += int(sample[6])
                 self.invalid_count += int(not valid)
+                self.extrapolated_count += int(reason=="linear_extrapolation_unchecked")
                 self.writer.writerow([sample[1], f"{sample[0]-self.started:.9f}", f"{sample[0]:.9f}",
                     sample[3], sample[4], repr(sample[2]), "" if angle is None else f"{angle:.8f}",
                     valid, reason, self.calibration.profile["calibration_id"], sample[5], sample[6]])
@@ -326,6 +331,8 @@ class RotaryRecording:
 
     def statistics(self):
         return {"delivered_samples": self.count, "invalid_samples": self.invalid_count,
+                "linear_extrapolation_allowed":self.allow_linear_extrapolation,"extrapolated_samples":self.extrapolated_count,
+                "extrapolation_accuracy":"not independently checked beyond calibration range",
                 "achieved_event_rate_hz": (self.count-1)*1_000_000_000/(self.last_ns-self.first_ns)
                     if self.count > 1 and self.last_ns > self.first_ns else None,
                 "maximum_inter_sample_gap_s": self.maximum_gap_s,
@@ -371,7 +378,7 @@ class RotarySensorService:
                 reason = "Waiting for delivered rotary samples"
             if sample is not None:
                 age = (time.monotonic() if now is None else now)-sample[0]
-                angle, valid, status = self.calibration.evaluate(sample[2])
+                angle, valid, status = self.calibration.evaluate(sample[2],allow_linear_extrapolation=bool(recording and recording.allow_linear_extrapolation))
                 result.update(angle_deg=angle, sample_age_s=age, sample_status=status)
                 if not reason and not 0 <= age <= self.config["stale_after_ms"]/1000.0:
                     reason = "Rotary sensor readings are stale"
@@ -392,11 +399,11 @@ class RotarySensorService:
             raise RotaryError(result["reason"])
         return result
 
-    def start_recording(self, path, started):
+    def start_recording(self, path, started, *, allow_linear_extrapolation=False):
         self.measurement(require=True)
         if self.recording:
             raise RotaryError("A rotary recording is already active")
-        self.recording = RotaryRecording(self.reader, self.calibration, path, started)
+        self.recording = RotaryRecording(self.reader, self.calibration, path, started,allow_linear_extrapolation=allow_linear_extrapolation)
 
     def finish_recording(self):
         recording = self.recording

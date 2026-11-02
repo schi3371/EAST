@@ -52,6 +52,16 @@ class ProfileTests(unittest.TestCase):
         for ratio in (math.nan, math.inf, -0.01, 1.01, 0.0, 1.0):
             self.assertFalse(self.profile.evaluate(ratio)[1])
 
+    def test_explicit_extrapolation_preserves_coefficients_and_strict_default(self):
+        for angle in (-25.,25.):
+            ratio=(angle-self.profile.intercept)/self.profile.slope
+            self.assertFalse(self.profile.evaluate(ratio)[1])
+            value,valid,status=self.profile.evaluate(ratio,allow_linear_extrapolation=True)
+            self.assertAlmostEqual(value,angle);self.assertTrue(valid)
+            self.assertEqual(status,'linear_extrapolation_unchecked')
+        for ratio in (0.,1.,-1.,2.,math.nan):
+            self.assertFalse(self.profile.evaluate(ratio,allow_linear_extrapolation=True)[1])
+
     def test_wrong_sensor_identity_or_unaccepted_profile_cannot_load(self):
         with self.assertRaisesRegex(RotaryError, "hub_serial"):
             RotaryCalibration(ROOT/self.config["calibration_profile"], {**self.config,"hub_serial":123})
@@ -270,6 +280,21 @@ class SharedServiceTests(unittest.TestCase):
         self.assertEqual(self.reader.samples,16)
         with self.assertRaisesRegex(RotaryError,"changing mode"):
             self.service.connect("Voltage")
+
+    def test_extrapolation_is_scoped_to_recording_and_tagged_in_raw_csv(self):
+        ratio=(25.-self.service.calibration.intercept)/self.service.calibration.slope
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'extrapolated.csv'
+            with patch('east_rotary_sensor.time.monotonic',return_value=self.now):
+                self.service.start_recording(path,self.now,allow_linear_extrapolation=True)
+            deliver(self.reader,[ratio]*16,start=10.128)
+            value=self.service.measurement(now=10.248,require=True)
+            self.assertEqual(value['sample_status'],'linear_extrapolation_unchecked')
+            stats=self.service.finish_recording()
+            self.assertEqual(stats['invalid_samples'],0)
+            self.assertEqual(stats['extrapolated_samples'],16)
+            self.assertFalse(self.service.measurement(now=10.248)['valid'])
+            self.assertIn('linear_extrapolation_unchecked',path.read_text())
 
     def test_recording_retains_every_delivered_event_and_reports_true_rate(self):
         with tempfile.TemporaryDirectory() as tmp:
