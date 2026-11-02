@@ -19,12 +19,13 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
     def __init__(self,master,app,preset_key):
         self.app,self.closed,self.active=app,False,False
         self.preset_key=preset_key
+        self.remaining_suite=app.system_config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data'
         self.cancelled=threading.Event()
         self.request=None;self.requests=[];self.records=[]
         self.save_future=None;self.save_action=None;self.manifest_path=None
         self.release_pending=False;self.awaiting_run=False
         self.window=ctk.CTkToplevel(master)
-        self.window.title('EAST — Three-Speed Protocol')
+        self.window.title('EAST — Remaining Motion Data' if self.remaining_suite else 'EAST — Three-Speed Protocol')
         self.window.geometry('800x680');self.window.minsize(660,560)
         self.window.transient(master);self.window.protocol('WM_DELETE_WINDOW',self.close)
         self.window.bind('<Escape>',lambda e:self.stop())
@@ -34,7 +35,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         ctk.CTkLabel(panel,text=preset['display_name'],font=('Arial',19,'bold')).grid(row=0,column=0,columnspan=2,pady=6)
         empty=preset['test_type']=='empty_machine_baseline'
         ctk.CTkLabel(panel,text=('EMPTY MACHINE — run before mounting the AFO.\n' if empty else 'AFO FITTED — one mounting shared by all three speed conditions.\n')+
-            'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n'
+            ('10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
             'Settings are provisional. No added inter-run rest beyond normal settling, idle and file saving.',
             wraplength=720,justify='left').grid(row=1,column=0,columnspan=2,sticky='ew',pady=6)
         self.identity=ctk.CTkLabel(panel,text='',wraplength=720)
@@ -47,9 +48,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.fields[key]=entry
         self.readonly_fields={'baseline_batch_id'} if empty else set()
         if empty:self.fields['baseline_batch_id'].configure(state='disabled')
-        self.status=ctk.CTkLabel(panel,text='Ready. Common cycles apply to EACH speed; the full total is shown before Run.',wraplength=720)
+        self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
-        self.run_button=ctk.CTkButton(panel,text='Run Three-Speed Sequence',command=self.start)
+        self.run_button=ctk.CTkButton(panel,text='Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
         self.run_button.grid(row=6,column=0,padx=4,pady=6,sticky='ew')
         self.run_buttons=[self.run_button]
         self.stop_button=ctk.CTkButton(panel,text='Stop Sequence',command=self.stop,fg_color='#b91c1c')
@@ -81,7 +82,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             identity=self.current_identity();settings=a._motion_field_values()
             batch_id=uuid.uuid4().hex
             base=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else APP_DIR
-            path=base/a.system_config['logging']['output_directory']/('three_speed_'+batch_id+'.json')
+            path=base/a.system_config['logging']['output_directory']/(('motion_suite_' if self.remaining_suite else 'three_speed_')+batch_id+'.json')
             requests=make_protocol_plan(a.system_config,self.preset_key,identity,settings,
                 self.fields['mounting_setup_id'].get(),self.fields['baseline_batch_id'].get(),path,a.preset_loaded_at,batch_id=batch_id)
             from east_core import validate_empty_machine_tare
@@ -89,8 +90,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 valid,reason=validate_empty_machine_tare(a.empty_machine_tare,request.parameters,a.system_config)
                 if not valid:raise ValueError(reason)
             prep_model=deepcopy(a.system_config["motion"].get("experimental_model", {}))
-            if motion_model_enabled(a.system_config):
-                for request in requests:
+            for request in requests:
+                if (request.command_model_enabled if request.command_model_enabled is not None else motion_model_enabled(a.system_config)):
                     validate_model_range(request.parameters.min_angle_deg, request.parameters.max_angle_deg)
             prep_reference=deepcopy(a.reference_manager.metadata_snapshot())
             prep_tare=a.empty_machine_tare.to_dict()
@@ -98,15 +99,19 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             prep_connection=a.odrive_connection_generation
             prep_preset=deepcopy(a.system_config['test_presets'][self.preset_key])
             p=requests[0].parameters
-            summary='\n'.join(f'Run {r.index}: {r.parameters.commanded_afo_speed_deg_s:g}°/s — {r.parameters.cycles} cycles' for r in requests)
+            def stage_label(r):
+                return {'updated_10_repeat':f'Updated +/-10 repeat {r.repeat}', 'wide_15_identification':'Original + rotary +/-15 identification', 'stationary_direction_holds':'Stationary directional holds'}.get(r.stage,'Speed test')
+            summary='\n'.join(f'Run {r.index}: {stage_label(r)} — {r.parameters.commanded_afo_speed_deg_s:g}°/s, +/-{r.parameters.max_angle_deg:g}°, {"30 holds + 30s zero recording" if r.stationary_holds else str(r.parameters.cycles)+" cycles"}' for r in requests)
             empty=p.test_type=='empty_machine_baseline'
-            if not a.show_resizable_confirmation(title='Confirm Three-Speed Protocol',message=(
+            if not a.show_resizable_confirmation(title='Confirm Remaining Motion Data' if self.remaining_suite else 'Confirm Three-Speed Protocol',message=(
                 ('EMPTY MACHINE — remove AFO and removable loads.' if empty else f'AFO: {p.afo_id} — same mounting for all speeds.')+
                 f'\nOperator: {p.operator} | Fixture: {p.fixture_id} | Calibration: {p.calibration_id}'
                 f'\nMounting/setup ID: {requests[0].mounting_setup_id}\n\n'+summary+
-                f'\nTotal: 3 runs, {3*p.cycles} numbered cycles; each run also positions initially and returns to zero.'
-                f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².'
-                + ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.')+
+                f'\nTotal: {len(requests)} runs, {sum(r.parameters.cycles for r in requests if not r.stationary_holds)} numbered sweep cycles'+ (' plus 30 stationary target holds.' if self.remaining_suite else '.')+
+                '\nNormal return/settling/recording between runs. One mounting; no independent remount claims.'
+                + ('\nROM follows each stage above; bulk acceleration is 100 degrees/s².' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
+                + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
+                ('\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'),confirm_text='Run Sequence'):
                 return
@@ -178,12 +183,13 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             mounting_setup_id=self.requests[0].mounting_setup_id,test_type=self.requests[0].parameters.test_type,
             identity=self.identity_snapshot,common_settings=self.settings_snapshot,
             protocol=deepcopy(self.requests[0].preset_metadata),planned_speed_sequence_deg_s=list(self.requests[0].speed_sequence),
-            cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=3*self.requests[0].parameters.cycles,
+            cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=sum(r.parameters.cycles for r in self.requests if not r.stationary_holds),
+            stationary_target_holds=30 if self.remaining_suite else 0,initial_zero_stability_s=30 if self.remaining_suite else 0,
             additional_inter_run_rest_s=0.0,inter_run_behaviour='Normal zero return, settling, confirmed idle, recorder finalization and cleanup; no extra conditioning/rest',
             reference=self.reference_snapshot,unloaded_tare=self.tare_snapshot,started_at=self.started_at,
             updated_at=datetime.now().astimezone().isoformat(),completed_at=datetime.now().astimezone().isoformat() if finished else None,
             runs=rows,outcome=self.batch_status,error=self.batch_error,independent_remount_trials=False,
             automatic_baseline_correction=False,baseline_reference_equivalence_assumed=False,
-            experimental_motion_model=model_provenance() if self.model_snapshot.get("enabled",False) else {"enabled":False})
+            experimental_motion_model={"mode":"mixed_by_plan","coefficients":model_provenance()} if self.remaining_suite else (model_provenance() if self.model_snapshot.get("enabled",False) else {"enabled":False}))
         self.save_action=action
         self.save_future=self.submit_manifest('save three-speed batch manifest',lambda:write_json_atomic(self.manifest_path,body))

@@ -384,7 +384,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
     return config
 
 
-def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> TestParameters:
+def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any], *, segmented_rotary_motion=False) -> TestParameters:
     motion = config["motion"]
     required_text = {
         "file_prefix": "file prefix",
@@ -479,7 +479,7 @@ def validate_test_parameters(values: Dict[str, Any], config: Dict[str, Any]) -> 
          motion["neutral_return_speed_deg_s"], motion["neutral_return_acceleration_deg_s2"]),
     ):
         try:
-            motion_timeout_seconds(distance, move_speed, move_acceleration, config)
+            motion_timeout_seconds(distance*(0.8 if segmented_rotary_motion else 1.0), move_speed, move_acceleration, config)
         except ValueError as exc:
             raise ValueError(f"{phase}: {exc}") from exc
 

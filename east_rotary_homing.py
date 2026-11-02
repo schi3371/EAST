@@ -55,16 +55,19 @@ def home(policy, observe, move, check, clock=time.monotonic):
     for index in range(policy.maximum_corrections+1):
         guard()
         if (before['min_deg'] >= -policy.tolerance_deg
-                and before['max_deg'] <= policy.tolerance_deg):
+                and before['max_deg'] <= policy.tolerance_deg
+                and abs(before['mean_deg']) <= 0.04):
             return dict(outcome='sensor_zero_reached', policy=asdict(policy),
                         final_observation=before, corrections=corrections,
                         nominal_travel_deg=travel, zero_reference_written=False)
         if index == policy.maximum_corrections:
             raise RuntimeError('Maximum homing corrections reached')
         error = before['mean_deg']
-        # Do not chase a mean near zero when noise crosses the stopping band.
-        if abs(error) <= policy.tolerance_deg:
-            raise RuntimeError('Rotary noise crosses the stopping band; homing not accepted')
+        # A narrow window near an edge can be centred; excessive noise cannot.
+        if before['max_deg']-before['min_deg'] > 0.16:
+            raise RuntimeError('Rotary noise span exceeds centring allowance; homing not accepted')
+        if abs(error) < 0.01:
+            raise RuntimeError('Rotary noise crosses the stopping band despite centred mean; homing not accepted')
         magnitude = min(policy.maximum_step_deg, max(0.02, abs(error)*0.5))
         delta = -math.copysign(magnitude, error)
         if travel+abs(delta) > policy.maximum_travel_deg:

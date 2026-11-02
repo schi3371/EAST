@@ -95,7 +95,7 @@ plot_curve = None
 from east_gui_tabs import OutputTabs
 
 APP_NAME = "EAST"
-APP_VERSION = "1.12.1-checkpoint-backlog"
+APP_VERSION = "1.13.0-guided-motion-data"
 
 BG = "#f8fafc"
 PANEL = "#ffffff"
@@ -821,6 +821,8 @@ class MyInterface:
         if preset is None:
             return "Custom"
         name = f"{preset['display_name']} v{preset['version']}"
+        if preset.get('protocol_kind') == 'remaining_motion_data':
+            return name + ' — 10 staged empty-machine runs; +/-10 repeats, +/-15 identification, stationary holds'
         if preset.get('execution_kind') == 'speed_sequence':
             name += ' — 0.5 → 5 → 20°/s; cycles EACH speed'
             try:
@@ -1936,7 +1938,9 @@ class MyInterface:
         self._refresh_motion_controls()
 
     def _test_feedback(self):
-        self.rotary_sensor.measurement(require=True)
+        value = self.rotary_sensor.measurement(require=True)
+        if getattr(self,"run_rotary_targeted",False) is True and abs(value["angle_deg"])>15.1:
+            raise RotaryError("Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
         return self.get_feedback()
 
     def _ensure_load_cell(self):
@@ -2571,13 +2575,13 @@ class MyInterface:
                 and self.reference_manager.record.fixture_id == (self.fixture_id_input.get().strip()
                     if threading.current_thread() is threading.main_thread() else self.operator_context['fixture']))
 
-    def rotary_zero_ready(self):
+    def rotary_zero_ready(self, rotary_only=False):
         value = self.rotary_sensor.measurement(require=True)
         if not self.rotary_reference_verified():
             return False
         snapshot = self.get_feedback()
         return (abs(value['angle_deg']) <= ZERO_TOLERANCE_DEG
-                and (motion_model_enabled(self.system_config) or abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG))
+                and (rotary_only or motion_model_enabled(self.system_config) or abs(self.reference_manager.angle_from_position(snapshot.position_turns)) <= ZERO_TOLERANCE_DEG))
 
     def open_rotary_homing(self, resume_test=False):
         """One explicit action: refresh unhealthy feedback, home, persist zero."""
@@ -3299,7 +3303,7 @@ class MyInterface:
 
         try:
             self.rotary_sensor.measurement(require=True)
-            ready = self.rotary_zero_ready()
+            ready = self.rotary_zero_ready(rotary_only=bool(getattr(mapping_request,"rotary_targeted",False) or getattr(mapping_request,"command_model_enabled",None) is True))
         except (ReferenceError, RotaryError) as exc:
             self.update_terminal(f"Test blocked: {exc}\n")
             return False
@@ -3322,6 +3326,9 @@ class MyInterface:
         try:
             parameters = mapping_request.parameters if mapping_request is not None else self.collect_test_parameters()
             use_model = motion_model_enabled(self.system_config) and getattr(mapping_request, "metadata_key", None) != "motion_modelling" and not (mapping_request is not None and mapping_request.context().get("purpose") == "nonlinear_motion_identification")
+            override = getattr(mapping_request,"command_model_enabled",None)
+            if override is not None:
+                use_model = override
             if use_model:
                 validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
                 if self.rotary_sensor.calibration.sha256 not in CALIBRATION_HASHES:
@@ -3408,6 +3415,8 @@ class MyInterface:
         self.buttons[0].configure(state="disabled")
         self.buttons[1].configure(state="disabled")
         self.manual_mode_toggle.configure(state="disabled")
+        self.run_rotary_targeted = bool(getattr(mapping_request,"rotary_targeted",False))
+        self.run_stationary_holds = bool(getattr(mapping_request,"stationary_holds",False))
         self.run_motion_model_enabled = use_model
         self.run_motion_model = None
         self.run_metadata = None
@@ -3455,7 +3464,7 @@ class MyInterface:
             self._revalidate_hardware_identity(require_reference=True)
             self.rotary_sensor.measurement(require=True)
             snapshot = self.get_feedback()
-            if not self.rotary_zero_ready():
+            if not self.rotary_zero_ready(rotary_only=self.run_rotary_targeted or self.run_motion_model_enabled):
                 raise RuntimeError("Rotary zero changed during test confirmation; home again before testing")
             self.run_parameters = parameters
             self.configure_trajectory(
@@ -3490,6 +3499,7 @@ class MyInterface:
             self.run_metadata["experimental_motion_model"] = (model_provenance() if self.run_motion_model_enabled else {"enabled":False,"mode":"legacy_fixed_conversion"})
             self.run_metadata["experimental_motion_model"]["enabled"] = self.run_motion_model_enabled
             self.run_metadata["motion_method"] = UPDATED_METHOD if self.run_motion_model_enabled else ORIGINAL_METHOD
+            self.run_metadata["rotary_targeted_acquisition"] = {"enabled":self.run_rotary_targeted,"stationary_holds":self.run_stationary_holds,"endpoint_accuracy_not_independent_model_validation":self.run_rotary_targeted,"endpoint_records":[],"holds":[],"bulk_fraction":0.8,"fine_speed_deg_s":1.0}
             self.run_metadata["schema_version"] = 4
             self.run_metadata["software"]["gui_version"] = APP_VERSION
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
@@ -3789,6 +3799,8 @@ class MyInterface:
                 wall_time = datetime.now().astimezone()
                 monotonic_time = time.monotonic()
                 rotary = self.rotary_sensor.measurement(require=True)
+                if getattr(self,"run_rotary_targeted",False) is True and abs(rotary["angle_deg"])>15.1:
+                    raise RuntimeError("Rotary-supervised acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
                 rotary_sample = rotary["sample"]
                 rotary_key = (rotary_sample[4], rotary_sample[3])
                 rotary_new_sample = rotary_key != self.last_rotary_logged_key
@@ -3956,32 +3968,35 @@ class MyInterface:
                 f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             )
             self.current_cycle = 0
-            self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_initial_max", token)
-            if self.run_motion_model is not None:
-                # The first approach supplies a known increasing branch. A stationary
-                # zero has no identifiable branch; refine only the coordinate origin,
-                # never coefficients, before locking it for all numbered sweeps.
-                snapshot = self._test_feedback()
-                measured = self.rotary_sensor.measurement(require=True)["angle_deg"]
-                initial_alignment = dict(origin_turns=self.run_motion_model.origin_turns,
-                    anchor_motor_turns=self.run_motion_model.anchor_turns,
-                    anchor_rotary_angle_deg=self.run_motion_model.anchor_angle_deg)
-                self.run_motion_model = RunModel.observed(snapshot.position_turns, measured, 1)
-                details = self.run_metadata["experimental_motion_model"]
-                segments = details["segments"]
-                details.update(self.run_motion_model.metadata())
-                details["segments"] = segments
-                details["initial_alignment"] = initial_alignment
-                details["numbered_cycle_origin_locked_after_initial_positioning"] = True
-                self.update_terminal("Model origin aligned once after initial increasing positioning; frozen for numbered cycles.\n")
-            for cycle in range(1, parameters.cycles + 1):
-                self.current_cycle = cycle
-                self.command_test_angle(-parameters.min_angle_deg, absolute_min, "moving_to_min", token)
-                self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_max", token)
-                if self.test_stop_event.is_set() or self.acquisition_error:
-                    raise TestStopped()
-                self.completed_cycles = cycle
-                self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
+            if getattr(self,"run_stationary_holds",False) is True:
+                self.run_direction_holds(token)
+            else:
+                self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_initial_max", token)
+                if self.run_motion_model is not None:
+                    # The first approach supplies a known increasing branch. A stationary
+                    # zero has no identifiable branch; refine only the coordinate origin,
+                    # never coefficients, before locking it for all numbered sweeps.
+                    snapshot = self._test_feedback()
+                    measured = self.rotary_sensor.measurement(require=True)["angle_deg"]
+                    initial_alignment = dict(origin_turns=self.run_motion_model.origin_turns,
+                        anchor_motor_turns=self.run_motion_model.anchor_turns,
+                        anchor_rotary_angle_deg=self.run_motion_model.anchor_angle_deg)
+                    self.run_motion_model = RunModel.observed(snapshot.position_turns, measured, 1)
+                    details = self.run_metadata["experimental_motion_model"]
+                    segments = details["segments"]
+                    details.update(self.run_motion_model.metadata())
+                    details["segments"] = segments
+                    details["initial_alignment"] = initial_alignment
+                    details["numbered_cycle_origin_locked_after_initial_positioning"] = True
+                    self.update_terminal("Model origin aligned once after initial increasing positioning; frozen for numbered cycles.\n")
+                for cycle in range(1, parameters.cycles + 1):
+                    self.current_cycle = cycle
+                    self.command_test_angle(-parameters.min_angle_deg, absolute_min, "moving_to_min", token)
+                    self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_max", token)
+                    if self.test_stop_event.is_set() or self.acquisition_error:
+                        raise TestStopped()
+                    self.completed_cycles = cycle
+                    self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
 
             # A successful run uses the dedicated, conservative neutral-return profile.
             motion = self.system_config["motion"]
@@ -4121,8 +4136,83 @@ class MyInterface:
                     self.ui_message_queue.put(("inputs", "normal"))
                     self.ui_message_queue.put(("run_buttons", "normal"))
 
+    def check_rotary_acquisition(self, token):
+        self.motion_coordinator.assert_active(token)
+        if self.test_stop_event.is_set() or self.acquisition_error:
+            raise TestStopped()
+        snapshot = self._test_feedback()
+        if snapshot.current_state != int(AXIS_STATE_CLOSED_LOOP_CONTROL) or snapshot.active_errors:
+            raise FeedbackError('Controller state/errors changed during rotary acquisition')
+        if snapshot.disarm_reason != self.expected_disarm_reason:
+            raise FeedbackError('Controller disarm reason changed during rotary acquisition')
+        value = self.rotary_sensor.measurement(require=True)
+        self._mark_control_health()
+        if abs(value['angle_deg']) > 15.1:
+            raise RuntimeError('Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance')
+        return snapshot,value
+
+    def observe_rotary_hold(self, duration, token):
+        import statistics
+        start=time.monotonic();baseline=self.check_rotary_acquisition(token)[1]['sample'][3]
+        samples=set();angles=[]
+        while time.monotonic()-start < duration:
+            snapshot,value=self.check_rotary_acquisition(token)
+            if abs(snapshot.velocity_turns_s*float(self.system_config['motion']['afo_degrees_per_odrive_turn'])) > self.system_config['reference']['settle_velocity_limit_deg_s']:
+                raise RuntimeError('Motor not stationary during rotary acquisition hold')
+            seq=value['sample'][3]
+            if seq>baseline and seq not in samples:
+                samples.add(seq);angles.append(value['angle_deg'])
+            if self.test_stop_event.wait(.01):
+                raise TestStopped()
+        if len(angles)<5:
+            raise RuntimeError('Insufficient fresh rotary samples during acquisition hold')
+        return dict(mean_deg=statistics.mean(angles),min_deg=min(angles),max_deg=max(angles),
+            sd_deg=statistics.pstdev(angles),samples=len(angles),duration_s=time.monotonic()-start,
+            started_at_monotonic_s=start,completed_at_monotonic_s=time.monotonic())
+
+    def command_rotary_endpoint(self, angle_deg, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
+        from east_rotary_positioning import reach
+        speed=self.run_parameters.commanded_afo_speed_deg_s if speed_deg_s is None else float(speed_deg_s)
+        acceleration=self.run_parameters.commanded_afo_acceleration_deg_s2 if acceleration_deg_s2 is None else float(acceleration_deg_s2)
+        evidence={'phase':phase,'cycle':self.current_cycle,'target_angle_deg':float(angle_deg),'bulk':[],'fine':[]}
+        self.run_metadata['rotary_targeted_acquisition']['endpoint_records'].append(evidence)
+        def move(delta, fine=False):
+            snapshot,_=self.check_rotary_acquisition(token)
+            step=afo_degrees_to_odrive_turns(delta,self.system_config)
+            target=snapshot.position_turns+step
+            sp,acc=(1.0,5.0) if fine else (speed,acceleration)
+            self.configure_trajectory(sp,acc)
+            evidence['fine' if fine else 'bulk'].append(dict(nominal_delta_deg=delta,target_motor_turns=target,speed_deg_s=sp,acceleration_deg_s2=acc))
+            self.command_position_and_wait(target,('rotary_approach_' if fine else '')+phase,token,sp,acc)
+        result=reach(angle_deg,lambda:self.check_rotary_acquisition(token)[1]['angle_deg'],
+            lambda d:move(d),lambda d:move(d,True),lambda duration:self.observe_rotary_hold(duration,token),
+            lambda:self.check_rotary_acquisition(token))
+        evidence['result']=result
+        self.motion_phase='rotary_settled_'+phase
+        return self.check_rotary_acquisition(token)[0].position_turns
+
+    def run_direction_holds(self, token):
+        snapshot,_=self.check_rotary_acquisition(token)
+        self.command_position_and_wait(snapshot.position_turns,'zero_stability_settle',token,1.0,5.0)
+        self.motion_phase='zero_stability_30s'
+        self.run_metadata['rotary_targeted_acquisition']['zero_stability']=self.observe_rotary_hold(30.,token)
+        for cycle in range(1,4):
+            self.current_cycle=cycle
+            for target in (-10.,-5.,0.,5.,10.):
+                for direction in (1,-1):
+                    self.command_rotary_endpoint(target-direction*2.,'hold_preposition',token,5.,100.)
+                    self.command_rotary_endpoint(target,'hold_target',token,1.,5.)
+                    self.motion_phase=f'stationary_hold_{target:g}_{direction:+d}'
+                    result=self.observe_rotary_hold(2.,token)
+                    self.run_metadata['rotary_targeted_acquisition']['holds'].append(dict(cycle=cycle,
+                        target_angle_deg=target,planned_approach_direction=direction,**result))
+            self.completed_cycles=cycle
+            self.update_terminal(f'Completed stationary hold repeat {cycle}/3\n')
+
     def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
         """Model targets only for normal tests. Manual/homing/identification stay legacy."""
+        if getattr(self,'run_rotary_targeted',False) is True:
+            return self.command_rotary_endpoint(angle_deg,phase,token,speed_deg_s,acceleration_deg_s2)
         model = getattr(self, 'run_motion_model', None)
         if model is None:
             self.command_position_and_wait(legacy_target,phase,token,speed_deg_s,acceleration_deg_s2)
@@ -4271,7 +4361,7 @@ class MyInterface:
                 )
             if abs(snapshot.position_turns - neutral_target) > tolerance_turns:
                 raise RuntimeError("Machine-zero position drifted after ODrive entered idle")
-            if getattr(self, "run_motion_model_enabled", False) and self.strain_test_active:
+            if (getattr(self, "run_motion_model_enabled", False) is True or getattr(self,"run_rotary_targeted",False) is True) and self.strain_test_active:
                 angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
                 if abs(angle) > ZERO_TOLERANCE_DEG:
                     raise RuntimeError(f"Model return missed rotary zero: {angle:.4f} degrees; use Home / Return to Zero before restarting")

@@ -38,7 +38,8 @@ files originating at baseline 5b558be. Its GUI entry has been reviewed and updat
 for the Motion Modelling window, official rotary machine zero, and three-speed
 GUI protocol/preset integration in version 1.10.0, then experimental model-motion
 integration in version 1.11.0 and GUI method selection/permitted extrapolation in
-version 1.12.0. The model module is pinned because configuration
+version 1.12.0, checkpoint backlog handling in 1.12.1, and the staged
+empty-machine acquisition/centred homing integration in version 1.13.0. The model module is pinned because configuration
 validation imports it; standalone and GUI identification motion remain legacy.
 See [model operation and rollback](../../MODEL_MOTION.md). The standalone runner remains
 an empty-machine motion experiment; see [the three-speed guide](../../THREE_SPEED_PROTOCOL.md)
