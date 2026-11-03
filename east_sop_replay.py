@@ -62,7 +62,8 @@ class ReplayWindow:
         ctk.CTkButton(tools, text="Capture all views", command=self.capture_all).pack(side="right", padx=8)
         self.frame = ctk.CTkFrame(root, fg_color="#f8fafc")
         self.frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        self.render(self.views[0])
+        self.view.set("Recorded plot")
+        self.render("Recorded plot")
 
     def render(self, view):
         for child in self.frame.winfo_children():

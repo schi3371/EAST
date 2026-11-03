@@ -857,11 +857,11 @@ def main() -> None:
 
     print(f"Starting {APP_NAME} {APP_VERSION} from {Path(__file__).resolve()}")
     root = ctk.CTk()
-    if "--replay" in sys.argv:
+    if "--layout-preview" in sys.argv:
+        EastGuiPreview(root)
+    else:
         from east_sop_replay import launch
         launch(root, ROOT_DIR)
-    else:
-        EastGuiPreview(root)
     root.mainloop()
 
 
