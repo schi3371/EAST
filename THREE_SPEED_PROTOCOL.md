@@ -2,7 +2,7 @@
 
 **v1.12.0 update:** Select Original or Updated cubic using the main Motion method menu. Presets retain +/-10 degrees; the model-specific +/-9-degree restriction has been removed. Extrapolated cubic movements are flagged in metadata. See [motion selection and extrapolation](MOTION_METHODS.md). Speeds remain requested nominal values.
 
-EAST v1.10.0 provides **Three-Speed AFO Protocol** and **Three-Speed Empty-Machine Baseline** presets. Both run 0.5, 5 and 20 nominal degrees/s, in that order. Defaults are three numbered cycles per speed (nine total), ±10 nominal degrees, and 100 degrees/s² acceleration. These are provisional experimental settings pending bench verification; the existing motor/angle conversion is unchanged.
+EAST v1.10.0 provides **Three-Speed AFO Protocol** and **Three-Speed Empty-Machine Baseline** presets. Both run 0.5, 5 and 20 nominal degrees/s, in that order. Defaults are five numbered cycles per speed (15 total), ±10 nominal degrees, and 100 degrees/s² acceleration. These are provisional experimental settings pending bench verification; the existing motor/angle conversion is unchanged.
 
 ## Operator workflow
 
@@ -26,4 +26,4 @@ Stop/Escape, child-window closure, application shutdown, device faults, recordin
 
 ## Verification
 
-Offline tests exercise both complete batches, default nine cycles, metadata and normal recorders, setup freezing, admission failures, recording/manifest faults, Stop during/between runs, child closure and application shutdown. These tests use fake devices and do not establish hardware performance at 20 degrees/s. Verify the configuration on the bench before collecting study data.
+Offline tests exercise both complete batches, the default plan and explicitly configured cycle counts, metadata and normal recorders, setup freezing, admission failures, recording/manifest faults, Stop during/between runs, child closure and application shutdown. These tests use fake devices and do not establish hardware performance at 20 degrees/s. Verify the configuration on the bench before collecting study data.

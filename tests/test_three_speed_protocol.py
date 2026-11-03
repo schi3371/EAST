@@ -32,19 +32,19 @@ class PlanTests(unittest.TestCase):
     def setUp(self):
         self.config=load_tester_config()
         self.identity=dict(file_prefix='SpecimenRun',operator='SC',afo_id='AFO-42',fixture_id='0',calibration_id='CAL')
-        self.settings=dict(cycles='3',minimum_angle_deg='10',maximum_angle_deg='10',acceleration_deg_s2='100',speed_deg_s='.5')
+        self.settings=dict(cycles='5',minimum_angle_deg='10',maximum_angle_deg='10',acceleration_deg_s2='100',speed_deg_s='.5')
     def plan(self,key='three_speed_afo',**changes):
         return make_protocol_plan(self.config,key,self.identity,{**self.settings,**changes},'MOUNT-42','','batch.json','now')
     def test_explicit_plan_defaults_provenance_and_frozen_identity(self):
         p=self.plan();self.assertEqual([r.parameters.commanded_afo_speed_deg_s for r in p],list(SPEEDS))
-        self.assertTrue(all(r.parameters.cycles==3 and r.parameters.afo_id=='AFO-42' for r in p))
+        self.assertTrue(all(r.parameters.cycles==5 and r.parameters.afo_id=='AFO-42' for r in p))
         self.assertTrue(all(not r.preset_metadata['preset_modified'] for r in p))
         self.assertEqual(len({r.parameters.file_prefix for r in p}),3)
         self.assertTrue(all(r.context()['mounting_setup_id']=='MOUNT-42' for r in p))
         self.assertTrue(all(r.context()['planned_speed_sequence_deg_s']==list(SPEEDS) for r in p))
         self.assertNotIn('speed_deg_s',self.config['test_presets']['three_speed_afo'])
         self.identity['afo_id']='CHANGED';self.settings['cycles']='1'
-        self.assertTrue(all(r.parameters.afo_id=='AFO-42' and r.parameters.cycles==3 for r in p))
+        self.assertTrue(all(r.parameters.afo_id=='AFO-42' and r.parameters.cycles==5 for r in p))
     def test_common_modifications_and_baseline_identity(self):
         p=self.plan(cycles='2',minimum_angle_deg='8',maximum_angle_deg='9',acceleration_deg_s2='50')
         self.assertTrue(all(r.parameters.cycles==2 and r.parameters.min_angle_deg==8 and r.parameters.max_angle_deg==9 and r.preset_metadata['preset_modified'] for r in p))
