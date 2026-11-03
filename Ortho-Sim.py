@@ -478,7 +478,8 @@ class MyInterface:
         self.protocol_menu.grid(
             row=0, column=1, columnspan=3, padx=(0, 0), sticky="ew"
         )
-        ctk.CTkLabel(protocol_frame,text="Motion method:",font=('Arial',11,'bold')).grid(row=2,column=0,padx=(0,6),sticky='w')
+        method_label = ctk.CTkLabel(protocol_frame, text="Motion method:", font=("Arial", 11, "bold"))
+        method_label.grid(row=2,column=0,padx=(0,6),sticky="w")
         self.motion_method_menu = ctk.CTkOptionMenu(
             protocol_frame,variable=self.motion_method_var,values=[ORIGINAL_METHOD,UPDATED_METHOD],
             command=self.select_motion_method,width=205,height=30)
@@ -749,6 +750,44 @@ class MyInterface:
         ):
             widget.configure(state="disabled")
         self.buttons[1].configure(state="disabled")
+
+        engineering_widgets = (
+            method_label, self.motion_method_menu, self.manual_step_units_menu,
+            self.step_angle_input, self.manual_mode_toggle, self.left_arrow,
+            self.right_arrow, self.mode_toggle, self.manual_step_hint,
+            self.manual_position_label, self.rotary_calibration_button,
+            self.motion_mapping_button, self.clear_session_tare_button,
+        )
+        routine_presets = ["Custom", *(
+            preset["display_name"] for preset in self.system_config["test_presets"].values()
+            if not preset.get("protocol_kind")
+        )]
+        show_engineering = ctk.BooleanVar(value=False)
+
+        def update_engineering_view():
+            visible = show_engineering.get()
+            selected = self.protocol_var.get()
+            loaded = self._loaded_preset()
+            if not visible and (
+                self.manual_mode.get() or selected not in routine_presets
+                or (loaded and loaded.get("protocol_kind"))
+            ):
+                show_engineering.set(True)
+                return
+            for widget in engineering_widgets:
+                if visible:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
+            self.protocol_menu.configure(
+                values=list(self.protocol_display_to_key) if visible else routine_presets
+            )
+
+        ctk.CTkSwitch(
+            manual_control_frame, text="Engineering controls",
+            variable=show_engineering, command=update_engineering_view,
+        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=8, pady=8)
+        update_engineering_view()
 
         self.output_tabs = OutputTabs(
             body, fg_color=PANEL, corner_radius=10,

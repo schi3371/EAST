@@ -254,3 +254,15 @@ setup, three-repeat collection, separate validation, voltage/ratio interpretatio
 and the automatically saved CSV/JSON files. Close other applications using the
 rotary hub port before connecting. No extra Python dependencies are required
 beyond the existing GUI/Phidget packages.
+
+### SOP screenshot replay on macOS
+
+Run `python "Testing Scripts/gui-layout-preview.py" --replay` using the preview
+dependencies. Select a `three_speed_*.json` manifest in `EAST Logs` with its
+associated strain CSVs in the same folder. Select a run for the plot, then use
+**Capture PNG** or **Capture all views**. PNGs are saved in `SOP Screenshots`.
+If capture is blocked, allow Screen Recording for the app launching Python.
+
+Setup and confirmation are illustrative preview layouts based on current
+presets. Plots and outcomes use recorded values, including the original cycle
+counts. The replay window has no apparatus controls.
