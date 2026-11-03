@@ -58,7 +58,7 @@ class PlanTests(unittest.TestCase):
         self.identity['afo_id']='EMPTY_MACHINE_BASELINE'
         with self.assertRaises(ValueError):self.plan()
     def test_completion_gate_waits_for_finalization_and_rejects_partial_data(self):
-        request=self.plan()[0]
+        request=self.plan(cycles='3')[0]
         m=dict(protocol_batch=request.context(),run_status='completed',completed_cycles=3,sample_count=10,
                idle_confirmation=dict(confirmed=True,motion_owner=None,monitor_error=None),
                csv_recorder=dict(worker_complete=True,pending_rows=0,error=None,rows_persisted=10),
