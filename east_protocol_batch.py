@@ -6,6 +6,8 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
+from east_motion_model import selected_variant
+
 SPEEDS = (0.5, 5.0, 20.0)
 
 @dataclass(frozen=True)
@@ -75,7 +77,8 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(SPEEDS),
                         settings_status='provisional_not_scientifically_validated')
         requests.append(ProtocolRequest(batch_id,label,index,3,parameters,metadata,str(manifest_path),
-                                       mounting_setup_id,SPEEDS,baseline_batch_id))
+                                       mounting_setup_id,SPEEDS,baseline_batch_id,
+                                       model_variant=selected_variant(config)))
     return requests
 
 

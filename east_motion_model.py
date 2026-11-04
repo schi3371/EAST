@@ -17,6 +17,20 @@ TARGET_LIMIT_DEG = 15.0
 INVERSE_LIMIT_TURNS = 8.0  # Monotonic numerical bracket; covers both branches through +/-15 degrees.
 ORIGINAL_METHOD = "Original (2.055 degrees/turn)"
 UPDATED_METHOD = "Updated cubic (experimental)"
+WIDER_METHOD = "Wider cubic (experimental)"
+
+
+def selected_variant(config):
+    variant = config['motion'].get('experimental_model', {}).get('variant', 'current')
+    if variant not in ('current', 'candidate'):
+        raise ValueError('Unknown experimental motion model variant')
+    return variant
+
+
+def selected_method(config):
+    if not enabled(config):
+        return ORIGINAL_METHOD
+    return WIDER_METHOD if selected_variant(config) == 'candidate' else UPDATED_METHOD
 
 
 def finite(value):

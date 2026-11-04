@@ -29,7 +29,7 @@ from odrive.enums import (
     INPUT_MODE_TRAP_TRAJ,
 )
 
-from east_motion_model import X_LIMIT, ORIGINAL_METHOD, UPDATED_METHOD, CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
+from east_motion_model import X_LIMIT, ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method, selected_variant, CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 
 from east_core import (
     CSV_COLUMNS,
@@ -140,7 +140,7 @@ class MyInterface(OperatorView):
                 for key, preset in self.system_config["test_presets"].items()
             },
         }
-        self.motion_method_var = ctk.StringVar(value=UPDATED_METHOD if motion_model_enabled(self.system_config) else ORIGINAL_METHOD)
+        self.motion_method_var = ctk.StringVar(value=selected_method(self.system_config))
         self.protocol_var = ctk.StringVar(value="Custom")
         self.loaded_preset_key = "custom"
         self.preset_loaded_at = datetime.now().astimezone().isoformat(
@@ -318,17 +318,18 @@ class MyInterface(OperatorView):
 
     def select_motion_method(self, selection):
         """Session selection only. Never change a frozen run or batch."""
-        previous = UPDATED_METHOD if motion_model_enabled(self.system_config) else ORIGINAL_METHOD
+        previous = selected_method(self.system_config)
         blocked = (self.strain_test_active or self.motion_coordinator.owner is not None
                    or self.engine.busy is not None or self.motion_mapping_active()
                    or self.rotary_homing_active() or self.shutdown_requested
                    or not self.run_finalized or self.motion_coordinator.stopping)
-        if blocked or selection not in (ORIGINAL_METHOD,UPDATED_METHOD):
+        if blocked or selection not in (ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD):
             self.motion_method_var.set(previous)
             self.update_terminal("Motion method changes are blocked during movement, a sequence or unresolved cleanup.\n")
             return False
         settings = dict(self.system_config['motion'].get('experimental_model',{}))
-        settings['enabled'] = selection == UPDATED_METHOD
+        settings['enabled'] = selection != ORIGINAL_METHOD
+        settings['variant'] = 'candidate' if selection == WIDER_METHOD else 'current'
         self.system_config['motion']['experimental_model'] = settings
         self.motion_method_var.set(selection)
         self.update_protocol_status()
@@ -2835,6 +2836,8 @@ class MyInterface(OperatorView):
             override = getattr(mapping_request,"command_model_enabled",None)
             if override is not None:
                 use_model = override
+            selected_before_confirmation = selected_method(self.system_config)
+            variant = getattr(mapping_request, 'model_variant', selected_variant(self.system_config))
             if use_model:
                 validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
                 if self.rotary_sensor.calibration.sha256 not in CALIBRATION_HASHES:
@@ -2880,7 +2883,7 @@ class MyInterface(OperatorView):
             f"\N{DEGREE SIGN}/s\N{SUPERSCRIPT TWO}\n"
             f"Cycles: {parameters.cycles}  |  Constant-speed span: "
             f"{constant_speed_span_deg(parameters.min_angle_deg + parameters.max_angle_deg, parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2):.2f}\N{DEGREE SIGN}\n\n"
-            + ("Experimental cubic targets; extrapolation beyond fitted range is allowed; instantaneous speed varies.\n" if use_model else "Legacy fixed conversion.\n") +
+            + ((WIDER_METHOD if variant == "candidate" else UPDATED_METHOD) + "\n" if use_model else "Legacy fixed conversion.\n") +
             "Fixture clear  |  Physical E-stop accessible"
         )
         if mapping_request is None and not self.show_resizable_confirmation(
@@ -2890,7 +2893,7 @@ class MyInterface(OperatorView):
         ):
             return
 
-        if mapping_request is None and motion_model_enabled(self.system_config) != use_model:
+        if mapping_request is None and selected_method(self.system_config) != selected_before_confirmation:
             self.update_terminal("Motion method changed during confirmation; review and start again.\n")
             return False
         if self.stop_worker is not None:
@@ -2927,7 +2930,7 @@ class MyInterface(OperatorView):
         self.run_motion_model = None
         self.run_feedback_window = None
         self.run_original_zero_anchor = None
-        self.run_model_variant = getattr(mapping_request,'model_variant','current')
+        self.run_model_variant = variant
         self.run_segmented_comparison = getattr(mapping_request,'stage','') in ('commissioning','model_comparison','rotary_feedback_pilot')
         self.run_feedback_pilot = getattr(mapping_request,'feedback_pilot',False)
         self.run_metadata = None

@@ -50,6 +50,11 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
+        if self.comparison_suite:
+            ctk.CTkLabel(panel, text="Stop after run (blank = last)").grid(row=9, column=0, sticky="w", padx=4)
+            entry = ctk.CTkEntry(panel)
+            entry.grid(row=9, column=1, sticky="ew", pady=4)
+            self.fields["end_run"] = entry
         self.readonly_fields={'baseline_batch_id'} if empty and not self.remaining_suite else set()
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
@@ -87,7 +92,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
-                ('\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. Allow 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
+                ('\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
                 ('\nA fully recorded comparison with a failed model zero return may be followed by ONE separately recorded official homing transaction (normal homing movement/time guards). The model return remains failed; no sweep is repeated. Other faults/Stop still halt the batch.' if self.comparison_suite and not self.pilot_suite else '\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite and not self.pilot_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'
@@ -113,9 +118,11 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 self.fields['mounting_setup_id'].get(),'' if self.remaining_suite else self.fields['baseline_batch_id'].get(),path,a.preset_loaded_at,batch_id=batch_id)
             self.all_requests=requests
             start_at=int(self.fields["start_run"].get()) if self.remaining_suite else 1
-            if not 1 <= start_at <= len(requests):
-                raise ValueError("Choose a starting run within the displayed plan")
-            requests=requests[start_at-1:]
+            end_input = self.fields["end_run"].get().strip() if self.comparison_suite else ""
+            end_at = int(end_input) if end_input else len(requests)
+            if not 1 <= start_at <= end_at <= len(requests):
+                raise ValueError("Choose a valid inclusive start/end run range")
+            requests = requests[start_at - 1:end_at]
             self.selected_start_run=start_at
             from east_core import validate_empty_machine_tare
             for request in requests:
@@ -138,6 +145,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             # Freeze only if modal nested actions did not change any preparation.
             if self.remaining_suite and int(self.fields["start_run"].get())!=start_at:
                 raise ValueError("Starting run changed during confirmation; review again")
+            if self.comparison_suite and self.fields["end_run"].get().strip() != end_input:
+                raise ValueError("Ending run changed during confirmation; review again")
             if identity!=self.current_identity() or settings!=a._motion_field_values() or not ready_for_next(a) or a.monitor_error:
                 raise ValueError('Preparation/settings changed during confirmation; review and start again')
             if (a.reference_manager.metadata_snapshot()!=prep_reference or a.empty_machine_tare is None
@@ -354,11 +363,15 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         skipped=[dict(context=r.context(),parameters=r.parameters.__dict__,status='skipped_by_operator_before_start',
             reason='Operator selected a later starting run in a NEW batch; prior experimental data are not imported or certified',
             metadata_file=None,strain_file=None,rotary_file=None) for r in self.all_requests[:self.selected_start_run-1]]
-        rows=skipped+rows
+        after = [dict(context=r.context(), parameters=r.parameters.__dict__,
+                      status='outside_selected_run_range', metadata_file=None,
+                      strain_file=None, rotary_file=None)
+                 for r in self.all_requests[self.selected_start_run - 1 + len(self.requests):]]
+        rows = skipped + rows + after
         body=dict(schema='east-three-speed-batch-1',batch_id=self.requests[0].batch_id,
             mounting_setup_id=self.requests[0].mounting_setup_id,test_type=self.requests[0].parameters.test_type,
             identity=self.identity_snapshot,common_settings=self.settings_snapshot,
-            selected_start_run=self.selected_start_run,selected_run_count=len(self.requests),total_plan_runs=len(self.all_requests),
+            selected_start_run=self.selected_start_run,selected_end_run=self.selected_start_run + len(self.requests) - 1,selected_run_count=len(self.requests),total_plan_runs=len(self.all_requests),
             protocol=deepcopy(self.requests[0].preset_metadata),planned_speed_sequence_deg_s=list(self.requests[0].speed_sequence),
             cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=sum(r.parameters.cycles for r in self.requests if not r.stationary_holds),
             stationary_target_holds=30 if any(r.stationary_holds for r in self.requests) else 0,initial_zero_stability_s=30 if any(r.stationary_holds for r in self.requests) else 0,

@@ -8,7 +8,7 @@ from PIL import Image
 
 from east_core import preset_values_modified
 from east_gui_tabs import OutputTabs
-from east_motion_model import ORIGINAL_METHOD, UPDATED_METHOD, enabled as motion_model_enabled
+from east_motion_model import ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method
 
 APP_NAME = "EAST"
 APP_VERSION = "1.17.0-reliability-audit"
@@ -215,7 +215,7 @@ class OperatorView:
         method_label = ctk.CTkLabel(protocol_frame, text="Motion method:", font=("Arial", 11, "bold"))
         method_label.grid(row=2,column=0,padx=(0,6),sticky="w")
         self.motion_method_menu = ctk.CTkOptionMenu(
-            protocol_frame,variable=self.motion_method_var,values=[ORIGINAL_METHOD,UPDATED_METHOD],
+            protocol_frame,variable=self.motion_method_var,values=[ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD],
             command=self.select_motion_method,width=205,height=30)
         self.motion_method_menu.grid(row=2,column=1,columnspan=3,sticky='ew',pady=(5,3))
         self.load_preset_button = ctk.CTkButton(
@@ -585,8 +585,7 @@ class OperatorView:
         selected_display = self.protocol_var.get()
         selected_key = self.protocol_display_to_key[selected_display]
         text = f"Active protocol: {active_name}"
-        if motion_model_enabled(self.system_config):
-            text += " | EXPERIMENTAL cubic; extrapolation allowed to machine limit; speed varies"
+        text += f" | {selected_method(self.system_config)}"
         if selected_key != self.loaded_preset_key:
             text += (
                 f"\nSelected: {selected_display} \N{EM DASH} press Load Preset to apply. "
