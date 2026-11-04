@@ -11,6 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 class GuiContractTests(unittest.TestCase):
     def test_main_gui_has_persistent_test_parameter_labels(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        source += "\n" + (PROJECT_DIR / "east_operator_ui.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         displayed_strings = {
             node.value
@@ -109,6 +110,7 @@ class GuiContractTests(unittest.TestCase):
 
     def test_protocol_preset_and_non_destructive_reset_contract(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        source += "\n" + (PROJECT_DIR / "east_operator_ui.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         functions = {
             node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
@@ -160,6 +162,7 @@ class GuiContractTests(unittest.TestCase):
 
     def test_pending_protocol_selection_does_not_change_loaded_protocol(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        source += "\n" + (PROJECT_DIR / "east_operator_ui.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         functions = {
             node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
@@ -200,18 +203,19 @@ class GuiContractTests(unittest.TestCase):
 
     def test_start_confirmation_is_resizable_and_scrollable(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")
+        source += "\n" + (PROJECT_DIR / "east_operator_ui.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         function = next(
             node for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef)
-            and node.name == "show_resizable_confirmation"
+            and node.name == "build_confirmation"
         )
         dialog_source = ast.get_source_segment(source, function)
         self.assertIn("dialog.resizable(True, True)", dialog_source)
         self.assertIn("ctk.CTkTextbox", dialog_source)
         self.assertIn('text="Cancel"', dialog_source)
         self.assertIn("text=confirm_text", dialog_source)
-        self.assertIn("self.master.wait_window(dialog)", dialog_source)
+        self.assertIn("self.master.wait_window(dialog)", source)
 
     def test_baseline_and_protocol_provenance_are_logged(self):
         source = (PROJECT_DIR / "Ortho-Sim.py").read_text(encoding="utf-8")

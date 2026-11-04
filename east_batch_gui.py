@@ -125,11 +125,16 @@ class RecordedBatchWindow:
                         s = app.latest_feedback
                         rotary = app.rotary_sensor.measurement()
                         angle = rotary.get('angle_deg')
+                        engineering = getattr(app, "show_engineering", None)
+                        motor_detail = (
+                            f'Motor: {s.position_turns if s else "unavailable"} turns | '
+                            if engineering is not None and engineering.get() else ''
+                        )
                         self.status.configure(text=f'{self.request.run_id} ({self.request.index}/{self.request.total}) | '
                             f'{self.request.parameters.commanded_afo_speed_deg_s:g}°/s | '
                             f'cycle {app.current_cycle}/{self.request.parameters.cycles} | {app.motion_phase} | '
                             f'{time.monotonic()-self.launched_at:.0f} s elapsed\n'
-                            f'Motor: {s.position_turns if s else "unavailable"} turns | Rotary: {angle} deg | '
+                            f'{motor_detail}Rotary: {angle} deg | '
                             f'{rotary.get("reason", "")}')
                 else:
                     # Subclasses own preparation/recovery cancellation as well as

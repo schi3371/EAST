@@ -263,6 +263,7 @@ associated strain CSVs in the same folder. Select a run for the plot, then use
 **Capture PNG** or **Capture all views**. PNGs are saved in `SOP Screenshots`. Use `--layout-preview` to open the legacy layout checker.
 If capture is blocked, allow Screen Recording for the app launching Python.
 
-Setup and confirmation are illustrative preview layouts based on current
-presets. Plots and outcomes use recorded values, including the original cycle
-counts. The replay window has no apparatus controls.
+The preview renders the same operator, confirmation and batch widgets as the
+operating application. Connect toggles the offline connection display. Setup and
+confirmation show the selected current preset. Plots and outcomes show the saved
+recording, including its original cycle count. Capture excludes the offline toolbar.
