@@ -11,6 +11,7 @@ from east_motion_model import enabled as motion_model_enabled, validate_range as
 from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
 from east_protocol_batch import make_protocol_plan
+from east_stream_screen import SCREEN_PRESET
 
 
 class ThreeSpeedProtocolWindow(RecordedBatchWindow):
@@ -19,6 +20,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
     def __init__(self,master,app,preset_key):
         self.app,self.closed,self.active=app,False,False
         self.preset_key=preset_key
+        self.screen_suite = preset_key == SCREEN_PRESET
         self.pilot_suite=app.system_config['test_presets'][preset_key].get('protocol_kind')=='rotary_feedback_pilot'
         self.comparison_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('model_comparison','rotary_feedback_pilot')
         self.remaining_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('remaining_motion_data','model_comparison','rotary_feedback_pilot')
@@ -39,7 +41,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         ctk.CTkLabel(panel,text=preset['display_name'],font=('Arial',19,'bold')).grid(row=0,column=0,columnspan=2,pady=6)
         empty=preset['test_type']=='empty_machine_baseline'
         ctk.CTkLabel(panel,text=('EMPTY MACHINE — run before mounting the AFO.\n' if empty else 'AFO FITTED — one mounting shared by all three speed conditions.\n')+
-            ('2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
+            ('21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
             'Settings are provisional. No added inter-run rest beyond normal settling, idle and file saving.',
             wraplength=720,justify='left').grid(row=1,column=0,columnspan=2,sticky='ew',pady=6)
         self.identity=ctk.CTkLabel(panel,text='',wraplength=720)
@@ -54,6 +56,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ctk.CTkLabel(panel, text="Stop after run (blank = last)").grid(row=9, column=0, sticky="w", padx=4)
             entry = ctk.CTkEntry(panel)
             entry.grid(row=9, column=1, sticky="ew", pady=4)
+            if self.screen_suite:
+                entry.insert(0, '7')
             self.fields["end_run"] = entry
         self.readonly_fields={'baseline_batch_id'} if empty and not self.remaining_suite else set()
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
@@ -80,6 +84,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         a = self.app
         p=requests[0].parameters
         def stage_label(r):
+            if self.screen_suite:
+                return f"Block {r.repeat}, {r.model_variant} " + ("with feedback" if r.feedback_pilot else "feedforward")
             return {'updated_10_repeat':f'Updated +/-10 repeat {r.repeat}', 'wide_15_identification':'Original + rotary +/-15 identification', 'stationary_direction_holds':'Stationary directional holds'}.get(r.stage,f'{r.stage}: {getattr(r,"model_variant","current")}')
         summary='\n'.join(f'Run {r.index}: {stage_label(r)} — {r.parameters.commanded_afo_speed_deg_s:g}°/s, +/-{r.parameters.max_angle_deg:g}°, {"30 holds + 30s zero recording" if r.stationary_holds else str(r.parameters.cycles)+" cycles"}' for r in requests)
         empty=p.test_type=='empty_machine_baseline'
@@ -92,7 +98,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
-                ('\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
+                ('\nEMPTY FIXTURE ONLY. Fixed ±5° at 0.5°/s. One bounded zero recovery may follow a fully saved run with a small return miss.' if self.screen_suite else '\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
                 ('\nA fully recorded comparison with a failed model zero return may be followed by ONE separately recorded official homing transaction (normal homing movement/time guards). The model return remains failed; no sweep is repeated. Other faults/Stop still halt the batch.' if self.comparison_suite and not self.pilot_suite else '\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite and not self.pilot_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'
@@ -206,9 +212,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 if not self.check_setup_continuity():return
                 self.recovery_future=a.start_suite_zero_recovery(self)
                 self.records[-1]["zero_recovery_attempt"]={"evidence_file":getattr(a.rotary_homing,"evidence_path",None),
-                    "maximum_live_error_deg":None if self.comparison_suite else .25,
-                    "maximum_travel_deg":20. if self.comparison_suite else .5,
-                    "maximum_corrections":80 if self.comparison_suite else 10,"timeout_s":120. if self.comparison_suite else 15.}
+                    "maximum_live_error_deg":None if self.comparison_suite and not self.pilot_suite else .25,
+                    "maximum_travel_deg":20. if self.comparison_suite and not self.pilot_suite else .5,
+                    "maximum_corrections":80 if self.comparison_suite and not self.pilot_suite else 10,"timeout_s":120. if self.comparison_suite and not self.pilot_suite else 15.}
                 self.status.configure(text='Separate zero recovery in progress; original model-return failure preserved.')
                 return
             if not self.recovery_future.done() or not quiescent(a):return

@@ -1,0 +1,52 @@
+# EAST controller and speed decision study
+
+The decision is the fastest measured test condition that gives acceptable loaded-AFO stiffness repeatability, tracking, and usable torque-angle data. The selected speed is qualified for the studied specimen and setup. The walking waveform can be a separate development study.
+
+## A. Common-trajectory empty-fixture screen
+
+With the fixture empty, verify rotary zero and capture unloaded tare. Turn on **Engineering controls**, load **Streamed Model Screen — Seven Methods (Empty)**, and press **Start**. Run the default range **1–7** first and review before running **8–14** and **15–21**. These are three different orders of the same seven methods.
+
+| First block | Method |
+|---|---|
+| R1 | Original 2.055 |
+| R2 | Refit linear |
+| R3 | Shared cubic |
+| R4 | Current direction-dependent cubic |
+| R5 | Wider direction-dependent cubic |
+| R6 | Direction-dependent quintic |
+| R7 | Wider direction-dependent cubic with rotary feedback |
+
+One numbered cycle per run, ±5°, 0.5°/s requested trajectory, 0.5°/s² ramp. The motor trajectory ceiling is distinct from the requested ramp. The three new fits use the frozen coefficients from the 2 November wider mapping report. The increasing branch is anchored at measured zero and the origin is held for all legs. The same streaming path and guard envelope apply to all seven arms. The earlier two-run pilot used its own alignment procedure and is commissioning evidence.
+
+Keep the run metadata, joined strain CSV, raw rotary CSV and batch manifest together. Use the recorded desired and measured angle samples to score RMS, bias and worst error by sweep direction, reversal/endpoint performance, update gaps and rate limits. Record actual speed and coverage through the planned stiffness window, unassisted return, verification time and failures. Compare one score per run across blocks. A bounded separate homing action may follow a fully persisted run with a small zero miss. Preserve the unassisted outcome and the separate homing evidence. Review and resolve any actual drive or acquisition fault before another test.
+
+## B. Qualify finalist controllers at the intended SOP condition
+
+Shortlist the strongest feedforward fit and the strongest feedback configuration. If the feedforward winner uses a different fit, compare that fit with feedback off and on under the same trajectory before choosing the feedback finalist. Then verify the finalist methods on the empty fixture at the intended range and speed. For streamed control, commission speed at ±5° (1 then 2°/s), acceleration at a proven speed, and range at a proven speed before attempting ±10° at 5°/s. Each escalation needs its own reviewed command limits and tracking evidence. The seven-method preset is fixed to the initial condition. Higher-speed and loaded feedback require later controller commissioning.
+
+For a workflow comparison, include the current native endpoint-driven SOP path at the proposed range and speed. At the selected condition, compare finalists using matched empty traces and the same mounted AFO. Two five-cycle runs per method on each of two independent mounts give eight loaded runs. Alternate order and use cycles 2–4 for each run-level stiffness estimate. Select a controller for the speed study based on loaded tracking, usable data, repeat scatter, zero procedure and time.
+
+## C. Find the fastest reliable loaded speed
+
+Screen 5°/s first, 20°/s if it gives a usable measured window, and 0.5°/s as the slow comparator. Use the existing standard empty and AFO presets for individual native runs. Set the candidate speeds explicitly. Hold motion method, range, acceleration, fixture, branch, angle window, conditioning and rest common. Save matched empty traces for each speed. If comparing different acceleration profiles, repeat one overlapping speed under both profiles.
+
+For each speed that passes screening, use one AFO, six independent remounts, two runs per speed per mount, five recorded cycles per run. Use cycles 2–4 for the run-level slope. Within each mount, execute the speeds in the order shown, then repeat in reverse order with the same rest. For fewer speeds, remove unused conditions from the order and keep starting orders balanced.
+
+| Mount | First pass, °/s |
+|---|---|
+| M01 | 0.5 → 5 → 20 |
+| M02 | 5 → 20 → 0.5 |
+| M03 | 20 → 0.5 → 5 |
+| M04 | 20 → 5 → 0.5 |
+| M05 | 0.5 → 20 → 5 |
+| M06 | 5 → 0.5 → 20 |
+
+Name files by mount, speed and repeat, e.g. `REL_M03_5dps_R2`. Three qualified speeds give 36 loaded runs and 180 recorded cycles. Two speeds give 24 runs and 120 cycles. Retain exclusions and timestamps.
+
+Before scoring, agree on the largest acceptable repeat difference and remount variability in stiffness units, based on the stiffness difference the study needs to resolve. For each speed report:
+- paired same-mount run differences and repeat scatter
+- variability of the six mount means, with individual mount results shown
+- within-mount stiffness differences versus 5°/s, kept separate from repeatability
+- measured speed and sample coverage within the stiffness window, excluded/faulted runs, and median elapsed time per usable test
+
+Select the fastest **measured** speed that meets the agreed limits and yields complete, usable runs. If 20°/s falls short and 5°/s qualifies, use 5°/s. If faster conditions fail, evaluate 0.5°/s against the same criteria. If stiffness shifts systematically with speed, document the selected rate as part of the measurement definition.

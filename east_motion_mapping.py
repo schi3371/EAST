@@ -117,7 +117,9 @@ def zero_recovery_candidate(app,request):
     import math
     m=app.run_metadata or {};z=m.get('zero_return_check',{})
     angle=z.get('unassisted_angle_deg')
-    if (getattr(request,'stage','') not in ('updated_10_repeat','commissioning','model_comparison')
+    from east_stream_screen import SCREEN_PRESET
+    screen = request.context().get('protocol_key') == SCREEN_PRESET
+    if ((not screen and getattr(request,'stage','') not in ('updated_10_repeat','commissioning','model_comparison'))
             or request.parameters.test_type!='empty_machine_baseline' or request.parameters.afo_id!='EMPTY_MACHINE_BASELINE'
             or not ready_for_next(app)
             or app.monitor_error or app.feedback_retry_pending or app.operator_stop_requested or app.acquisition_error
@@ -126,7 +128,7 @@ def zero_recovery_candidate(app,request):
             or m.get('outcome_pending_cleanup') or z.get('passed') is not False
             or not isinstance(angle,(float,int)) or not math.isfinite(angle)
             or not (abs(angle)>.1 or z.get('min_deg',0)<-.1 or z.get('max_deg',0)>.1)
-            or (request.stage=='updated_10_repeat' and abs(angle)>.25) or m.get('completed_cycles')!=request.parameters.cycles):
+            or ((screen or request.stage=='updated_10_repeat') and abs(angle)>.25) or m.get('completed_cycles')!=request.parameters.cycles):
         return False
     idle=m.get('idle_confirmation',{});csv=m.get('csv_recorder',{})
     rotary=m.get('rotary_sensor',{}).get('recording_statistics',{})

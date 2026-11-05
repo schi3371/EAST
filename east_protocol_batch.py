@@ -7,6 +7,7 @@ from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
 from east_motion_model import selected_variant
+from east_stream_screen import BLOCKS, SCREEN_PRESET
 
 SPEEDS = (0.5, 5.0, 20.0)
 
@@ -135,13 +136,24 @@ def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,b
     if (int(settings['cycles'])!=1 or float(settings['minimum_angle_deg'])!=5 or float(settings['maximum_angle_deg'])!=5
             or float(settings['acceleration_deg_s2'])!=5):raise ValueError('Reload fixed feedback pilot preset')
     if not str(setup).strip() or str(baseline).strip():raise ValueError('Empty fixture setup ID required')
-    batch_id=batch_id or uuid.uuid4().hex;requests=[]
-    for i,feedback in enumerate((False,True),1):
-        p=validate_test_parameters(dict(file_prefix=f'Pilot_B{batch_id[:8]}_R{i}',operator=identity['operator'],fixture_id=identity['fixture_id'],
+    batch_id = batch_id or uuid.uuid4().hex
+    requests = []
+    screen = key == SCREEN_PRESET
+    plan = ([(block, method) for block, order in enumerate(BLOCKS, 1) for method in order]
+            if screen else [(1, "candidate"), (1, "feedback")])
+    sequence = (.5,) * len(plan)
+    for i, (block, method) in enumerate(plan, 1):
+        feedback = method == "feedback"
+        variant = "candidate" if feedback else method
+        prefix = "StreamScreen" if screen else "Pilot"
+        p=validate_test_parameters(dict(file_prefix=f'{prefix}_B{batch_id[:8]}_R{i}',operator=identity['operator'],fixture_id=identity['fixture_id'],
             calibration_id=identity['calibration_id'],afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=1,
             speed_deg_s=.5,acceleration_deg_s2=5,min_angle_deg=5,max_angle_deg=5),config)
         meta=make_preset_metadata(key,config['test_presets'][key],p,loaded,False)
-        requests.append(ProtocolRequest(batch_id,f'R{i} candidate '+('continuous rotary feedback pilot' if feedback else 'feedforward reference'),i,2,p,meta,
-            str(path),str(setup).strip(),(.5,.5),None,command_model_enabled=True,stage='rotary_feedback_pilot',repeat=1,
-            model_variant='candidate',feedback_pilot=feedback))
+        if screen:
+            meta.update(screen_method=method, screen_block=block)
+        label = f'R{i} {variant} ' + ('rotary feedback' if feedback else 'feedforward')
+        requests.append(ProtocolRequest(batch_id, label, i, len(plan), p, meta,
+            str(path), str(setup).strip(), sequence, None, command_model_enabled=True,
+            stage='rotary_feedback_pilot', repeat=block, model_variant=variant, feedback_pilot=feedback))
     return requests

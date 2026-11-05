@@ -3533,6 +3533,8 @@ class MyInterface(OperatorView):
             parameters = self.run_parameters
             absolute_min = self.reference_manager.target_for_angle(-parameters.min_angle_deg)
             absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
+            from east_stream_screen import SCREEN_PRESET, StreamScreenModel
+            stream_screen = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SCREEN_PRESET
             if getattr(self, "run_motion_model_enabled", False) is True:
                 validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
                 anchor = self._test_feedback()
@@ -3542,9 +3544,18 @@ class MyInterface(OperatorView):
                 if getattr(self,'run_model_variant','current')=='candidate':
                     from east_wide_candidate import WideRunModel
                     model_class=WideRunModel
-                self.run_motion_model = model_class.anchored(anchor.position_turns, self.rotary_sensor.measurement(require=True)["angle_deg"])
+                rotary_angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
+                if stream_screen:
+                    self.run_motion_model = StreamScreenModel.anchored(self.run_model_variant, anchor.position_turns, rotary_angle)
+                    self.run_metadata["motion_method"] = f"Streamed {self.run_model_variant}" + (
+                        " + rotary feedback" if self.run_feedback_pilot else " feedforward")
+                else:
+                    self.run_motion_model = model_class.anchored(anchor.position_turns, rotary_angle)
                 self.run_metadata["experimental_motion_model"].update(self.run_motion_model.metadata())
-                self.update_terminal("Experimental inverse-cubic test motion active; rotary-anchored targets, secant-average speed conversion.\n")
+                if stream_screen:
+                    self.update_terminal(f"{self.run_metadata['motion_method']}; fixed rotary anchor and common trajectory.\n")
+                else:
+                    self.update_terminal("Experimental inverse-cubic test motion active; rotary-anchored targets, secant-average speed conversion.\n")
 
             if (getattr(self,'run_segmented_comparison',False) and not self.run_motion_model_enabled
                     and (self.run_motion_mapping_context or {}).get('stage') in ('commissioning','model_comparison')):
@@ -3570,7 +3581,7 @@ class MyInterface(OperatorView):
                 self.run_direction_holds(token)
             else:
                 self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_initial_max", token)
-                if self.run_motion_model is not None:
+                if self.run_motion_model is not None and not stream_screen:
                     # The first approach supplies a known increasing branch. A stationary
                     # zero has no identifiable branch; refine only the coordinate origin,
                     # never coefficients, before locking it for all numbered sweeps.
@@ -3843,7 +3854,10 @@ class MyInterface(OperatorView):
             now=time.monotonic();elapsed=now-begun
             desired,duration=ramp(start,target_angle,.5,elapsed)
             x=snapshot.position_turns-model.origin_turns
-            slope=(curve(x+.0001,direction)-curve(x-.0001,direction))/.0002
+            if hasattr(model, "slope"):
+                slope = model.slope(snapshot.position_turns, direction)
+            else:
+                slope = (curve(x + .0001, direction) - curve(x - .0001, direction)) / .0002
             row=step(desired,value['angle_deg'],model.target(desired,direction),last,max(.001,now-previous),slope,gain=.3 if self.run_feedback_pilot else 0.)
             row.update(host_monotonic_s=now,motor_feedback_host_s=snapshot.captured_monotonic_s,
                 rotary_sequence=value['sample'][3],rotary_sample_host_s=value['sample'][0],phase=phase,cycle=self.current_cycle,

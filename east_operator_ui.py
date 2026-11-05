@@ -566,6 +566,9 @@ class OperatorView:
         name = f"{preset['display_name']} v{preset['version']}"
         if preset.get('protocol_kind') == 'remaining_motion_data':
             return name + ' — 10 staged empty-machine runs; +/-10 repeats, +/-15 identification, stationary holds'
+        if preset.get('protocol_kind') == 'rotary_feedback_pilot':
+            count = len(preset['speeds_deg_s'])
+            return f'{name} — {count} planned runs at ±5°, 0.5°/s'
         if preset.get('execution_kind') == 'speed_sequence':
             name += ' — 0.5 → 5 → 20°/s; cycles EACH speed'
             try:

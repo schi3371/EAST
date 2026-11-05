@@ -367,7 +367,11 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         required = required_preset_fields
         if preset.get('execution_kind') == 'speed_sequence':
             required = (required_preset_fields - {'speed_deg_s'}) | {'speeds_deg_s'}
-            expected_speeds=[0.5,0.5] if preset.get('protocol_kind')=='rotary_feedback_pilot' else [0.5,5.0,20.0]
+            if key == 'streamed_model_screen':
+                from east_stream_screen import BLOCKS
+                expected_speeds = [0.5] * sum(map(len, BLOCKS))
+            else:
+                expected_speeds=[0.5,0.5] if preset.get('protocol_kind')=='rotary_feedback_pilot' else [0.5,5.0,20.0]
             if preset.get('speeds_deg_s') != expected_speeds or 'speed_deg_s' in preset:
                 raise ValueError(f'test_presets.{key} must declare the supported numeric speed sequence')
         elif preset.get('execution_kind','single_run') != 'single_run':
