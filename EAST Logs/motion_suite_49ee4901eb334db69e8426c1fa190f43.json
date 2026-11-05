@@ -1,0 +1,353 @@
+{
+  "additional_inter_run_rest_s": 0.0,
+  "automatic_baseline_correction": false,
+  "baseline_reference_equivalence_assumed": false,
+  "batch_id": "49ee4901eb334db69e8426c1fa190f43",
+  "common_settings": {
+    "acceleration_deg_s2": "5.0",
+    "cycles": "1",
+    "maximum_angle_deg": "5.0",
+    "minimum_angle_deg": "5.0",
+    "speed_deg_s": "0.5"
+  },
+  "completed_at": "2026-11-05T11:33:29.840803+11:00",
+  "cycles_per_speed": 1,
+  "error": "Model return missed rotary zero: mean -0.0836 degrees, observed range [-0.1070, -0.0658]; separate zero preparation required",
+  "experimental_motion_model": {
+    "coefficients": {
+      "b": [
+        -0.1427128197,
+        2.3654951387,
+        0.0010129331,
+        -0.0058765584
+      ],
+      "c": [
+        -0.1461277652,
+        -0.0002424609,
+        -0.0006208927,
+        6.1889e-06
+      ],
+      "control": "inverse-cubic feed-forward targets, not continuous rotary feedback",
+      "extrapolation_allowed": true,
+      "fit_nominal_speeds_deg_s": [
+        0.5,
+        5.0
+      ],
+      "fitted_motor_range_turns": [
+        -4.38,
+        4.38
+      ],
+      "inverse_bracket_turns": [
+        -8.0,
+        8.0
+      ],
+      "model_id": "direction-cubic-20261102-v1",
+      "reversals": "branch selected from planned destination direction; transient behaviour unvalidated",
+      "rotary_calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+      "speed_method": "secant average conversion per segment; instantaneous angular speed is not constant",
+      "status": "experimental_not_prospectively_validated",
+      "target_limit_deg": 15.0,
+      "zero_alignment": "provisional zero anchor, refined once after initial increasing positioning; fixed during numbered cycles"
+    },
+    "mode": "mixed_by_plan"
+  },
+  "identity": {
+    "afo_id": "0",
+    "calibration_id": "0",
+    "file_prefix": "MM_5",
+    "fixture_id": "0",
+    "operator": "SC"
+  },
+  "independent_remount_trials": false,
+  "initial_reference": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-05T11:28:37.338+11:00",
+      "established_by": "SC",
+      "fixture_id": "0",
+      "generation": 108,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "34bf4129-c692-4e5f-b53e-e802e2e75d6d",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 0.060669004917144775,
+      "reference_generation": 108,
+      "reference_id": "34bf4129-c692-4e5f-b53e-e802e2e75d6d",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:19860eb40ba14a00b30f9733ebe2c729",
+      "verified_at": "2026-11-05T11:28:37.351+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "initial_zero_stability_s": 0,
+  "inter_run_behaviour": "Normal zero return, settling, confirmed idle, recorder finalization and cleanup; no extra conditioning/rest",
+  "mounting_setup_id": "setup_e75e085db839",
+  "outcome": "error",
+  "planned_speed_sequence_deg_s": [
+    0.5,
+    0.5
+  ],
+  "protocol": {
+    "actual_commanded_values": {
+      "acceleration_deg_s2": 5.0,
+      "cycles": 1,
+      "maximum_angle_deg": 5.0,
+      "minimum_angle_deg": 5.0,
+      "speed_deg_s": 0.5
+    },
+    "loaded_at": "2026-11-05T11:28:48.773+11:00",
+    "original_preset_values": {
+      "acceleration_deg_s2": 5.0,
+      "cycles": 1,
+      "maximum_angle_deg": 5.0,
+      "minimum_angle_deg": 5.0,
+      "speeds_deg_s": [
+        0.5,
+        0.5
+      ]
+    },
+    "preset_display_name": "Rotary Feedback Pilot \u2014 Empty +/-5 at 0.5 dps",
+    "preset_key": "rotary_feedback_pilot",
+    "preset_modified": false,
+    "preset_version": "1.0",
+    "test_type": "empty_machine_baseline"
+  },
+  "reference": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-05T11:28:37.338+11:00",
+      "established_by": "SC",
+      "fixture_id": "0",
+      "generation": 108,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "34bf4129-c692-4e5f-b53e-e802e2e75d6d",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 0.060669004917144775,
+      "reference_generation": 108,
+      "reference_id": "34bf4129-c692-4e5f-b53e-e802e2e75d6d",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:19860eb40ba14a00b30f9733ebe2c729",
+      "verified_at": "2026-11-05T11:28:37.351+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "reference_history": [],
+  "runs": [
+    {
+      "context": {
+        "additional_inter_run_rest_s": 0.0,
+        "automatic_baseline_correction": false,
+        "baseline_batch_id": null,
+        "baseline_link_status": "not_linked",
+        "batch_id": "49ee4901eb334db69e8426c1fa190f43",
+        "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\motion_suite_49ee4901eb334db69e8426c1fa190f43.json",
+        "command_model_enabled": true,
+        "endpoint_feedback_is_not_feedforward_validation": false,
+        "feedback_pilot": false,
+        "independent_remount_trials": false,
+        "model_variant": "candidate",
+        "mounting_setup_id": "setup_e75e085db839",
+        "planned_speed_deg_s": 0.5,
+        "planned_speed_sequence_deg_s": [
+          0.5,
+          0.5
+        ],
+        "protocol_key": "rotary_feedback_pilot",
+        "protocol_version": "1.0",
+        "purpose": "three_speed_empty_baseline",
+        "repeat": 1,
+        "rotary_targeted": false,
+        "run_id": "R1 candidate feedforward reference",
+        "run_index": 1,
+        "same_mounting_across_speed_conditions": true,
+        "settings_status": "provisional_not_scientifically_validated",
+        "stage": "rotary_feedback_pilot",
+        "stationary_holds": false,
+        "total_runs": 2
+      },
+      "metadata_file": null,
+      "parameters": {
+        "afo_id": "EMPTY_MACHINE_BASELINE",
+        "calibration_id": "0",
+        "commanded_afo_acceleration_deg_s2": 5.0,
+        "commanded_afo_speed_deg_s": 0.5,
+        "cycles": 1,
+        "file_prefix": "Pilot_B49ee4901_R1",
+        "fixture_id": "0",
+        "max_angle_deg": 5.0,
+        "min_angle_deg": 5.0,
+        "operator": "SC",
+        "test_type": "empty_machine_baseline"
+      },
+      "reason": "Operator selected a later starting run in a NEW batch; prior experimental data are not imported or certified",
+      "rotary_file": null,
+      "status": "skipped_by_operator_before_start",
+      "strain_file": null
+    },
+    {
+      "completed_at": "2026-11-05T11:33:29.586+11:00",
+      "completed_cycles": 1,
+      "context": {
+        "additional_inter_run_rest_s": 0.0,
+        "automatic_baseline_correction": false,
+        "baseline_batch_id": null,
+        "baseline_link_status": "not_linked",
+        "batch_id": "49ee4901eb334db69e8426c1fa190f43",
+        "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\motion_suite_49ee4901eb334db69e8426c1fa190f43.json",
+        "command_model_enabled": true,
+        "endpoint_feedback_is_not_feedforward_validation": false,
+        "feedback_pilot": true,
+        "independent_remount_trials": false,
+        "model_variant": "candidate",
+        "mounting_setup_id": "setup_e75e085db839",
+        "planned_speed_deg_s": 0.5,
+        "planned_speed_sequence_deg_s": [
+          0.5,
+          0.5
+        ],
+        "protocol_key": "rotary_feedback_pilot",
+        "protocol_version": "1.0",
+        "purpose": "three_speed_empty_baseline",
+        "repeat": 1,
+        "rotary_targeted": false,
+        "run_id": "R2 candidate continuous rotary feedback pilot",
+        "run_index": 2,
+        "same_mounting_across_speed_conditions": true,
+        "settings_status": "provisional_not_scientifically_validated",
+        "stage": "rotary_feedback_pilot",
+        "stationary_holds": false,
+        "total_runs": 2
+      },
+      "error": "Model return missed rotary zero: mean -0.0836 degrees, observed range [-0.1070, -0.0658]; separate zero preparation required",
+      "metadata_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\Pilot_B49ee4901_R2_EMPTY_MACHINE_BASELINE_20261105T113218_795793+1100_metadata.json",
+      "outcome": "failure",
+      "parameters": {
+        "afo_id": "EMPTY_MACHINE_BASELINE",
+        "calibration_id": "0",
+        "commanded_afo_acceleration_deg_s2": 5.0,
+        "commanded_afo_speed_deg_s": 0.5,
+        "cycles": 1,
+        "file_prefix": "Pilot_B49ee4901_R2",
+        "fixture_id": "0",
+        "max_angle_deg": 5.0,
+        "min_angle_deg": 5.0,
+        "operator": "SC",
+        "test_type": "empty_machine_baseline"
+      },
+      "reason": "Model return missed rotary zero: mean -0.0836 degrees, observed range [-0.1070, -0.0658]; separate zero preparation required",
+      "rotary_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\Pilot_B49ee4901_R2_EMPTY_MACHINE_BASELINE_20261105T113218_795793+1100_rotary_samples.csv",
+      "run_status": "error",
+      "started_at": "2026-11-05T11:32:18.834+11:00",
+      "status": "failed",
+      "strain_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\Pilot_B49ee4901_R2_EMPTY_MACHINE_BASELINE_20261105T113218_795793+1100_strain_data.csv"
+    }
+  ],
+  "schema": "east-three-speed-batch-1",
+  "selected_end_run": 2,
+  "selected_run_count": 1,
+  "selected_start_run": 2,
+  "started_at": "2026-11-05T11:32:18.551083+11:00",
+  "stationary_target_holds": 0,
+  "test_type": "empty_machine_baseline",
+  "total_numbered_cycles": 1,
+  "total_plan_runs": 2,
+  "unloaded_tare": {
+    "calibration_id": "0",
+    "captured_at": "2026-11-05T11:20:34.199+11:00",
+    "fixture_id": "0",
+    "offset_v_per_v": -2.04780375e-06,
+    "operator_id": "SC",
+    "phidget_channel": 1,
+    "phidget_serial_number": 513296,
+    "sample_count": 16
+  },
+  "updated_at": "2026-11-05T11:33:29.840803+11:00",
+  "zero_preparations": []
+}
