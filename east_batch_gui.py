@@ -12,6 +12,9 @@ class RecordedBatchWindow:
     def append_terminal(self, message):
         if self.closed:
             return
+        admission_messages = getattr(self, '_admission_messages', None)
+        if admission_messages is not None:
+            admission_messages.append(message.strip())
         self.terminal.configure(state='normal')
         self.terminal.insert('end', message)
         # Bounded view; the main terminal and saved experimental files remain authoritative.
@@ -38,11 +41,18 @@ class RecordedBatchWindow:
         self.request = self.requests[len(self.records)]
         self.status.configure(text=f'Starting {self.request.run_id} ({self.request.index}/{self.request.total})')
         self.launched_at = time.monotonic()
-        if not self.app.start_strain_test(mapping_request=self.request):
+        self._admission_messages = []
+        try:
+            accepted = self.app.start_strain_test(mapping_request=self.request)
+        finally:
+            admission_detail = " ".join(filter(None, self._admission_messages))
+            self._admission_messages = None
+        if not accepted:
             if getattr(self,'track_admission_failures',False):
                 self.records.append(dict(context=self.request.context(),outcome='failure',
-                    error='Normal GUI admission blocked this run',strain_file=None,rotary_file=None,metadata_file=None))
-            self.finish('error', 'Normal GUI admission blocked this run; see Session Terminal')
+                    error='Normal GUI admission blocked this run',admission_detail=admission_detail or None,
+                    strain_file=None,rotary_file=None,metadata_file=None))
+            self.finish('error', admission_detail or 'Normal GUI admission blocked this run; see Session Terminal')
             return
         self.awaiting_run = True
 

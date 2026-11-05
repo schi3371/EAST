@@ -894,6 +894,12 @@ class MyInterface(OperatorView):
             if not self._latch_feedback_fault(
                     reason, monitor_connection, monitor_adapter):
                 return
+            service = getattr(self, "feedback_service", None)
+            snapshot = getattr(service, "fault_snapshot", None)
+            if snapshot is not None and getattr(self, "strain_test_active", False) and self.run_metadata is not None:
+                self.run_metadata["drive_fault_evidence"] = {
+                    "phase": self.motion_phase, "feedback": snapshot.to_dict(),
+                }
             self._request_coordinated_stop(reason, fault=True)
         self.feedback_service = FeedbackMonitor(
             lambda:(monitor_adapter if monitor_connection == self.odrive_connection_generation
@@ -2805,7 +2811,9 @@ class MyInterface(OperatorView):
 
         try:
             zero_value = self.rotary_sensor.measurement(require=True)
-            ready = self.rotary_zero_ready(rotary_only=bool(getattr(mapping_request,"rotary_targeted",False) or getattr(mapping_request,"command_model_enabled",None) is True))
+            pilot_start = getattr(mapping_request, "stage", "") == "rotary_feedback_pilot"
+            # The pilot worker verifies a full stationary window before any motion.
+            ready = self.rotary_reference_verified() if pilot_start else self.rotary_zero_ready()
         except (ReferenceError, RotaryError) as exc:
             self.update_terminal(f"Test blocked: {exc}\n")
             return False
@@ -2843,6 +2851,7 @@ class MyInterface(OperatorView):
                 if self.rotary_sensor.calibration.sha256 not in CALIBRATION_HASHES:
                     raise ValueError("Motion model requires its original rotary calibration; review/refit after calibration changes")
         except ValueError as exc:
+            self.update_terminal(f"Test blocked: {exc}\n")
             CTkMessagebox(title="Input Error", message=str(exc))
             return
         try:
@@ -2978,7 +2987,16 @@ class MyInterface(OperatorView):
             self._revalidate_hardware_identity(require_reference=True)
             self.rotary_sensor.measurement(require=True)
             snapshot = self.get_feedback()
-            if not self.rotary_zero_ready(rotary_only=self.run_rotary_targeted or self.run_motion_model_enabled):
+            pilot_start_zero = None
+            context = getattr(self, "run_motion_mapping_context", None) or {}
+            if context.get("stage") == "rotary_feedback_pilot":
+                reference = self.reference_manager.require_verified()
+                pilot_start_zero = self.observe_idle_neutral(
+                    reference.neutral_position_turns,
+                    cancelled=lambda: self.test_stop_event.is_set() or self.acquisition_error is not None,
+                    record_return=False,
+                )
+            elif not self.rotary_zero_ready(rotary_only=self.run_rotary_targeted or self.run_motion_model_enabled):
                 raise RuntimeError("Rotary zero changed during test confirmation; home again before testing")
             self.run_parameters = parameters
             self.configure_trajectory(
@@ -3002,6 +3020,8 @@ class MyInterface(OperatorView):
                 tare_metadata=self.empty_machine_tare.to_dict(),
                 preset_metadata=preset_metadata,
             )
+            if pilot_start_zero is not None:
+                self.run_metadata["pilot_start_zero_check"] = pilot_start_zero
             context = getattr(self, "run_motion_mapping_context", None)
             if isinstance(context, dict):
                 key = getattr(self, 'run_batch_metadata_key', None) or 'motion_modelling'
@@ -3951,7 +3971,7 @@ class MyInterface(OperatorView):
             or self.acquisition_error is not None,
         )
 
-    def observe_idle_neutral(self, neutral_target, cancelled=lambda: False):
+    def observe_idle_neutral(self, neutral_target, cancelled=lambda: False, *, record_return=True):
         from east_zero_window import collect_stationary_window
         cfg=self.system_config['reference'];duration=cfg['post_idle_observation_ms']/1000.
         tolerance_turns=afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config)
@@ -3961,7 +3981,7 @@ class MyInterface(OperatorView):
             if cancelled():raise TestStopped()
             snapshot=self.get_feedback()
             if snapshot.current_state!=int(AXIS_STATE_IDLE) or snapshot.active_errors:
-                raise FeedbackError('Controller left error-free idle during post-test observation')
+                raise FeedbackError('Controller left error-free idle during stationary zero observation')
             if not rotary_required and abs(snapshot.position_turns-neutral_target)>tolerance_turns:
                 raise RuntimeError('Machine-zero position drifted after ODrive entered idle')
             value=self.rotary_sensor.measurement(require=True) if rotary_required else None
@@ -3979,6 +3999,13 @@ class MyInterface(OperatorView):
         )
         if rotary_required:
             passed = within_rotary_band(observation)
+            if not record_return:
+                if not passed:
+                    raise RotaryError(
+                        "Pilot start zero did not remain within ±0.10° before the deadline "
+                        f"(observed {observation['min_deg']:+.4f}° to {observation['max_deg']:+.4f}°)."
+                    )
+                return observation
             self.run_metadata['zero_return_check']=dict(passed=passed,unassisted_angle_deg=observation['mean_deg'],
                 tolerance_deg=ZERO_TOLERANCE_DEG,phase='post_idle_stationary_window',
                 window_policy='rolling_until_existing_deadline',

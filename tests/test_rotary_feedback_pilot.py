@@ -43,7 +43,7 @@ class IntegrationTests(unittest.TestCase):
     pump=harness.ApplicationTests.pump
     ready=harness.ApplicationTests.ready
     prepare=harness.ApplicationTests.prepare
-    def execute_stop(self,start_run,complete=False):
+    def execute_stop(self,start_run,complete=False, *, transient_zero=False):
         a=self.prepare();a.loaded_preset_key='rotary_feedback_pilot'
         if complete:self.angle=.075  # Identical desired trajectory despite in-band starting offset.
         a.cycles_input.value='1';a.min_angle_input.value='5';a.max_angle_input.value='5';a.acceleration_input.value='5'
@@ -57,7 +57,12 @@ class IntegrationTests(unittest.TestCase):
         a._submit_position=submit
         w,_=window_for(a,self.module.ctk,'rotary_feedback_pilot')
         w.fields['start_run'].value=str(start_run)
+        if transient_zero:
+            self.angle = -.11
         w.start();self.assertTrue(w.active,w.status.options)
+        if transient_zero:
+            self.pump(lambda: (w.tick(), a.strain_test_active)[1], 8)
+            self.angle = -.08
         if complete:
             # Long fake-device traversal: isolate host scheduling from the controller test.
             a.rotary_sensor.config['stale_after_ms']=1000
@@ -77,6 +82,8 @@ class IntegrationTests(unittest.TestCase):
         m=json.loads(Path(w.records[0]['metadata_file']).read_text())
         self.assertEqual(m['rotary_feedback_pilot']['enabled'],start_run==2)
         self.assertGreaterEqual(len(m['rotary_feedback_pilot']['samples']),5)
+        if transient_zero:
+            self.assertGreaterEqual(m['pilot_start_zero_check']['duration_s'], .5)
         self.assertIsNone(a.motion_coordinator.owner)
         self.assertTrue(m['csv_recorder']['worker_complete'])
 
@@ -88,6 +95,9 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(self.module.TestStopped):a.command_rotary_feedback_pilot(0,'x',None)
         a.monitor_error='actual feedback fault'
         with self.assertRaisesRegex(RuntimeError,'Pending motion'):a.command_rotary_feedback_pilot(0,'x',None)
+
+    def test_start_accepts_settled_window_after_brief_out_of_band_reading(self):
+        self.execute_stop(2, transient_zero=True)
 
     def test_streamed_reference_stop(self):self.execute_stop(1)
     def test_feedback_commands_recorded_and_stop_cancels(self):self.execute_stop(2)

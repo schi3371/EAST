@@ -309,6 +309,7 @@ class FeedbackMonitor:
         self.on_delay, self.on_restored, self.on_fault = on_delay, on_restored, on_fault
         self.allow_motion_retry,self.on_motion_delay=allow_motion_retry,on_motion_delay
         self.error = None
+        self.fault_snapshot = None
         self.samples = 0
         from collections import deque
         self.motion_rejections=deque(maxlen=128)
@@ -373,7 +374,9 @@ class FeedbackMonitor:
                         raise FeedbackError('Comparison ownership changed during feedback retry')
                     motion_retry_pending=False
                 retry.accept_fresh(last_good,snapshot)
-                if snapshot.active_errors: raise FeedbackError(f'ODrive active errors: {snapshot.active_errors}')
+                if snapshot.active_errors:
+                    self.fault_snapshot = snapshot
+                    raise FeedbackError(f'ODrive active errors: {snapshot.active_errors}')
                 # A state request may complete while this bundle is returning.
                 # Compare only to the expectation that existed when capture began.
                 # Do not publish an old powered-state bundle as fresh idle evidence.
