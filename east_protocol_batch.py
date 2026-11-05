@@ -8,6 +8,7 @@ from east_core import validate_test_parameters, make_preset_metadata, preset_val
 
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
+from east_feedback_commissioning import condition_for
 
 SPEEDS = (0.5, 5.0, 20.0)
 
@@ -133,22 +134,28 @@ def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded
     return requests
 
 def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
-    if (int(settings['cycles'])!=1 or float(settings['minimum_angle_deg'])!=5 or float(settings['maximum_angle_deg'])!=5
-            or float(settings['acceleration_deg_s2'])!=5):raise ValueError('Reload fixed feedback pilot preset')
+    condition = condition_for(key)
+    half_range = condition.half_range_deg if condition else 5.
+    speed = condition.speed_deg_s if condition else .5
+    acceleration = condition.acceleration_deg_s2 if condition else 5.
+    if (int(settings['cycles']) != 1 or float(settings['minimum_angle_deg']) != half_range
+            or float(settings['maximum_angle_deg']) != half_range
+            or float(settings['acceleration_deg_s2']) != acceleration):
+        raise ValueError('Reload the selected fixed feedback preset')
     if not str(setup).strip() or str(baseline).strip():raise ValueError('Empty fixture setup ID required')
     batch_id = batch_id or uuid.uuid4().hex
     requests = []
     screen = key == SCREEN_PRESET
     plan = ([(block, method) for block, order in enumerate(BLOCKS, 1) for method in order]
             if screen else [(1, "candidate"), (1, "feedback")])
-    sequence = (.5,) * len(plan)
+    sequence = (speed,) * len(plan)
     for i, (block, method) in enumerate(plan, 1):
         feedback = method == "feedback"
         variant = "candidate" if feedback else method
         prefix = "StreamScreen" if screen else "Pilot"
         p=validate_test_parameters(dict(file_prefix=f'{prefix}_B{batch_id[:8]}_R{i}',operator=identity['operator'],fixture_id=identity['fixture_id'],
             calibration_id=identity['calibration_id'],afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=1,
-            speed_deg_s=.5,acceleration_deg_s2=5,min_angle_deg=5,max_angle_deg=5),config)
+            speed_deg_s=speed,acceleration_deg_s2=acceleration,min_angle_deg=half_range,max_angle_deg=half_range),config)
         meta=make_preset_metadata(key,config['test_presets'][key],p,loaded,False)
         if screen:
             meta.update(screen_method=method, screen_block=block)

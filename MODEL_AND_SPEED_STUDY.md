@@ -50,3 +50,31 @@ Before scoring, agree on the largest acceptable repeat difference and remount va
 - measured speed and sample coverage within the stiffness window, excluded/faulted runs, and median elapsed time per usable test
 
 Select the fastest **measured** speed that meets the agreed limits and yields complete, usable runs. If 20°/s falls short and 5°/s qualifies, use 5°/s. If faster conditions fail, evaluate 0.5°/s against the same criteria. If stiffness shifts systematically with speed, document the selected rate as part of the measurement definition.
+
+## Individually selected feedback commissioning stages
+
+After completing the first model screen, the **Feedback Stage** presets commission the wider cubic with feedback off (R1) and on (R2). Both use one cycle and the same desired angle-time trajectory, fixed zero anchor, streaming schedule, proportional gain policy and motor ceilings. Each preset runs only its two conditions. Select the next stage explicitly after reviewing the preceding measurements.
+
+| Stage | ROM | Reference speed, °/s | Reference acceleration, °/s² |
+|---|---|---:|---:|
+| 01 | ±5° | 1 | 1 |
+| 02 | ±5° | 2 | 2 |
+| 03 | ±10° | 0.5 | 0.5 |
+| 04 | ±10° | 2 | 2 |
+| 05 | ±10° | 5 | 5 |
+| 06 | ±10° | 5 | 20 |
+| 07 | ±10° | 10 | 20 |
+| 08 | ±10° | 10 | 50 |
+| 09 | ±10° | 20 | 100 |
+| 10 | ±15° | 5 | 20 |
+| 11 | ±15° | 20 | 100 |
+
+Stages 01/02 and 04/05 change speed and acceleration together to commission reachable profiles. Stages 05/06 and 07/08 isolate acceleration at the same speed and ROM. Stage 03 widens the range at the original slow rate. Stages 06/10 and 09/11 isolate ROM. The table defines initial screening conditions, followed by repetitions of usable conditions for repeatability.
+
+Use the Protocol menu with Engineering controls enabled. Load the chosen **Feedback Stage**, press Start and run R1–R2. Confirm physical clearance for the selected range and review actual travel, tracking, update gaps and limiting before another stage. No stage starts another preset.
+
+The planned reference ramp is distinct from the motor trajectory ceilings. The motor speed ceiling is 1.5 times requested fixture speed, capped at the routine maximum converted through 2.055. Acceleration uses 1.5 times reference acceleration with a floor of 5 and cap at the routine ceiling. Target slew uses that motor rate with the existing capped time interval. These caps can prevent the requested fixture rate from being reached. Metadata retains planned reference, applied motor limits, measured motion, rate limiting and timestamps so infeasible settings can be identified. No claim of rate achievement follows from the preset label.
+
+The initial commissioning tracking guard allows the reference travel over the configured motor feedback stale interval plus 0.25° reserve, with a minimum 1°. Actual measured travel is guarded at selected ROM plus 1° and remains subject to the accepted rotary-calibration range. These are provisional fault limits. Evaluate accuracy using the recorded tracking errors, separately from the guard. Sensor freshness, controller faults, Stop, durable recording and post-idle zero checks still apply.
+
+Leg deadlines use the planned ramp duration plus six seconds, within the existing global motion timeout. This accommodates a ±10° traversal at 0.5°/s. The original slow pilot and seven-method screen retain their original settings. Higher stages require bench validation. All commissioning presets are empty-fixture only. Loaded feedback commissioning follows review of the empty-fixture evidence.

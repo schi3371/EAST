@@ -3535,6 +3535,8 @@ class MyInterface(OperatorView):
             absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
             from east_stream_screen import SCREEN_PRESET, StreamScreenModel
             stream_screen = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SCREEN_PRESET
+            from east_feedback_commissioning import condition_for
+            commissioning = condition_for((getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key', ''))
             if getattr(self, "run_motion_model_enabled", False) is True:
                 validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
                 anchor = self._test_feedback()
@@ -3552,6 +3554,9 @@ class MyInterface(OperatorView):
                 else:
                     self.run_motion_model = model_class.anchored(anchor.position_turns, rotary_angle)
                 self.run_metadata["experimental_motion_model"].update(self.run_motion_model.metadata())
+                if commissioning:
+                    self.run_metadata["experimental_motion_model"]["zero_alignment"] = (
+                        "increasing branch anchored at measured zero; fixed origin across all legs")
                 if stream_screen:
                     self.update_terminal(f"{self.run_metadata['motion_method']}; fixed rotary anchor and common trajectory.\n")
                 else:
@@ -3581,7 +3586,7 @@ class MyInterface(OperatorView):
                 self.run_direction_holds(token)
             else:
                 self.command_test_angle(parameters.max_angle_deg, absolute_max, "moving_to_initial_max", token)
-                if self.run_motion_model is not None and not stream_screen:
+                if self.run_motion_model is not None and not stream_screen and commissioning is None:
                     # The first approach supplies a known increasing branch. A stationary
                     # zero has no identifiable branch; refine only the coordinate origin,
                     # never coefficients, before locking it for all numbered sweeps.
@@ -3833,8 +3838,24 @@ class MyInterface(OperatorView):
     def _command_rotary_feedback_pilot(self,target_angle,phase,token):
         from east_rotary_feedback import step,ramp,PERIOD_S
         from east_wide_candidate import curve
-        if self.run_parameters.test_type!='empty_machine_baseline' or abs(target_angle)>5 or self.run_parameters.commanded_afo_speed_deg_s!=.5:
-            raise RuntimeError('Feedback pilot restricted to empty +/-5 at 0.5 degrees/s')
+        from east_feedback_commissioning import policy
+        context = getattr(self, "run_motion_mapping_context", None) or {}
+        commissioning = policy(self.system_config, context.get("protocol_key", ""))
+        half_range = commissioning["half_range_deg"] if commissioning else 5.
+        speed = commissioning["speed_deg_s"] if commissioning else .5
+        acceleration = commissioning["ramp_acceleration_deg_s2"] if commissioning else .5
+        expected_acceleration = acceleration if commissioning else 5.
+        if (self.run_parameters.test_type != 'empty_machine_baseline'
+                or abs(target_angle) > half_range
+                or self.run_parameters.min_angle_deg != half_range
+                or self.run_parameters.max_angle_deg != half_range
+                or self.run_parameters.commanded_afo_speed_deg_s != speed
+                or self.run_parameters.commanded_afo_acceleration_deg_s2 != expected_acceleration):
+            raise RuntimeError('Feedback parameters differ from the explicitly selected fixed condition')
+        motor_speed = commissioning["motor_speed_nominal_deg_s"] if commissioning else .75
+        motor_acceleration = commissioning["motor_acceleration_nominal_deg_s2"] if commissioning else 5.
+        guard_arguments = ({key: commissioning[key] for key in (
+            "max_command_rate_turns_s", "tracking_guard_deg", "travel_guard_deg")} if commissioning else {})
         self.motion_phase=phase
         snapshot,value=self.check_rotary_acquisition(token)
         start={'moving_to_initial_max':0.,'moving_to_min':self.run_parameters.max_angle_deg,
@@ -3842,23 +3863,36 @@ class MyInterface(OperatorView):
         direction=1 if target_angle>start else -1
         model=self.run_motion_model
         if model is None:raise RuntimeError('Feedback pilot requires frozen candidate')
-        self.configure_trajectory(.75,5.)
+        self.configure_trajectory(motor_speed, motor_acceleration)
         self._write_runtime_checkpoint(MotionState.MOVING,snapshot,clean_shutdown=False,extra={'phase':phase,'control':'rotary_feedback_pilot'})
         log=self.run_metadata.setdefault('rotary_feedback_pilot',{'enabled':bool(self.run_feedback_pilot),'streamed_reference':True,'period_s':PERIOD_S,'proportional_gain':.3 if self.run_feedback_pilot else 0.,
             'correction_limit_deg':.1,'tracking_guard_deg':1.,'travel_guard_deg':6.,'samples':[]})
-        begun=previous=time.monotonic();last=snapshot.position_turns;deadline=begun+30.
+        _, planned_duration = ramp(start, target_angle, speed, 0., acceleration=acceleration)
+        leg_timeout = planned_duration + 6. if commissioning else 30.
+        if commissioning and leg_timeout > self.system_config["motion"]["maximum_motion_timeout_s"]:
+            raise RuntimeError("Commissioning leg exceeds the configured motion timeout")
+        if commissioning:
+            log["tracking_guard_deg"] = commissioning["tracking_guard_deg"]
+            log["travel_guard_deg"] = commissioning["travel_guard_deg"]
+            log["commissioning_policy"] = commissioning
+            log.setdefault("legs", []).append(dict(
+                phase=phase, reference_speed_deg_s=speed,
+                reference_acceleration_deg_s2=acceleration, planned_duration_s=planned_duration,
+                timeout_s=leg_timeout, motor_speed_turns_s=self.commanded_odrive_velocity,
+                motor_acceleration_turns_s2=self.commanded_odrive_acceleration))
+        begun=previous=time.monotonic();last=snapshot.position_turns;deadline=begun+leg_timeout
         while True:
             if self.test_stop_event.is_set() or self.acquisition_error:raise TestStopped()
             if time.monotonic()>deadline:raise RuntimeError('Rotary pilot leg timed out')
             snapshot,value=self.check_rotary_acquisition(token)
             now=time.monotonic();elapsed=now-begun
-            desired,duration=ramp(start,target_angle,.5,elapsed)
+            desired,duration=ramp(start,target_angle,speed,elapsed,acceleration=acceleration)
             x=snapshot.position_turns-model.origin_turns
             if hasattr(model, "slope"):
                 slope = model.slope(snapshot.position_turns, direction)
             else:
                 slope = (curve(x + .0001, direction) - curve(x - .0001, direction)) / .0002
-            row=step(desired,value['angle_deg'],model.target(desired,direction),last,max(.001,now-previous),slope,gain=.3 if self.run_feedback_pilot else 0.)
+            row=step(desired,value['angle_deg'],model.target(desired,direction),last,max(.001,now-previous),slope,gain=.3 if self.run_feedback_pilot else 0., **guard_arguments)
             row.update(host_monotonic_s=now,motor_feedback_host_s=snapshot.captured_monotonic_s,
                 rotary_sequence=value['sample'][3],rotary_sample_host_s=value['sample'][0],phase=phase,cycle=self.current_cycle,
                 measured_motor_turns=snapshot.position_turns,direction=direction)
@@ -3868,7 +3902,7 @@ class MyInterface(OperatorView):
             if self.test_stop_event.wait(PERIOD_S):raise TestStopped()
         # Stop issuing updates, settle the final command through the existing
         # supervised wait path. No endpoint acceptance is inferred from this.
-        self.command_position_and_wait(last,phase,token,.75,5.,distance_deg=.5)
+        self.command_position_and_wait(last,phase,token,motor_speed,motor_acceleration,distance_deg=.5)
         return last
 
     def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
