@@ -54,3 +54,29 @@ class ZeroAcceptanceTests(unittest.TestCase):
     def test_motion_after_rejected_window_prevents_reusing_stale_evidence(self):
         with self.assertRaisesRegex(RuntimeError, 'stationary'):
             self.observe(lambda tick: -.263, stationary_at=lambda tick: tick < 120)
+
+
+    def test_idle_settling_grace_and_late_stable_window(self):
+        tick = [0]
+
+        def read():
+            angle = -.14 if tick[0] < 220 else -.04
+            return dict(stationary=True, motor_turns=0, angle_deg=angle, sequence=tick[0])
+
+        result = collect_stationary_window(
+            read, .5, 5., settle_s=.5,
+            accept_window=lambda window: window['min_deg'] >= -.1 and window['max_deg'] <= .1,
+            clock=lambda: tick[0] / 100,
+            sleep=lambda delay: tick.__setitem__(0, tick[0] + 1),
+        )
+        self.assertEqual(result['settle_grace_s'], .5)
+        self.assertGreaterEqual(result['observation_elapsed_s'], 2.7)
+        self.assertEqual(result['min_deg'], -.04)
+        self.assertEqual(result['first_rejected_window']['min_deg'], -.14)
+
+    def test_sensor_fault_during_grace_stops_observation(self):
+        def stale_read():
+            raise RuntimeError('rotary sample is stale')
+
+        with self.assertRaisesRegex(RuntimeError, 'stale'):
+            collect_stationary_window(stale_read, .5, 5., settle_s=.5)

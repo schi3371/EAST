@@ -53,6 +53,17 @@ class BacklogTests(unittest.TestCase):
         self.release.set();self.assertTrue(w.stop(2))
         self.assertEqual(len(self.calls),6)
 
+    def test_first_checkpoint_after_quiet_period_is_not_reported_stalled(self):
+        manager = Mock()
+        writer = CheckpointWriter(manager, Mock())
+        writer.start()
+        self.addCleanup(writer.stop, 2)
+        writer.last_progress_monotonic_s = time.monotonic() - 30
+        writer.submit('idle', 'first', {})
+        self.assertTrue(writer.stop(2))
+        manager.write_checkpoint.assert_called_once_with(
+            'idle', 'first', clean_shutdown=False, extra={})
+
     def test_coalescing_does_not_hide_stalled_disk(self):
         w=self.writer();w.submit('moving','pending',{})
         w.last_progress_monotonic_s=time.monotonic()-3.1

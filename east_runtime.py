@@ -10,11 +10,25 @@ import traceback
 from datetime import datetime
 
 
+class _CheckpointQueue(queue.Queue):
+    """Start the persistence deadline when the first outstanding write is queued."""
+
+    def __init__(self, writer):
+        super().__init__(maxsize=8)
+        self.writer = writer
+
+    def _put(self, item):
+        # Queue calls this under its mutex, before incrementing unfinished_tasks.
+        if not self.unfinished_tasks:
+            self.writer.last_progress_monotonic_s = time.monotonic()
+        super()._put(item)
+
+
 class CheckpointWriter:
     def __init__(self, manager, on_error):
         self.manager = manager
         self.on_error = on_error
-        self.pending = queue.Queue(maxsize=8)
+        self.pending = _CheckpointQueue(self)
         self.stop_event = threading.Event()
         self.error = None
         self.last_disk_duration_s = 0.0
@@ -32,23 +46,20 @@ class CheckpointWriter:
             raise RuntimeError(f"checkpoint persistence failed: {self.error}")
         if self.stop_event.is_set():
             raise RuntimeError("checkpoint writer is stopped")
-        if time.monotonic() - self.last_progress_monotonic_s > self.persistence_deadline_s:
-            raise RuntimeError(
-                f"checkpoint persistence made no progress within {self.persistence_deadline_s:g} s; "
-                f"last disk write {self.last_disk_duration_s:.3f} s")
         item = ("checkpoint", motion_state, snapshot, extra)
-        # Only replace the tail periodic snapshot of the same state/owner. Never
-        # cross required writes, audit events, state changes or fault records.
-        # Queue's unfinished task count stays unchanged for one-for-one replacement.
-        if getattr(motion_state,"value",motion_state) in ("idle","moving"):
-            with self.pending.mutex:
-                if self.pending.queue:
-                    tail = self.pending.queue[-1]
-                    if (tail[0] == "checkpoint" and tail[1] == motion_state
-                            and tail[3] == extra):
-                        self.pending.queue[-1] = item
-                        self.coalesced_snapshots += 1
-                        return
+        with self.pending.mutex:
+            if (self.pending.unfinished_tasks
+                    and time.monotonic() - self.last_progress_monotonic_s > self.persistence_deadline_s):
+                raise RuntimeError(
+                    f"checkpoint persistence made no progress within {self.persistence_deadline_s:g} s; "
+                    f"last disk write {self.last_disk_duration_s:.3f} s")
+            # Coalesce only the tail periodic snapshot of the same state and owner.
+            if getattr(motion_state, "value", motion_state) in ("idle", "moving") and self.pending.queue:
+                tail = self.pending.queue[-1]
+                if tail[0] == "checkpoint" and tail[1] == motion_state and tail[3] == extra:
+                    self.pending.queue[-1] = item
+                    self.coalesced_snapshots += 1
+                    return
         try:
             self.pending.put_nowait(item)
         except queue.Full as exc:

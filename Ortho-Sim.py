@@ -2280,7 +2280,7 @@ class MyInterface(OperatorView):
             return snapshot, value
 
         def observe(duration, *, require_band=False):
-            from east_zero_window import collect_stationary_window
+            from east_zero_window import collect_stationary_window, ZERO_IDLE_SETTLE_S, ZERO_IDLE_TIMEOUT_S
             def read():
                 snapshot,value=check();sample=value['sample']
                 body['observations'].append({'host_monotonic_s':time.monotonic(),
@@ -2296,10 +2296,12 @@ class MyInterface(OperatorView):
                         and observation['max_deg'] <= policy.tolerance_deg)
 
             budget = deadline - time.monotonic()
+            settle_s = ZERO_IDLE_SETTLE_S if require_band else 0.0
             if require_band:
-                budget = min(budget, duration + self.system_config['reference']['idle_confirmation_timeout_s'])
+                budget = min(budget, ZERO_IDLE_TIMEOUT_S)
             result = collect_stationary_window(
-                read, duration, max(duration, budget),
+                read, duration, max(duration + settle_s, budget),
+                settle_s=settle_s,
                 position_tolerance_turns=afo_degrees_to_odrive_turns(
                     self.system_config['motion']['position_tolerance_deg'], self.system_config),
                 accept_window=within_band if require_band else None,
@@ -2364,6 +2366,7 @@ class MyInterface(OperatorView):
             body['idle_confirmed'] = True
             observing_idle = True
             after_idle = observe(2.0 if centre_requested else policy.dwell_s, require_band=True)
+            body['post_idle_observation'] = after_idle
             if centre_requested:
                 precision = {
                     "tolerance_deg": .01,
@@ -2384,7 +2387,10 @@ class MyInterface(OperatorView):
                     f"{'yes' if precision['all_observed_samples_within_band'] else 'no'}.\n"
                 )
             if after_idle['min_deg'] < -policy.tolerance_deg or after_idle['max_deg'] > policy.tolerance_deg:
-                raise RotaryError('Fixture left the stopping band after motor idle')
+                raise RotaryError(
+                    "Fixture left the stopping band after motor idle and did not settle "
+                    f"(last stationary range {after_idle['min_deg']:+.4f}° to {after_idle['max_deg']:+.4f}°)"
+                )
             body.update(outcome='sensor_zero_reached', final_observation=after_idle,
                         candidate_zero_motor_turns=check()[0].position_turns,
                         nominal_travel_deg=result['nominal_travel_deg'])
@@ -4010,7 +4016,7 @@ class MyInterface(OperatorView):
         )
 
     def observe_idle_neutral(self, neutral_target, cancelled=lambda: False, *, record_return=True):
-        from east_zero_window import collect_stationary_window
+        from east_zero_window import collect_stationary_window, ZERO_IDLE_SETTLE_S, ZERO_IDLE_TIMEOUT_S
         cfg=self.system_config['reference'];duration=cfg['post_idle_observation_ms']/1000.
         tolerance_turns=afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config)
         rotary_required=self.strain_test_active
@@ -4030,8 +4036,11 @@ class MyInterface(OperatorView):
             return (observation['min_deg'] >= -ZERO_TOLERANCE_DEG
                     and observation['max_deg'] <= ZERO_TOLERANCE_DEG)
 
+        settle_s = ZERO_IDLE_SETTLE_S if rotary_required else 0.0
+        timeout = (max(ZERO_IDLE_TIMEOUT_S, duration + settle_s) if rotary_required
+                   else cfg['idle_confirmation_timeout_s'] + duration)
         observation = collect_stationary_window(
-            read, duration, cfg['idle_confirmation_timeout_s'] + duration,
+            read, duration, timeout, settle_s=settle_s,
             position_tolerance_turns=tolerance_turns,
             accept_window=within_rotary_band if rotary_required else None,
         )
@@ -4046,7 +4055,7 @@ class MyInterface(OperatorView):
                 return observation
             self.run_metadata['zero_return_check']=dict(passed=passed,unassisted_angle_deg=observation['mean_deg'],
                 tolerance_deg=ZERO_TOLERANCE_DEG,phase='post_idle_stationary_window',
-                window_policy='rolling_until_existing_deadline',
+                window_policy='rolling_after_settling_grace',
                 nominal_motor_target_turns=neutral_target,**observation)
             if not passed:
                 raise RotaryZeroMiss(f"Model return missed rotary zero: mean {observation['mean_deg']:+.4f} degrees, "

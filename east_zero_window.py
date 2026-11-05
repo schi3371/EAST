@@ -5,8 +5,12 @@ import statistics
 import time
 
 
+ZERO_IDLE_SETTLE_S = 0.5
+ZERO_IDLE_TIMEOUT_S = 5.0
+
+
 def collect_stationary_window(read, duration, timeout, *, position_tolerance_turns=None,
-                              accept_window=None, clock=time.monotonic, sleep=time.sleep):
+                              accept_window=None, settle_s=0.0, clock=time.monotonic, sleep=time.sleep):
     if not math.isfinite(duration) or not math.isfinite(timeout) or duration <= 0 or timeout < duration:
         raise ValueError("Invalid stationary observation duration/deadline")
     if position_tolerance_turns is not None and (
@@ -14,7 +18,11 @@ def collect_stationary_window(read, duration, timeout, *, position_tolerance_tur
     ):
         raise ValueError("Invalid stationary position tolerance")
 
-    deadline = clock() + timeout
+    if not math.isfinite(settle_s) or settle_s < 0 or duration + settle_s > timeout:
+        raise ValueError("Invalid settling period for stationary observation")
+
+    started = clock()
+    deadline = started + timeout
     recent = deque()
     resets = 0
     first_rejected = last_rejected = None
@@ -39,6 +47,10 @@ def collect_stationary_window(read, duration, timeout, *, position_tolerance_tur
             if not math.isfinite(angle):
                 raise RuntimeError("Non-finite stationary rotary angle")
 
+        if now - started < settle_s:
+            sleep(.01)
+            continue
+
         recent.append((now, motor, value.get("sequence"), angle))
         if accept_window is not None:
             # Keep the shortest observed window that still spans the full dwell.
@@ -61,7 +73,8 @@ def collect_stationary_window(read, duration, timeout, *, position_tolerance_tur
                 raise RuntimeError("Insufficient fresh rotary samples during stationary observation")
             result = dict(duration_s=elapsed, stationary_resets=resets,
                           motor_min_turns=low, motor_max_turns=high,
-                          motor_final_turns=motor, completed_at_monotonic_s=now)
+                          motor_final_turns=motor, completed_at_monotonic_s=now,
+                          settle_grace_s=settle_s, observation_elapsed_s=now - started)
             if angles:
                 data = angles.values()
                 result.update(mean_deg=statistics.mean(data), min_deg=min(data),
