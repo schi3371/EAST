@@ -177,6 +177,22 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(self.position_targets,[])
         self.assertTrue(self.app.rotary_reference_verified())
 
+    def test_explicit_centring_moves_from_inside_band_and_records_fine_check(self):
+        self.prepare(.075)
+        app = self.app
+        app.rotary_homing = None
+        app.homing_acknowledged.set(True)
+        app.open_rotary_homing()
+        state = app.rotary_homing
+        self.assertFalse(state.verify_only)
+        self.pump(lambda: not state.active, 15)
+        evidence = state.future.result()['evidence']
+        self.assertEqual(evidence['outcome'], 'sensor_zero_reached', evidence.get('error'))
+        self.assertTrue(self.position_targets)
+        self.assertEqual(evidence['centring_mean_limit_deg'], .01)
+        self.assertGreaterEqual(evidence['fine_zero_check']['duration_s'], 2)
+        self.assertTrue(evidence['fine_zero_check']['mean_within_band'])
+
     def test_passive_check_accepts_full_band_without_commanding_motion(self):
         window=self.prepare(.075)
         window.verify_only=True

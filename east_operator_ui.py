@@ -413,7 +413,7 @@ class OperatorView:
             values=["Empty fixture", "AFO fitted"]).grid(row=2,column=0,columnspan=2,
                 padx=8,pady=4,sticky="ew")
         self.homing_acknowledged = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(machine_zero_frame, text="Fixture/AFO clear; sensor mounting unchanged; E-stop accessible",
+        ctk.CTkCheckBox(machine_zero_frame, text="Allow centring movement: fixture/AFO clear, sensor unchanged, E-stop accessible",
             variable=self.homing_acknowledged, font=("Arial",10)).grid(row=3,column=0,
                 columnspan=2,padx=8,pady=4,sticky="ew")
         self.homing_live_label = ctk.CTkLabel(machine_zero_frame,
