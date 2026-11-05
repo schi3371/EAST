@@ -3968,12 +3968,20 @@ class MyInterface(OperatorView):
             return dict(stationary=abs(snapshot.velocity_turns_s*factor)<=cfg['settle_velocity_limit_deg_s'],
                 motor_turns=snapshot.position_turns,angle_deg=value['angle_deg'] if value else None,
                 sequence=value['sample'][3] if value else None)
-        observation=collect_stationary_window(read,duration,cfg['idle_confirmation_timeout_s']+duration,
-            position_tolerance_turns=tolerance_turns)
+        def within_rotary_band(observation):
+            return (observation['min_deg'] >= -ZERO_TOLERANCE_DEG
+                    and observation['max_deg'] <= ZERO_TOLERANCE_DEG)
+
+        observation = collect_stationary_window(
+            read, duration, cfg['idle_confirmation_timeout_s'] + duration,
+            position_tolerance_turns=tolerance_turns,
+            accept_window=within_rotary_band if rotary_required else None,
+        )
         if rotary_required:
-            passed=observation['min_deg']>=-ZERO_TOLERANCE_DEG and observation['max_deg']<=ZERO_TOLERANCE_DEG
+            passed = within_rotary_band(observation)
             self.run_metadata['zero_return_check']=dict(passed=passed,unassisted_angle_deg=observation['mean_deg'],
                 tolerance_deg=ZERO_TOLERANCE_DEG,phase='post_idle_stationary_window',
+                window_policy='rolling_until_existing_deadline',
                 nominal_motor_target_turns=neutral_target,**observation)
             if not passed:
                 raise RotaryZeroMiss(f"Model return missed rotary zero: mean {observation['mean_deg']:+.4f} degrees, "

@@ -23,3 +23,34 @@ class WindowTests(unittest.TestCase):
         self.assertAlmostEqual(a.target(15)-a.target(-15),30/2.055)
         self.assertAlmostEqual(a.target(0),12-.075/2.055)
         with self.assertRaises(ValueError):LinearPoseAnchor(0,.2,2.055)
+
+class ZeroAcceptanceTests(unittest.TestCase):
+    def observe(self, angle_at, stationary_at=lambda tick: True):
+        tick = [0]
+
+        def read():
+            return dict(stationary=stationary_at(tick[0]), motor_turns=0,
+                        angle_deg=angle_at(tick[0]), sequence=tick[0])
+
+        return collect_stationary_window(
+            read, .5, 1.5,
+            accept_window=lambda result: result['min_deg'] >= -.1 and result['max_deg'] <= .1,
+            clock=lambda: tick[0] / 100,
+            sleep=lambda delay: tick.__setitem__(0, tick[0] + 1),
+        )
+
+    def test_near_boundary_excursion_can_clear_in_a_later_full_window(self):
+        result = self.observe(lambda tick: -.107 if tick == 43 else -.084)
+        self.assertGreaterEqual(result['completed_at_monotonic_s'], .94)
+        self.assertGreaterEqual(result['duration_s'], .5)
+        self.assertEqual(result['min_deg'], -.084)
+        self.assertEqual(result['first_rejected_window']['min_deg'], -.107)
+
+    def test_sustained_miss_is_returned_as_rejected_evidence(self):
+        result = self.observe(lambda tick: -.263)
+        self.assertEqual(result['mean_deg'], -.263)
+        self.assertEqual(result['completed_at_monotonic_s'], 1.5)
+
+    def test_motion_after_rejected_window_prevents_reusing_stale_evidence(self):
+        with self.assertRaisesRegex(RuntimeError, 'stationary'):
+            self.observe(lambda tick: -.263, stationary_at=lambda tick: tick < 120)
