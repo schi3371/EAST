@@ -117,21 +117,24 @@ def zero_recovery_candidate(app,request):
     import math
     m=app.run_metadata or {};z=m.get('zero_return_check',{})
     angle=z.get('unassisted_angle_deg')
+    from east_full_model_suite import PRESET, RECOVERABLE_PREFIXES
+    partial_model_miss = (request.context().get('protocol_key') == PRESET
+        and str(m.get('error','')).startswith(RECOVERABLE_PREFIXES))
+    zero_miss = (z.get('passed') is False and isinstance(angle,(float,int)) and math.isfinite(angle)
+        and (abs(angle)>.1 or z.get('min_deg',0)<-.1 or z.get('max_deg',0)>.1)
+        and m.get('completed_cycles')==request.parameters.cycles
+        and str(m.get('error','')).startswith('Model return missed rotary zero:'))
     if (getattr(request, 'metadata_key', None) != 'protocol_batch'
             or request.parameters.test_type!='empty_machine_baseline' or request.parameters.afo_id!='EMPTY_MACHINE_BASELINE'
             or not ready_for_next(app)
             or app.monitor_error or app.feedback_retry_pending or app.operator_stop_requested or app.acquisition_error
             or app.engine.cancel_event.is_set()
             or m.get('protocol_batch')!=request.context() or m.get('run_status')!='error'
-            or m.get('outcome_pending_cleanup') or z.get('passed') is not False
-            or not isinstance(angle,(float,int)) or not math.isfinite(angle)
-            or not (abs(angle)>.1 or z.get('min_deg',0)<-.1 or z.get('max_deg',0)>.1)
-            or m.get('completed_cycles')!=request.parameters.cycles):
+            or m.get('outcome_pending_cleanup') or not (zero_miss or partial_model_miss)):
         return False
     idle=m.get('idle_confirmation',{});csv=m.get('csv_recorder',{})
     rotary=m.get('rotary_sensor',{}).get('recording_statistics',{})
     return bool(idle.get('confirmed') and idle.get('motion_owner') is None and not idle.get('monitor_error')
         and csv.get('worker_complete') and not csv.get('pending_rows') and not csv.get('error')
         and m.get('sample_count') and csv.get('rows_persisted')==m.get('sample_count')
-        and rotary.get('delivered_samples') and not rotary.get('invalid_samples') and not rotary.get('recording_error')
-        and str(m.get('error','')).startswith('Model return missed rotary zero:'))
+        and rotary.get('delivered_samples') and not rotary.get('invalid_samples') and not rotary.get('recording_error'))

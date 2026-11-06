@@ -28,6 +28,9 @@ CONDITIONS = {
 
 
 def condition_for(key):
+    from east_full_model_suite import CONDITION_PREFIX, condition_speed
+    if key.startswith(CONDITION_PREFIX):
+        return Condition(15., condition_speed(key), 100.)
     if not key.startswith(PREFIX):
         return None
     suffix = key[len(PREFIX):]
@@ -40,7 +43,11 @@ def policy(config, key):
     condition = condition_for(key)
     if condition is None:
         return None
-    motion = config["motion"]
+    from east_full_model_suite import CONDITION_PREFIX, profile
+    engineering = key.startswith(CONDITION_PREFIX)
+    motion = dict(config["motion"])
+    if engineering:
+        motion.update(profile(config))
     if (condition.speed_deg_s > motion["maximum_speed_deg_s"]
             or condition.acceleration_deg_s2 > motion["maximum_acceleration_deg_s2"]
             or condition.half_range_deg > motion["maximum_afo_angle_deg"]):
@@ -63,4 +70,6 @@ def policy(config, key):
                 travel_guard_deg=condition.half_range_deg+1.,
                 tracking_error_action="record",
                 tracking_guard_basis="reference travel over motor stale limit plus 0.25° reserve, minimum 1°",
-                fixed_origin=True)
+                fixed_origin=True,
+                maximum_leg_timeout_s=motion["maximum_motion_timeout_s"],
+                reference_period_s=motion.get("reference_period_s", .1))

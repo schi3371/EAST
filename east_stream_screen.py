@@ -35,9 +35,9 @@ def _coefficients(variant, direction):
     return tuple(b + direction * c for b, c in zip(base, directional)) if directional else base
 
 
-def _inverse(variant, angle, direction):
+def _inverse(variant, angle, direction, bracket=MOTOR_BRACKET):
     coefficients = _coefficients(variant, direction)
-    lo, hi = -MOTOR_BRACKET, MOTOR_BRACKET
+    lo, hi = -bracket, bracket
     if not math.isfinite(angle) or not _evaluate(coefficients, lo) <= angle <= _evaluate(coefficients, hi):
         raise ValueError("Streamed target outside frozen inverse bracket")
     for _ in range(45):
@@ -62,21 +62,25 @@ class StreamScreenModel:
     origin_turns: float
     anchor_motor_turns: float
     anchor_rotary_angle_deg: float
+    angle_limit_deg: float = 5.
+    bracket_turns: float = MOTOR_BRACKET
 
     @classmethod
-    def anchored(cls, variant, motor, angle):
+    def anchored(cls, variant, motor, angle, *, full_range=False):
         if not math.isfinite(motor) or not math.isfinite(angle) or abs(angle) > .1:
             raise ValueError("Streamed model anchor requires rotary zero")
-        return cls(variant, motor - _inverse(variant, angle, 1), motor, angle)
+        bracket = 8. if full_range else MOTOR_BRACKET
+        return cls(variant, motor - _inverse(variant, angle, 1, bracket), motor, angle,
+                   15. if full_range else 5., bracket)
 
     def target(self, angle, direction):
-        if abs(angle) > 5:
-            raise ValueError("Common-trajectory screen restricted to ±5°")
-        return self.origin_turns + _inverse(self.variant, angle, direction)
+        if not math.isfinite(angle) or abs(angle) > self.angle_limit_deg:
+            raise ValueError("Target outside selected common-trajectory range")
+        return self.origin_turns + _inverse(self.variant, angle, direction, self.bracket_turns)
 
     def slope(self, motor, direction):
         position = motor - self.origin_turns
-        if not math.isfinite(position) or abs(position) > MOTOR_BRACKET:
+        if not math.isfinite(position) or abs(position) > self.bracket_turns:
             raise ValueError("Measured position outside streamed model bracket")
         coefficients = _coefficients(self.variant, direction)
         return _evaluate(tuple(i * b for i, b in enumerate(coefficients) if i), position)
@@ -87,4 +91,6 @@ class StreamScreenModel:
                     origin_turns=self.origin_turns, anchor_motor_turns=self.anchor_motor_turns,
                     anchor_rotary_angle_deg=self.anchor_rotary_angle_deg,
                     zero_alignment="increasing branch anchored to measured rotary zero; origin fixed for all legs",
-                    inverse_bracket_turns=[-MOTOR_BRACKET, MOTOR_BRACKET])
+                    inverse_bracket_turns=[-self.bracket_turns, self.bracket_turns],
+                    target_limit_deg=self.angle_limit_deg,
+                    extrapolation_status="frozen model evaluated over selected range; prospective accuracy unverified")

@@ -373,6 +373,10 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
                 expected_speeds = [c.speed_deg_s for c in CONDITIONS.values() for _ in range(2)]
             elif condition:
                 expected_speeds = [condition.speed_deg_s] * 2
+            elif key == 'full_model_speed_comparison':
+                from east_full_model_suite import rows, profile
+                profile(config)
+                expected_speeds = [r[0] for r in rows()]
             elif key == 'streamed_model_screen':
                 from east_stream_screen import BLOCKS
                 expected_speeds = [0.5] * sum(map(len, BLOCKS))

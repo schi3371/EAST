@@ -3524,6 +3524,7 @@ class MyInterface(OperatorView):
     def strain_test_control(self):
         """Control the motor and log strain data during the test"""
         from east_rotary_homing import RotaryZeroMiss
+        from east_full_model_suite import ComparisonMotionMiss
         final_status = "aborted"
         final_error = None
         idle_confirmed = False
@@ -3545,7 +3546,9 @@ class MyInterface(OperatorView):
             absolute_min = self.reference_manager.target_for_angle(-parameters.min_angle_deg)
             absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
             from east_stream_screen import SCREEN_PRESET, StreamScreenModel
-            stream_screen = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SCREEN_PRESET
+            from east_full_model_suite import PRESET as FULL_COMPARISON
+            screen_key = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key')
+            stream_screen = screen_key in (SCREEN_PRESET, FULL_COMPARISON)
             from east_feedback_commissioning import condition_for
             motion_context = getattr(self, 'run_motion_mapping_context', None) or {}
             commissioning = condition_for(motion_context.get(
@@ -3561,7 +3564,8 @@ class MyInterface(OperatorView):
                     model_class=WideRunModel
                 rotary_angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
                 if stream_screen:
-                    self.run_motion_model = StreamScreenModel.anchored(self.run_model_variant, anchor.position_turns, rotary_angle)
+                    self.run_motion_model = StreamScreenModel.anchored(self.run_model_variant, anchor.position_turns, rotary_angle,
+                        full_range=screen_key == FULL_COMPARISON)
                     self.run_metadata["motion_method"] = f"Streamed {self.run_model_variant}" + (
                         " + rotary feedback" if self.run_feedback_pilot else " feedforward")
                 else:
@@ -3661,6 +3665,12 @@ class MyInterface(OperatorView):
                 final_status = "aborted"
                 final_error = "operator stop"
                 self.update_terminal("Strain test aborted.\n")
+        except ComparisonMotionMiss as exc:
+            final_status = "error"
+            final_error = str(exc)
+            result = self.safe_idle_motor('saving incomplete comparison before automatic homing', token=token)
+            idle_confirmed = bool(result and result.confirmed)
+            self.update_terminal(f"Comparison run incomplete: {exc}. Saving failed attempt; automatic homing precedes the next condition.\n")
         except RotaryZeroMiss as exc:
             final_status = "error"
             final_error = str(exc)
@@ -3866,12 +3876,20 @@ class MyInterface(OperatorView):
                 raise TestStopped() from exc
             raise
 
+        except (RuntimeError, ValueError) as exc:
+            from east_full_model_suite import PRESET, RECOVERABLE_PREFIXES, ComparisonMotionMiss
+            context = getattr(self, 'run_motion_mapping_context', None) or {}
+            if context.get('protocol_key') == PRESET and str(exc).startswith(RECOVERABLE_PREFIXES):
+                raise ComparisonMotionMiss(str(exc)) from exc
+            raise
+
     def _command_rotary_feedback_pilot(self,target_angle,phase,token):
         from east_rotary_feedback import step,ramp,PERIOD_S
         from east_wide_candidate import curve
         from east_feedback_commissioning import policy
         context = getattr(self, "run_motion_mapping_context", None) or {}
         commissioning = policy(self.system_config, context.get("feedback_condition_key", context.get("protocol_key", "")))
+        period = commissioning["reference_period_s"] if commissioning else PERIOD_S
         half_range = commissioning["half_range_deg"] if commissioning else 5.
         speed = commissioning["speed_deg_s"] if commissioning else .5
         acceleration = commissioning["ramp_acceleration_deg_s2"] if commissioning else .5
@@ -3896,11 +3914,11 @@ class MyInterface(OperatorView):
         if model is None:raise RuntimeError('Feedback pilot requires frozen candidate')
         self.configure_trajectory(motor_speed, motor_acceleration)
         self._write_runtime_checkpoint(MotionState.MOVING,snapshot,clean_shutdown=False,extra={'phase':phase,'control':'rotary_feedback_pilot'})
-        log=self.run_metadata.setdefault('rotary_feedback_pilot',{'enabled':bool(self.run_feedback_pilot),'streamed_reference':True,'period_s':PERIOD_S,'proportional_gain':.3 if self.run_feedback_pilot else 0.,
+        log=self.run_metadata.setdefault('rotary_feedback_pilot',{'enabled':bool(self.run_feedback_pilot),'streamed_reference':True,'period_s':period,'proportional_gain':.3 if self.run_feedback_pilot else 0.,
             'correction_limit_deg':.1,'tracking_guard_deg':1.,'travel_guard_deg':6.,'samples':[]})
         _, planned_duration = ramp(start, target_angle, speed, 0., acceleration=acceleration)
         leg_timeout = planned_duration + 6. if commissioning else 30.
-        if commissioning and leg_timeout > self.system_config["motion"]["maximum_motion_timeout_s"]:
+        if commissioning and leg_timeout > commissioning["maximum_leg_timeout_s"]:
             raise RuntimeError("Commissioning leg exceeds the configured motion timeout")
         if commissioning:
             log["tracking_guard_deg"] = commissioning["tracking_guard_deg"]
@@ -3931,7 +3949,7 @@ class MyInterface(OperatorView):
             log['samples'].append(row)
             last=row['command_target_turns'];self._submit_position(token,last);row['command_issued_at_monotonic_s']=time.monotonic();previous=now
             if elapsed>=duration+1.:break
-            if self.test_stop_event.wait(PERIOD_S):raise TestStopped()
+            if self.test_stop_event.wait(period):raise TestStopped()
         # Stop issuing updates, settle the final command through the existing
         # supervised wait path. No endpoint acceptance is inferred from this.
         self.command_position_and_wait(last,phase,token,motor_speed,motor_acceleration,distance_deg=.5)

@@ -52,6 +52,9 @@ class ProtocolRequest:
 
 
 def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id=None):
+    from east_full_model_suite import PRESET, make_plan
+    if preset_key == PRESET:
+        return make_plan(config,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
     if config['test_presets'][preset_key].get('protocol_kind') in ('model_comparison','rotary_feedback_pilot'):
         return make_comparison_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
     if config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data':
