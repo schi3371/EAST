@@ -1424,10 +1424,18 @@ class MyInterface(OperatorView):
             self._request_coordinated_stop("Rotary sensor: " + value["reason"], fault=True)
         self._refresh_motion_controls()
 
+    def _rotary_acquisition_travel_limit(self):
+        from east_feedback_commissioning import policy
+        context = getattr(self, "run_motion_mapping_context", None) or {}
+        selected = policy(self.system_config, context.get("feedback_condition_key", context.get("protocol_key", "")))
+        return selected["travel_guard_deg"] if selected else 15.1
+
     def _test_feedback(self):
         value = self.rotary_sensor.measurement(require=True)
-        if getattr(self,"run_rotary_targeted",False) is True and abs(value["angle_deg"])>15.1:
-            raise RotaryError("Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
+        if getattr(self,"run_rotary_targeted",False) is True:
+            limit = self._rotary_acquisition_travel_limit()
+            if abs(value["angle_deg"]) > limit:
+                raise RotaryError(f"Rotary acquisition travel guard exceeded: measured {value['angle_deg']:+.4f} degrees; limit +/-{limit:g}")
         return self.get_feedback()
 
     def _ensure_load_cell(self):
@@ -3377,8 +3385,10 @@ class MyInterface(OperatorView):
                 wall_time = datetime.now().astimezone()
                 monotonic_time = time.monotonic()
                 rotary = self.rotary_sensor.measurement(require=True)
-                if getattr(self,"run_rotary_targeted",False) is True and abs(rotary["angle_deg"])>15.1:
-                    raise RuntimeError("Rotary-supervised acquisition exceeded +/-15 degrees plus 0.1-degree tolerance")
+                if getattr(self,"run_rotary_targeted",False) is True:
+                    limit = self._rotary_acquisition_travel_limit()
+                    if abs(rotary["angle_deg"]) > limit:
+                        raise RuntimeError(f"Rotary acquisition travel guard exceeded: measured {rotary['angle_deg']:+.4f} degrees; limit +/-{limit:g}")
                 rotary_sample = rotary["sample"]
                 rotary_key = (rotary_sample[4], rotary_sample[3])
                 rotary_new_sample = rotary_key != self.last_rotary_logged_key
@@ -3770,8 +3780,9 @@ class MyInterface(OperatorView):
             raise FeedbackError('Controller disarm reason changed during rotary acquisition')
         value = self.rotary_sensor.measurement(require=True)
         self._mark_control_health()
-        if abs(value['angle_deg']) > 15.1:
-            raise RuntimeError('Rotary acquisition exceeded +/-15 degrees plus 0.1-degree tolerance')
+        limit = self._rotary_acquisition_travel_limit()
+        if abs(value['angle_deg']) > limit:
+            raise RuntimeError(f"Rotary acquisition travel guard exceeded: measured {value['angle_deg']:+.4f} degrees; limit +/-{limit:g}")
         return snapshot,value
 
     def observe_rotary_hold(self, duration, token):

@@ -111,6 +111,62 @@ class CommissioningIntegrationTests(unittest.TestCase):
             self.assertEqual(metadata['completed_cycles'], 1)
             self.assertTrue(metadata['zero_return_check']['passed'])
 
+    def test_fifteen_degree_pair_records_endpoint_error_past_old_cutoff(self):
+        app, window = self.setup_stage('10')
+        submit = app._submit_position
+        def endpoint_offset(token, target):
+            submit(token, target)
+            if abs(self.angle) > 14.9:
+                self.angle += .2 if self.angle > 0 else -.2
+        app._submit_position = endpoint_offset
+        window.start()
+        self.assertTrue(window.active, window.status.options)
+        self.pump(lambda: (window.tick(), not window.active)[1], 85)
+        self.assertEqual(window.batch_status, 'completed', window.batch_error)
+        self.assertEqual(len(window.records), 2)
+        for record in window.records:
+            metadata = json.loads(Path(record['metadata_file']).read_text())
+            self.assertEqual(metadata['completed_cycles'], 1)
+            samples = metadata['rotary_feedback_pilot']['samples']
+            self.assertGreater(max(abs(row['measured_angle_deg']) for row in samples), 15.1)
+            self.assertEqual(metadata['rotary_feedback_pilot']['travel_guard_deg'], 16.)
+            self.assertTrue(metadata['csv_recorder']['worker_complete'])
+
+    def test_wide_commissioning_uses_selected_guard_in_all_acquisition_paths(self):
+        from unittest.mock import Mock
+        app, window = self.setup_stage('10')
+        app.run_motion_mapping_context = {'feedback_condition_key': PREFIX+'10'}
+        app.run_rotary_targeted = True
+        token = object()
+        app.acquisition_error = None
+        app.last_rotary_logged_key = None
+        app.angle_filter.get_smoothed_value = Mock(return_value=None)
+        app.motion_coordinator.assert_active = Mock()
+        snapshot = app.get_feedback()
+        from dataclasses import replace
+        app.get_feedback = Mock(return_value=replace(snapshot,
+            current_state=int(self.module.AXIS_STATE_CLOSED_LOOP_CONTROL),
+            active_errors=0,disarm_reason=app.expected_disarm_reason))
+        self.assertEqual(app._rotary_acquisition_travel_limit(), 16.)
+        for angle in (15.11, 15.7, -15.7):
+            self.angle = angle
+            app._test_feedback()
+            self.assertAlmostEqual(app.check_rotary_acquisition(token)[1]['angle_deg'], angle)
+            app.acquisition_error = None
+            app.log_strain_data(0., 0)
+            self.assertIsNone(app.acquisition_error)
+        for angle in (16.01, -16.01):
+            self.angle = angle
+            with self.assertRaisesRegex(Exception, 'limit \+/-16'):
+                app._test_feedback()
+            with self.assertRaisesRegex(RuntimeError, 'limit \+/-16'):
+                app.check_rotary_acquisition(token)
+        app.run_motion_mapping_context = None
+        self.assertEqual(app._rotary_acquisition_travel_limit(), 15.1)
+        self.angle = 15.11
+        with self.assertRaisesRegex(Exception, 'limit \+/-15.1'):
+            app._test_feedback()
+
     def test_r9_observed_lag_is_recorded_and_control_continues(self):
         # Reproduce the recorded R9 trajectory lag in the real GUI worker.
         app, window = self.setup_stage('05')
