@@ -367,9 +367,11 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
         required = required_preset_fields
         if preset.get('execution_kind') == 'speed_sequence':
             required = (required_preset_fields - {'speed_deg_s'}) | {'speeds_deg_s'}
-            from east_feedback_commissioning import condition_for
+            from east_feedback_commissioning import CONDITIONS, SEQUENCE_PRESET, condition_for
             condition = condition_for(key)
-            if condition:
+            if key == SEQUENCE_PRESET:
+                expected_speeds = [c.speed_deg_s for c in CONDITIONS.values() for _ in range(2)]
+            elif condition:
                 expected_speeds = [condition.speed_deg_s] * 2
             elif key == 'streamed_model_screen':
                 from east_stream_screen import BLOCKS

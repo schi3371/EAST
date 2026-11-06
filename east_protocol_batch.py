@@ -8,7 +8,7 @@ from east_core import validate_test_parameters, make_preset_metadata, preset_val
 
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
-from east_feedback_commissioning import condition_for
+from east_feedback_commissioning import CONDITIONS, PREFIX, SEQUENCE_PRESET, condition_for
 
 SPEEDS = (0.5, 5.0, 20.0)
 
@@ -32,6 +32,7 @@ class ProtocolRequest:
     stationary_holds: bool = False
     model_variant: str = 'current'
     feedback_pilot: bool = False
+    feedback_condition_key: Optional[str] = None
 
     def context(self):
         return dict(purpose='three_speed_empty_baseline' if self.parameters.test_type=='empty_machine_baseline' else 'three_speed_afo_testing',
@@ -45,7 +46,9 @@ class ProtocolRequest:
             automatic_baseline_correction=False,settings_status='provisional_not_scientifically_validated',
             command_model_enabled=self.command_model_enabled,rotary_targeted=self.rotary_targeted,
             stage=self.stage,repeat=self.repeat,stationary_holds=self.stationary_holds,model_variant=self.model_variant,feedback_pilot=self.feedback_pilot,
-            endpoint_feedback_is_not_feedforward_validation=self.rotary_targeted)
+            endpoint_feedback_is_not_feedforward_validation=self.rotary_targeted,
+            **({"feedback_condition_key": self.feedback_condition_key}
+               if self.feedback_condition_key is not None else {}))
 
 
 def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id=None):
@@ -134,6 +137,8 @@ def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded
     return requests
 
 def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
+    if key == SEQUENCE_PRESET:
+        return make_feedback_sequence(config, identity, settings, setup, baseline, path, loaded, batch_id)
     condition = condition_for(key)
     half_range = condition.half_range_deg if condition else 5.
     speed = condition.speed_deg_s if condition else .5
@@ -163,4 +168,44 @@ def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,b
         requests.append(ProtocolRequest(batch_id, label, i, len(plan), p, meta,
             str(path), str(setup).strip(), sequence, None, command_model_enabled=True,
             stage='rotary_feedback_pilot', repeat=block, model_variant=variant, feedback_pilot=feedback))
+    return requests
+
+
+
+def make_feedback_sequence(config, identity, settings, setup, baseline, path, loaded, batch_id=None):
+    """Compose reviewed pairs into one batch while preserving each condition's identity."""
+    from dataclasses import replace
+
+    first = next(iter(CONDITIONS.values()))
+    expected = (1, first.half_range_deg, first.half_range_deg, first.acceleration_deg_s2)
+    actual = (int(settings['cycles']), float(settings['minimum_angle_deg']),
+              float(settings['maximum_angle_deg']), float(settings['acceleration_deg_s2']))
+    if actual != expected:
+        raise ValueError("Reload the Feedback Commissioning Sequence preset")
+    batch_id = batch_id or uuid.uuid4().hex
+    requests = []
+    sequence = tuple(condition.speed_deg_s for condition in CONDITIONS.values() for _ in range(2))
+    total = len(sequence)
+    preset = config['test_presets'][SEQUENCE_PRESET]
+    for stage, condition in CONDITIONS.items():
+        condition_key = PREFIX + stage
+        values = dict(cycles=1, minimum_angle_deg=condition.half_range_deg,
+                      maximum_angle_deg=condition.half_range_deg,
+                      acceleration_deg_s2=condition.acceleration_deg_s2)
+        pair = make_feedback_plan(config, condition_key, identity, values, setup,
+                                  baseline, path, loaded, batch_id)
+        for request in pair:
+            index = len(requests) + 1
+            parameters = replace(
+                request.parameters,
+                file_prefix=f"FeedbackSuite_B{batch_id[:8]}_R{index}_S{stage}")
+            metadata = make_preset_metadata(SEQUENCE_PRESET, preset, parameters, loaded, False)
+            metadata.update(feedback_stage=int(stage), feedback_condition_key=condition_key,
+                            condition_preset=deepcopy(request.preset_metadata))
+            requests.append(replace(
+                request, index=index, total=total, parameters=parameters,
+                run_id=f"Stage {int(stage)} R{request.index} " + (
+                    "rotary feedback" if request.feedback_pilot else "feedforward"),
+                preset_metadata=metadata, speed_sequence=sequence,
+                feedback_condition_key=condition_key))
     return requests

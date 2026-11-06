@@ -51,9 +51,11 @@ Before scoring, agree on the largest acceptable repeat difference and remount va
 
 Select the fastest **measured** speed that meets the agreed limits and yields complete, usable runs. If 20°/s falls short and 5°/s qualifies, use 5°/s. If faster conditions fail, evaluate 0.5°/s against the same criteria. If stiffness shifts systematically with speed, document the selected rate as part of the measurement definition.
 
-## Individually selected feedback commissioning stages
+## Combined feedback commissioning sequence
 
-After completing the first model screen, the **Feedback Stage** presets commission the wider cubic with feedback off (R1) and on (R2). Both use one cycle and the same desired angle-time trajectory, fixed zero anchor, streaming schedule, proportional gain policy and motor ceilings. Each preset runs only its two conditions. Select the next stage explicitly after reviewing the preceding measurements.
+Load **Feedback Commissioning Sequence — All Stages (Empty)** with Engineering controls enabled, then press Start. Choose **Start at stage** and **Stop after stage**. Leave the end blank to select through stage 11. Each stage runs Wider feedforward followed by Wider with rotary feedback, with one cycle per run. The two runs share the desired trajectory, fixed zero anchor, streaming schedule and motor ceilings.
+
+**Pause for review after each stage** is on by default. Press **Continue to next stage** after reviewing a pair, or switch the pause option off before starting to authorize automatic progression through the selected range. The confirmation lists all selected motion conditions. Stop and genuine drive, sensor and recording failures halt the sequence. To resume after cleanup, create a new batch at the required stage. Existing recordings remain separate. The older individual stage definitions remain compatible with saved data and are hidden from the preset menu.
 
 | Stage | ROM | Reference speed, °/s | Reference acceleration, °/s² |
 |---|---|---:|---:|
@@ -71,7 +73,7 @@ After completing the first model screen, the **Feedback Stage** presets commissi
 
 Stages 01/02 and 04/05 change speed and acceleration together to commission reachable profiles. Stages 05/06 and 07/08 isolate acceleration at the same speed and ROM. Stage 03 widens the range at the original slow rate. Stages 06/10 and 09/11 isolate ROM. The table defines initial screening conditions, followed by repetitions of usable conditions for repeatability.
 
-Use the Protocol menu with Engineering controls enabled. Load the chosen **Feedback Stage**, press Start and run R1–R2. Confirm physical clearance for the selected range and review actual travel, tracking, update gaps and limiting before another stage. No stage starts another preset.
+Confirm physical clearance through the maximum selected range and review actual travel, tracking, update gaps and command limiting. One batch manifest records the selected stage range, all skipped runs, review approvals and separate data files. A full selection contains 11 stages and 22 runs.
 
 The planned reference ramp is distinct from the motor trajectory ceilings. The motor speed ceiling is 1.5 times requested fixture speed, capped at the routine maximum converted through 2.055. Acceleration uses 1.5 times reference acceleration with a floor of 5 and cap at the routine ceiling. Target slew uses that motor rate with the existing capped time interval. These caps can prevent the requested fixture rate from being reached. Metadata retains planned reference, applied motor limits, measured motion, rate limiting and timestamps so infeasible settings can be identified. No claim of rate achievement follows from the preset label.
 

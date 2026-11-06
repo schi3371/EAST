@@ -494,7 +494,7 @@ class OperatorView:
         )
         routine_presets = ["Custom", *(
             preset["display_name"] for preset in self.system_config["test_presets"].values()
-            if not preset.get("protocol_kind")
+            if not preset.get("protocol_kind") and not preset.get("hidden_in_menu", False)
         )]
         show_engineering = self.show_engineering = ctk.BooleanVar(value=False)
 
@@ -568,6 +568,8 @@ class OperatorView:
             return name + ' — 10 staged empty-machine runs; +/-10 repeats, +/-15 identification, stationary holds'
         if preset.get('protocol_kind') == 'rotary_feedback_pilot':
             count = len(preset['speeds_deg_s'])
+            if self.loaded_preset_key == "feedback_commissioning_sequence":
+                return f'{name} — {count // 2} stages, feedforward/feedback at each'
             return f'{name} — {count} planned runs at ±{preset["maximum_angle_deg"]:g}°, {preset["speeds_deg_s"][0]:g}°/s'
         if preset.get('execution_kind') == 'speed_sequence':
             name += ' — 0.5 → 5 → 20°/s; cycles EACH speed'

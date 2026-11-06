@@ -12,7 +12,7 @@ from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
 from east_protocol_batch import make_protocol_plan
 from east_stream_screen import SCREEN_PRESET
-from east_feedback_commissioning import condition_for
+from east_feedback_commissioning import CONDITIONS, SEQUENCE_PRESET, condition_for
 
 
 class ThreeSpeedProtocolWindow(RecordedBatchWindow):
@@ -23,6 +23,10 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.preset_key=preset_key
         self.screen_suite = preset_key == SCREEN_PRESET
         self.commissioning = condition_for(preset_key)
+        self.feedback_sequence = preset_key == SEQUENCE_PRESET
+        self.stage_approved_run = None
+        self.awaiting_stage_review = None
+        self.stage_reviews = []
         self.pilot_suite=app.system_config['test_presets'][preset_key].get('protocol_kind')=='rotary_feedback_pilot'
         self.comparison_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('model_comparison','rotary_feedback_pilot')
         self.remaining_suite=app.system_config['test_presets'][preset_key].get('protocol_kind') in ('remaining_motion_data','model_comparison','rotary_feedback_pilot')
@@ -43,7 +47,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         ctk.CTkLabel(panel,text=preset['display_name'],font=('Arial',19,'bold')).grid(row=0,column=0,columnspan=2,pady=6)
         empty=preset['test_type']=='empty_machine_baseline'
         ctk.CTkLabel(panel,text=('EMPTY MACHINE — run before mounting the AFO.\n' if empty else 'AFO FITTED — one mounting shared by all three speed conditions.\n')+
-            (f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
+            ('One sequence of 11 stages. Each stage runs feedforward then rotary feedback. '
+             'Choose a stage range and pause for review between stages.\n'
+             if self.feedback_sequence else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
              if self.commissioning else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
@@ -53,22 +59,30 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.identity.grid(row=2,column=0,columnspan=2,sticky='ew')
         self.fields={}
         for row,key,label,value in [(3,'mounting_setup_id','Mounting/setup ID (reuse if not remounted)',('setup_' if empty else 'mount_')+uuid.uuid4().hex[:12]),
-                ((4,'start_run','Start at run (new batch; earlier runs skipped)','1') if self.remaining_suite else (4,'baseline_batch_id','Baseline batch ID (optional, unverified link only)',''))]:
+                ((4,'start_run','Start at stage' if self.feedback_sequence else 'Start at run (new batch; earlier runs skipped)','1') if self.remaining_suite else (4,'baseline_batch_id','Baseline batch ID (optional, unverified link only)',''))]:
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
         if self.comparison_suite:
-            ctk.CTkLabel(panel, text="Stop after run (blank = last)").grid(row=9, column=0, sticky="w", padx=4)
+            ctk.CTkLabel(panel, text="Stop after stage (blank = last)" if self.feedback_sequence else "Stop after run (blank = last)").grid(row=9, column=0, sticky="w", padx=4)
             entry = ctk.CTkEntry(panel)
             entry.grid(row=9, column=1, sticky="ew", pady=4)
             if self.screen_suite:
                 entry.insert(0, '7')
             self.fields["end_run"] = entry
+        if self.feedback_sequence:
+            self.pause_between_stages = ctk.BooleanVar(value=True)
+            ctk.CTkCheckBox(panel, text="Pause for review after each stage",
+                           variable=self.pause_between_stages, command=self.set_stage_pause_choice).grid(row=10, column=0, sticky="w")
+            self.continue_stage_button = ctk.CTkButton(
+                panel, text="Continue to next stage", command=self.continue_stage,
+                state="disabled")
+            self.continue_stage_button.grid(row=10, column=1, sticky="ew", pady=4)
         self.readonly_fields={'baseline_batch_id'} if empty and not self.remaining_suite else set()
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
-        self.run_button=ctk.CTkButton(panel,text='Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
+        self.run_button=ctk.CTkButton(panel,text='Run Feedback Sequence' if self.feedback_sequence else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
         self.run_button.grid(row=6,column=0,padx=4,pady=6,sticky='ew')
         self.run_buttons=[self.run_button]
         self.stop_button=ctk.CTkButton(panel,text='Stop Sequence',command=self.stop,fg_color='#b91c1c')
@@ -89,6 +103,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         a = self.app
         p=requests[0].parameters
         def stage_label(r):
+            if self.feedback_sequence:
+                stage = r.preset_metadata["feedback_stage"]
+                return f"Stage {stage}, " + ("rotary feedback" if r.feedback_pilot else "feedforward")
             if self.screen_suite:
                 return f"Block {r.repeat}, {r.model_variant} " + ("with feedback" if r.feedback_pilot else "feedforward")
             return {'updated_10_repeat':f'Updated +/-10 repeat {r.repeat}', 'wide_15_identification':'Original + rotary +/-15 identification', 'stationary_direction_holds':'Stationary directional holds'}.get(r.stage,f'{r.stage}: {getattr(r,"model_variant","current")}')
@@ -103,7 +120,10 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
-                ('\nEMPTY FIXTURE ONLY. This batch runs only the selected matched pair. Review tracking, command timing and reversals before another stage.' if self.commissioning else '\nEMPTY FIXTURE ONLY. Fixed ±5° at 0.5°/s. One bounded zero recovery may follow a fully saved run with a small return miss.' if self.screen_suite else '\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
+                ('\nEMPTY FIXTURE ONLY. The full selection reaches the maximum displayed range. '
+                 + ('The sequence pauses after each matched pair.' if self.pause_between_stages.get()
+                    else 'Automatic continuation through the selected stage range is enabled.')
+                 if self.feedback_sequence else '\nEMPTY FIXTURE ONLY. This batch runs only the selected matched pair. Review tracking, command timing and reversals before another stage.' if self.commissioning else '\nEMPTY FIXTURE ONLY. Fixed ±5° at 0.5°/s. One bounded zero recovery may follow a fully saved run with a small return miss.' if self.screen_suite else '\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
                 ('\nA fully recorded comparison with a failed model zero return may be followed by ONE separately recorded official homing transaction (normal homing movement/time guards). The model return remains failed; no sweep is repeated. Other faults/Stop still halt the batch.' if self.comparison_suite and not self.pilot_suite else '\nA fully recorded Updated run with only a small zero-return miss (up to 0.25 degrees) may be followed by ONE separate bounded homing transaction. The original failed return remains recorded. No experiment is repeated; all other faults/Stop cancel the suite.' if self.remaining_suite and not self.pilot_suite else '')+
                 '\nNo added rest interval. Settings provisional; not scientifically validated.'
                 '\n\nFixture clear, enclosure protection in use, E-stop accessible. Stop cancels all remaining runs.'
@@ -128,11 +148,15 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             requests=make_protocol_plan(a.system_config,self.preset_key,identity,settings,
                 self.fields['mounting_setup_id'].get(),'' if self.remaining_suite else self.fields['baseline_batch_id'].get(),path,a.preset_loaded_at,batch_id=batch_id)
             self.all_requests=requests
-            start_at=int(self.fields["start_run"].get()) if self.remaining_suite else 1
+            start_input = int(self.fields["start_run"].get()) if self.remaining_suite else 1
             end_input = self.fields["end_run"].get().strip() if self.comparison_suite else ""
-            end_at = int(end_input) if end_input else len(requests)
-            if not 1 <= start_at <= end_at <= len(requests):
-                raise ValueError("Choose a valid inclusive start/end run range")
+            selection_count = len(CONDITIONS) if self.feedback_sequence else len(requests)
+            end_selection = int(end_input) if end_input else selection_count
+            if not 1 <= start_input <= end_selection <= selection_count:
+                raise ValueError("Choose a valid inclusive start/end range")
+            start_at = 2 * (start_input - 1) + 1 if self.feedback_sequence else start_input
+            end_at = 2 * end_selection if self.feedback_sequence else end_selection
+            self.pause_stages_snapshot = bool(self.feedback_sequence and self.pause_between_stages.get())
             requests = requests[start_at - 1:end_at]
             self.selected_start_run=start_at
             from east_core import validate_empty_machine_tare
@@ -154,10 +178,12 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ):
                 return
             # Freeze only if modal nested actions did not change any preparation.
-            if self.remaining_suite and int(self.fields["start_run"].get())!=start_at:
+            if self.remaining_suite and int(self.fields["start_run"].get())!=start_input:
                 raise ValueError("Starting run changed during confirmation; review again")
             if self.comparison_suite and self.fields["end_run"].get().strip() != end_input:
                 raise ValueError("Ending run changed during confirmation; review again")
+            if self.feedback_sequence and self.pause_between_stages.get() != self.pause_stages_snapshot:
+                raise ValueError("Stage pause setting changed during confirmation")
             if identity!=self.current_identity() or settings!=a._motion_field_values() or not ready_for_next(a) or a.monitor_error:
                 raise ValueError('Preparation/settings changed during confirmation; review and start again')
             if (a.reference_manager.metadata_snapshot()!=prep_reference or a.empty_machine_tare is None
@@ -181,6 +207,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.request=None;self.awaiting_run=False;self.cancelled.clear()
             a.operator_stop_requested=False;a.acquisition_error=None
             self.pending_zero_preparation=False;self.preparation_future=None;self.prepared_for_run=None;self.preparation_records=[];self.reference_history=[]
+            self.stage_approved_run = None
+            self.awaiting_stage_review = None
+            self.stage_reviews = []
             self.active=True;self.release_pending=True
             a.set_test_inputs_state('disabled');a._refresh_motion_controls()
             self.output.configure(text=f'Batch manifest: {path}')
@@ -200,7 +229,34 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.save('next')
         return True
 
+    def set_stage_pause_choice(self):
+        if self.active:
+            self.pause_between_stages.set(self.pause_stages_snapshot)
+            self.app.update_terminal("Stage pause mode is fixed for the active sequence.\n")
+
+    def continue_stage(self):
+        if (not self.active or self.cancelled.is_set()
+                or self.awaiting_stage_review is None or self.save_future is not None):
+            return
+        self.stage_approved_run = self.awaiting_stage_review
+        self.stage_reviews.append(dict(next_run=self.stage_approved_run,
+                                       approved_at=datetime.now().astimezone().isoformat()))
+        self.awaiting_stage_review = None
+        self.continue_stage_button.configure(state="disabled")
+        self.save("next")
+
     def next_run(self):
+        if (self.feedback_sequence and not self.cancelled.is_set() and not self.pending_zero_recovery
+                and self.pause_stages_snapshot and 0 < len(self.records) < len(self.requests)):
+            request = self.requests[len(self.records)]
+            previous = self.requests[len(self.records) - 1]
+            if (request.feedback_condition_key != previous.feedback_condition_key
+                    and self.stage_approved_run != request.index):
+                self.awaiting_stage_review = request.index
+                self.status.configure(text=f"Stage complete. Review the saved pair, then continue to stage "
+                                           f"{request.preset_metadata['feedback_stage']}.")
+                self.continue_stage_button.configure(state="normal")
+                return
         if not self.pending_zero_recovery:
             if self.comparison_suite and not self.pilot_suite and self._prepare_comparison_next_run():return
             return super().next_run()
@@ -382,6 +438,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         body=dict(schema='east-three-speed-batch-1',batch_id=self.requests[0].batch_id,
             mounting_setup_id=self.requests[0].mounting_setup_id,test_type=self.requests[0].parameters.test_type,
             identity=self.identity_snapshot,common_settings=self.settings_snapshot,
+            pause_between_stages=getattr(self, 'pause_stages_snapshot', False),
+            stage_reviews=self.stage_reviews,
             selected_start_run=self.selected_start_run,selected_end_run=self.selected_start_run + len(self.requests) - 1,selected_run_count=len(self.requests),total_plan_runs=len(self.all_requests),
             protocol=deepcopy(self.requests[0].preset_metadata),planned_speed_sequence_deg_s=list(self.requests[0].speed_sequence),
             cycles_per_speed=self.requests[0].parameters.cycles,total_numbered_cycles=sum(r.parameters.cycles for r in self.requests if not r.stationary_holds),

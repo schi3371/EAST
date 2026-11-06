@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 PREFIX = "feedback_stage_"
+SEQUENCE_PRESET = "feedback_commissioning_sequence"
 
 
 @dataclass(frozen=True)

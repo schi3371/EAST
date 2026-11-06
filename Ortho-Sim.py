@@ -138,6 +138,7 @@ class MyInterface(OperatorView):
             **{
                 preset["display_name"]: key
                 for key, preset in self.system_config["test_presets"].items()
+                if not preset.get("hidden_in_menu", False)
             },
         }
         self.motion_method_var = ctk.StringVar(value=selected_method(self.system_config))
@@ -3536,7 +3537,9 @@ class MyInterface(OperatorView):
             from east_stream_screen import SCREEN_PRESET, StreamScreenModel
             stream_screen = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SCREEN_PRESET
             from east_feedback_commissioning import condition_for
-            commissioning = condition_for((getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key', ''))
+            motion_context = getattr(self, 'run_motion_mapping_context', None) or {}
+            commissioning = condition_for(motion_context.get(
+                'feedback_condition_key', motion_context.get('protocol_key', '')))
             if getattr(self, "run_motion_model_enabled", False) is True:
                 validate_model_range(parameters.min_angle_deg, parameters.max_angle_deg)
                 anchor = self._test_feedback()
@@ -3840,7 +3843,7 @@ class MyInterface(OperatorView):
         from east_wide_candidate import curve
         from east_feedback_commissioning import policy
         context = getattr(self, "run_motion_mapping_context", None) or {}
-        commissioning = policy(self.system_config, context.get("protocol_key", ""))
+        commissioning = policy(self.system_config, context.get("feedback_condition_key", context.get("protocol_key", "")))
         half_range = commissioning["half_range_deg"] if commissioning else 5.
         speed = commissioning["speed_deg_s"] if commissioning else .5
         acceleration = commissioning["ramp_acceleration_deg_s2"] if commissioning else .5
