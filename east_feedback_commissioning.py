@@ -51,7 +51,8 @@ def policy(config, key):
                              motion["maximum_acceleration_deg_s2"])
     factor = motion["afo_degrees_per_odrive_turn"]
     # Provisional tracking allowance: reference travel during the existing maximum
-    # motor-feedback age, plus 0.25° reserve. This is a fault guard, not a scoring target.
+    # motor-feedback age, plus 0.25° reserve. During commissioning this is a
+    # recorded comparison threshold, not a stop: lag is an experimental outcome.
     age_s = config["reference"]["feedback_stale_after_ms"] / 1000
     return dict(half_range_deg=condition.half_range_deg, speed_deg_s=condition.speed_deg_s,
                 ramp_acceleration_deg_s2=condition.acceleration_deg_s2,
@@ -60,5 +61,6 @@ def policy(config, key):
                 max_command_rate_turns_s=motor_speed/factor,
                 tracking_guard_deg=max(1., condition.speed_deg_s*age_s+.25),
                 travel_guard_deg=condition.half_range_deg+1.,
+                tracking_error_action="record",
                 tracking_guard_basis="reference travel over motor stale limit plus 0.25° reserve, minimum 1°",
                 fixed_origin=True)

@@ -3864,7 +3864,7 @@ class MyInterface(OperatorView):
         motor_speed = commissioning["motor_speed_nominal_deg_s"] if commissioning else .75
         motor_acceleration = commissioning["motor_acceleration_nominal_deg_s2"] if commissioning else 5.
         guard_arguments = ({key: commissioning[key] for key in (
-            "max_command_rate_turns_s", "tracking_guard_deg", "travel_guard_deg")} if commissioning else {})
+            "max_command_rate_turns_s", "tracking_guard_deg", "travel_guard_deg", "tracking_error_action")} if commissioning else {})
         self.motion_phase=phase
         snapshot,value=self.check_rotary_acquisition(token)
         start={'moving_to_initial_max':0.,'moving_to_min':self.run_parameters.max_angle_deg,
@@ -3883,6 +3883,7 @@ class MyInterface(OperatorView):
         if commissioning:
             log["tracking_guard_deg"] = commissioning["tracking_guard_deg"]
             log["travel_guard_deg"] = commissioning["travel_guard_deg"]
+            log["tracking_error_action"] = commissioning["tracking_error_action"]
             log["commissioning_policy"] = commissioning
             log.setdefault("legs", []).append(dict(
                 phase=phase, reference_speed_deg_s=speed,

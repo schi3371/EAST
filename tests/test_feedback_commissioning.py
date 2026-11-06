@@ -35,15 +35,37 @@ class CommissioningKernelTests(unittest.TestCase):
         self.assertAlmostEqual(ramp(10, -10, .5, duration, acceleration=.5)[0], -10)
         self.assertLess(duration + 6, load_tester_config()['motion']['maximum_motion_timeout_s'])
 
-    def test_stage_limits_actually_bound_commands_and_reject_excessive_tracking_error(self):
+    def test_stage_limits_bound_commands_but_record_tracking_error(self):
         limits = policy(load_tester_config(), PREFIX + '05')
-        arguments = {k: limits[k] for k in ('max_command_rate_turns_s', 'tracking_guard_deg', 'travel_guard_deg')}
+        arguments = {k: limits[k] for k in ('max_command_rate_turns_s', 'tracking_guard_deg', 'travel_guard_deg', 'tracking_error_action')}
         result = step(5, 5, 100, 0, .1, 2.3, **arguments)
         self.assertAlmostEqual(result['command_target_turns'], limits['max_command_rate_turns_s'] * .1)
-        with self.assertRaises(RuntimeError):
-            step(5, 0, 0, 0, .1, 2.3, **arguments)
+        lagged = step(5, 0, 0, 0, .1, 2.3, **arguments)
+        self.assertTrue(lagged["tracking_threshold_exceeded"])
+        self.assertEqual(lagged["tracking_error_action"], "record")
+        with self.assertRaisesRegex(RuntimeError, "Rotary travel guard"):
+            step(5, 11.1, 0, 0, .1, 2.3, **arguments)
         with self.assertRaises(ValueError):
             ramp(0, 5, 5, 0, acceleration=0)
+
+
+    def test_recorded_r9_lag_exceeds_threshold_without_bypassing_travel_or_rate(self):
+        limits = policy(load_tester_config(), PREFIX + '05')
+        arguments = {k: limits[k] for k in (
+            'max_command_rate_turns_s', 'tracking_guard_deg', 'travel_guard_deg', 'tracking_error_action')}
+        # Last saved R9 point; following updates had just crossed 1.5 degrees.
+        for desired, measured in [(3.675, 2.1965529713), (4.22, 2.55), (-4.22, -2.55)]:
+            for gain in (0., .3):
+                row = step(desired, measured, 10., 0., .1, 2.3, gain=gain, **arguments)
+                self.assertEqual(row['tracking_threshold_exceeded'], abs(desired-measured)>1.5)
+                self.assertLessEqual(abs(row['command_target_turns']), limits['max_command_rate_turns_s']*.1)
+                self.assertLessEqual(abs(row['requested_correction_turns']), .1/2.3)
+        with self.assertRaisesRegex(RuntimeError, 'Rotary tracking guard'):
+            step(4.22, 2.55, 10., 0., .1, 2.3, **{**arguments, 'tracking_error_action':'stop'})
+        for measured in (11.01, -11.01):
+            with self.assertRaisesRegex(RuntimeError, 'Rotary travel guard'):
+                step(0., measured, 0., 0., .1, 2.3, **arguments)
+
 
 
 class CommissioningIntegrationTests(unittest.TestCase):
@@ -88,6 +110,37 @@ class CommissioningIntegrationTests(unittest.TestCase):
             self.assertNotIn('initial_alignment', metadata['experimental_motion_model'])
             self.assertEqual(metadata['completed_cycles'], 1)
             self.assertTrue(metadata['zero_return_check']['passed'])
+
+    def test_r9_observed_lag_is_recorded_and_control_continues(self):
+        # Reproduce the recorded R9 trajectory lag in the real GUI worker.
+        app, window = self.setup_stage('05')
+        # Match the lab's 250 ms-derived 1.5 degree comparison threshold.
+        app.system_config['reference']['feedback_stale_after_ms'] = 250
+        submit = app._submit_position
+        def lagged(token, target):
+            submit(token, target)
+            if app.run_motion_model is not None:
+                row = app.run_metadata['rotary_feedback_pilot']['samples'][-1]
+                if row['phase'] == 'moving_to_initial_max' and row['desired_angle_deg'] > 2.:
+                    self.angle = row['desired_angle_deg'] - 2.
+        app._submit_position = lagged
+        window.start()
+        def recorded_lag():
+            window.tick()
+            samples = (app.run_metadata or {}).get('rotary_feedback_pilot', {}).get('samples', [])
+            return sum(row['tracking_threshold_exceeded'] for row in samples) >= 3
+        self.assertTrue(window.active, window.status.options)
+        self.pump(recorded_lag, 12)
+        self.assertTrue(app.strain_test_active)
+        self.assertIsNone(app.acquisition_error)
+        window.stop()
+        self.pump(lambda: (window.tick(), not window.active)[1], 12)
+        self.assertEqual(window.batch_status, 'cancelled', window.batch_error)
+        metadata = json.loads(Path(window.records[0]['metadata_file']).read_text())
+        samples = metadata['rotary_feedback_pilot']['samples']
+        self.assertGreaterEqual(sum(row['tracking_threshold_exceeded'] for row in samples), 3)
+        self.assertTrue(metadata['csv_recorder']['worker_complete'])
+        self.assertIsNone(app.motion_coordinator.owner)
 
     def test_twenty_dps_stage_stop_uses_existing_cleanup(self):
         app, window = self.setup_stage('09')
