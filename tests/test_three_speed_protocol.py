@@ -81,6 +81,8 @@ class ApplicationTests(unittest.TestCase):
 
     def prepare(self,key='three_speed_afo',cycles=3):
         self.app.system_config['reference'].update(maximum_feedback_capture_ms=1000,feedback_stale_after_ms=2000)
+        # Isolate fake callback scheduling; sensor freshness itself has dedicated tests.
+        self.app.rotary_sensor.config['stale_after_ms'] = 1000
         self.ready();self.pump(lambda:ready_for_next(self.app))
         a=self.app;a.loaded_preset_key=key
         a.afo_id_input.value='AFO-42'
@@ -138,7 +140,7 @@ class ApplicationTests(unittest.TestCase):
         w,_=self.prepare(cycles=1);w.start()
         self.pump_window(w,lambda:len(w.records)==1 and w.save_future is not None)
         w.stop();self.pump_window(w,lambda:not w.active)
-        self.assertEqual([r['status'] for r in self.manifest(w)['runs']],['completed','skipped','skipped'])
+        self.assertEqual([r['status'] for r in self.manifest(w)['runs']],['completed','skipped','skipped'], self.manifest(w))
     def test_initialization_failure_skips_remaining(self):
         w,_=self.prepare(cycles=1)
         self.app._ensure_load_cell=lambda:(_ for _ in ()).throw(OSError('SIMULATED Bridge unavailable'))
@@ -171,7 +173,7 @@ class ApplicationTests(unittest.TestCase):
         self.pump_window(w,lambda:len(w.records)==1 and w.save_future is not None)
         self.app.empty_machine_tare=None
         self.pump_window(w,lambda:not w.active)
-        self.assertEqual([r['status'] for r in self.manifest(w)['runs']],['completed','skipped','skipped'])
+        self.assertEqual([r['status'] for r in self.manifest(w)['runs']],['completed','skipped','skipped'], self.manifest(w))
         self.assertIn('tare',w.batch_error.lower())
     def test_application_shutdown_saves_cancelled_manifest_before_exit(self):
         w,_=self.prepare(cycles=1);w.start()

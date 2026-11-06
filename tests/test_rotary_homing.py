@@ -97,6 +97,8 @@ class ApplicationTests(unittest.TestCase):
     def prepare(self, angle=-1, invalidate=True):
         # Test-only scheduler allowances; production timing limits stay unchanged.
         self.app.system_config['reference'].update(maximum_feedback_capture_ms=1000,feedback_stale_after_ms=2000)
+        # Isolate fake callback scheduling; sensor freshness itself has dedicated tests.
+        self.app.rotary_sensor.config['stale_after_ms'] = 1000
         self.ready()
         self.pump(lambda:ready_for_next(self.app))
         self.sensorstop.set();self.sensorthread.join(1)
@@ -173,7 +175,7 @@ class ApplicationTests(unittest.TestCase):
         state=self.app.rotary_homing
         self.assertTrue(state.verify_only)
         self.pump(lambda:not state.active,8)
-        self.assertEqual(state.future.result()['evidence']['outcome'],'sensor_zero_reached')
+        self.assertEqual(state.future.result()['evidence']['outcome'],'sensor_zero_reached', state.future.result()['evidence'])
         self.assertEqual(self.position_targets,[])
         self.assertTrue(self.app.rotary_reference_verified())
 
@@ -250,7 +252,7 @@ class ApplicationTests(unittest.TestCase):
         window=self.prepare(-.02,invalidate=False)
         before=self.app.reference_manager.metadata_snapshot()
         evidence=self.run_home(window)
-        self.assertEqual(evidence['outcome'],'sensor_zero_reached')
+        self.assertEqual(evidence['outcome'],'sensor_zero_reached', evidence)
         self.assertTrue(self.app.reference_manager.verified)
         self.assertNotEqual(self.app.reference_manager.metadata_snapshot()['session_mapping']['reference_id'],before['session_mapping']['reference_id'])
         self.assertTrue(evidence['zero_reference_written'])
@@ -330,7 +332,7 @@ class ApplicationTests(unittest.TestCase):
         state=self.app.rotary_homing
         with patch.object(self.app,'_poll_rotary_homing'):
             self.pump(state.future.done,10)
-            self.assertEqual(state.future.result()['evidence']['outcome'],'sensor_zero_reached')
+            self.assertEqual(state.future.result()['evidence']['outcome'],'sensor_zero_reached', state.future.result()['evidence'])
             self.app.stop_logging()
             self.pump(lambda:self.app.stop_worker is not None and not self.app.stop_worker.is_alive(),5)
         self.app._poll_rotary_homing()

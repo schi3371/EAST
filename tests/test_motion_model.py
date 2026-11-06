@@ -55,6 +55,8 @@ class ApplicationTests(unittest.TestCase):
         self.ready();self.pump(lambda:ready_for_next(self.app))
         a=self.app
         a.system_config['reference'].update(maximum_feedback_capture_ms=1000,feedback_stale_after_ms=2000)
+        # Isolate fake callback scheduling; sensor freshness itself has dedicated tests.
+        a.rotary_sensor.config['stale_after_ms'] = 1000
         a.system_config['motion']['experimental_model']['enabled']=True
         self.angle=0.;original=a.rotary_sensor.measurement
         def measurement(*args,**kwargs):
@@ -102,7 +104,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse(a.start_strain_test())
         self.assertIsNone(a.strain_thread)
 
-    def test_return_miss_fails_normal_record_and_prevents_success(self):
+    def test_return_miss_is_preserved_and_corrected_before_success(self):
         a=self.prepare();original=a._submit_position
         def wrong_return(token,target):
             original(token,target)
@@ -110,8 +112,12 @@ class ApplicationTests(unittest.TestCase):
         a._submit_position=wrong_return
         a.start_strain_test()
         self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
-        self.assertEqual(a.run_metadata['run_status'],'error')
-        self.assertIn('missed rotary zero',a.run_metadata['error'])
+        self.assertEqual(a.run_metadata['run_status'],'completed', a.run_metadata.get('error'))
+        self.assertFalse(a.run_metadata['zero_return_check']['passed'])
+        self.assertAlmostEqual(a.run_metadata['zero_return_check']['unassisted_angle_deg'], .25)
+        self.assertEqual(a.run_metadata['automatic_zero_return']['status'], 'completed')
+        self.assertTrue(a.run_metadata['automatic_zero_return']['final_observation']['passed'])
+        self.assertGreater(a.run_metadata['automatic_zero_return']['correction_count'], 0)
 
     def test_unknown_initial_zero_branch_refines_against_fixed_plant(self):
         a=self.prepare()

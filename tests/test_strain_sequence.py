@@ -104,8 +104,9 @@ class StrainSequenceTests(unittest.TestCase):
         self.assertEqual([round(m[2] * 2.055) for m in moves], [10, -10, 10, -10, 10, -10, 10, 0])
         self.assertEqual(moves[0][1], "moving_to_initial_max")
         self.assertEqual(app.completed_cycles, 3)
-        app.observe_post_idle_neutral.assert_called_once_with(0)
-        app.safe_idle_motor.assert_called_once()
+        app.complete_rotary_zero_return.assert_called_once_with(0, "token")
+        app.observe_post_idle_neutral.assert_not_called()
+        app.safe_idle_motor.assert_not_called()
         self.assertEqual(app.finalize_run.call_args.args[0], "completed")
 
     def test_partial_cycle_is_not_completed(self):

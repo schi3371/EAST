@@ -1007,7 +1007,7 @@ class MyInterface(OperatorView):
             self.reference_manager.write_checkpoint(motion_state, snapshot,
                                                     clean_shutdown=clean_shutdown, extra=extra)
 
-    def safe_idle_motor(self, reason=None, invalidate_reference=False, token=None):
+    def safe_idle_motor(self, reason=None, invalidate_reference=False, token=None, *, retain_owner=False):
         active_token = self.motion_coordinator.active_token
         if token is not None and active_token not in (None, token):
             self.update_terminal(
@@ -1023,7 +1023,12 @@ class MyInterface(OperatorView):
             except Exception:
                 pass
             self.movement_timer = None
-        self.motion_coordinator.request_stop()
+        if retain_owner:
+            if token is None:
+                raise MotionConflictError("Owned zero observation requires a motion token")
+            self.motion_coordinator.assert_active(token)
+        else:
+            self.motion_coordinator.request_stop()
         self.expected_axis_state = None
         self.expected_disarm_reason = None
         if self.odrive_adapter is None:
@@ -3634,12 +3639,18 @@ class MyInterface(OperatorView):
                 speed_deg_s=motion["neutral_return_speed_deg_s"],
                 acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
             )
-            idle_result = self.safe_idle_motor("trajectory return complete; verifying final zero", token=token)
-            if not idle_result or not idle_result.confirmed:
-                raise RuntimeError("Test finished but ODrive idle could not be confirmed")
-            idle_confirmed = True
-            self.motion_phase = "post_idle_observation"
-            self.observe_post_idle_neutral(neutral_target)
+            if not motion_context or parameters.test_type == 'afo_test':
+                # Routine tests are complete only after sensor-qualified zero.
+                # Engineering comparisons retain their separate unassisted result.
+                self.complete_rotary_zero_return(neutral_target, token)
+                idle_confirmed = True
+            else:
+                idle_result = self.safe_idle_motor("trajectory return complete; verifying final zero", token=token)
+                if not idle_result or not idle_result.confirmed:
+                    raise RuntimeError("Test finished but ODrive idle could not be confirmed")
+                idle_confirmed = True
+                self.motion_phase = "post_idle_observation"
+                self.observe_post_idle_neutral(neutral_target)
             candidate_completed = True
         except TestStopped:
             if self.acquisition_error:
@@ -4077,6 +4088,126 @@ class MyInterface(OperatorView):
                 f"latest position={position} turns, remaining error={remaining} deg. {exc}"
             ) from exc
 
+    def complete_rotary_zero_return(self, neutral_target, token):
+        """Own the entire return, including powered corrections and post-idle settling.
+
+        The initial unassisted result is immutable. Correction samples have their
+        own phase; neither tare, model coefficients nor the zero reference change.
+        Stop or any health fault prevents another enable/command.
+        """
+        from copy import deepcopy
+        from east_rotary_homing import home, HomingPolicy, RotaryZeroMiss
+        from east_zero_window import collect_stationary_window
+        policy = HomingPolicy()
+        deadline = time.monotonic() + policy.timeout_s
+        source = self.rotary_sensor.measurement(require=True)['sample'][4]
+        calibration = self.rotary_sensor.calibration.sha256
+        factor = float(self.system_config['motion']['afo_degrees_per_odrive_turn'])
+        cfg = self.system_config['reference']
+        evidence = dict(target_angle_deg=0., tolerance_deg=policy.tolerance_deg,
+            policy=policy.__dict__, corrections=[], attempts=[], status='running',
+            reference_changed=False, tare_changed=False)
+        self.run_metadata['automatic_zero_return'] = evidence
+        total_travel = 0.
+        armed = True
+
+        def check():
+            self.motion_coordinator.assert_active(token)
+            if self.test_stop_event.is_set() or self.operator_stop_requested:
+                raise TestStopped()
+            if self.acquisition_error or self.monitor_error or self.feedback_retry_pending:
+                raise FeedbackError(self.acquisition_error or self.monitor_error or 'Feedback recovery pending')
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Automatic rotary zero return timed out')
+            self.reference_manager.require_verified()
+            snapshot = self.get_feedback()
+            expected = int(AXIS_STATE_CLOSED_LOOP_CONTROL if armed else AXIS_STATE_IDLE)
+            if snapshot.current_state != expected or snapshot.active_errors:
+                raise FeedbackError('Controller state/errors changed during automatic zero return')
+            if armed and snapshot.disarm_reason != self.expected_disarm_reason:
+                raise FeedbackError('Controller disarm reason changed during automatic zero return')
+            value = self.rotary_sensor.measurement(require=True)
+            if value['sample'][4] != source or self.rotary_sensor.calibration.sha256 != calibration:
+                raise RotaryError('Rotary connection/calibration changed during automatic zero return')
+            self._mark_control_health()
+            return snapshot, value
+
+        def idle():
+            nonlocal armed
+            check()
+            result = self.safe_idle_motor('observing rotary zero after settling', token=token, retain_owner=True)
+            armed = False
+            if not result or not result.confirmed:
+                raise FeedbackError('Automatic zero return could not confirm idle')
+            check()
+
+        def observe(duration):
+            def read():
+                snapshot, value = check()
+                return dict(angle_deg=value['angle_deg'], sequence=value['sample'][3],
+                    motor_turns=snapshot.position_turns,
+                    stationary=abs(snapshot.velocity_turns_s*factor) <= cfg['settle_velocity_limit_deg_s'])
+            return collect_stationary_window(read, duration, max(.01, deadline-time.monotonic()),
+                position_tolerance_turns=afo_degrees_to_odrive_turns(
+                    self.system_config['motion']['position_tolerance_deg'], self.system_config))
+
+        def move(delta):
+            nonlocal total_travel
+            snapshot, value = check()
+            if len(evidence['corrections']) >= policy.maximum_corrections or total_travel+abs(delta) > policy.maximum_travel_deg:
+                raise RuntimeError('Automatic zero return correction budget exhausted')
+            target = snapshot.position_turns + delta/factor
+            event = dict(before_deg=value['angle_deg'], nominal_step_deg=delta, target_motor_turns=target)
+            evidence['corrections'].append(event)
+            total_travel += abs(delta)
+            self.command_position_and_wait(target, 'zero_return_correction', token,
+                cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'], distance_deg=abs(delta))
+            event['after_deg'] = check()[1]['angle_deg']
+
+        original = None
+        try:
+            idle()
+            self.motion_phase = 'unassisted_zero_observation'
+            try:
+                self.observe_post_idle_neutral(neutral_target)
+            except RotaryZeroMiss:
+                pass
+            original = deepcopy(self.run_metadata['zero_return_check'])
+            evidence['unassisted_passed'] = original['passed']
+            passed = original['passed']
+            while not passed:
+                check()
+                self.update_terminal('Return offset recorded; correcting to rotary zero before completing the test.\n')
+                self.enter_closed_loop(token)
+                armed = True
+                self.motion_phase = 'zero_return_correction'
+                result = home(policy, observe, move, check)
+                evidence['attempts'].append(result)
+                idle()
+                self.motion_phase = 'corrected_zero_observation'
+                try:
+                    self.observe_post_idle_neutral(self.get_feedback().position_turns)
+                    passed = True
+                except RotaryZeroMiss:
+                    passed = False
+                evidence['final_observation'] = deepcopy(self.run_metadata['zero_return_check'])
+                self.run_metadata['zero_return_check'] = original
+            if 'final_observation' not in evidence:
+                evidence['final_observation'] = deepcopy(original)
+            check()
+            final_idle = self.safe_idle_motor('rotary zero verified; return complete', token=token)
+            if not final_idle or not final_idle.confirmed:
+                raise FeedbackError('Final zero return idle was not confirmed')
+            evidence.update(status='completed', nominal_travel_deg=total_travel,
+                idle_confirmed=True, correction_count=len(evidence['corrections']))
+            self.update_terminal('Return complete: rotary zero stable within ±0.10°.\n')
+        except Exception as exc:
+            evidence.update(status='failed', error=str(exc), nominal_travel_deg=total_travel)
+            raise
+        finally:
+            if original is not None:
+                self.run_metadata['zero_return_check'] = original
+
     def observe_post_idle_neutral(self, neutral_target):
         self.observe_idle_neutral(
             neutral_target,
@@ -4085,6 +4216,7 @@ class MyInterface(OperatorView):
         )
 
     def observe_idle_neutral(self, neutral_target, cancelled=lambda: False, *, record_return=True):
+        from east_rotary_homing import RotaryZeroMiss
         from east_zero_window import collect_stationary_window, ZERO_IDLE_SETTLE_S, ZERO_IDLE_TIMEOUT_S
         cfg=self.system_config['reference'];duration=cfg['post_idle_observation_ms']/1000.
         tolerance_turns=afo_degrees_to_odrive_turns(self.system_config['motion']['position_tolerance_deg'],self.system_config)
