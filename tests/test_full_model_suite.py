@@ -163,6 +163,79 @@ class WindowTests(unittest.TestCase):
         self.assertEqual([r['status'] for r in selected],['failed_run_recovered_skipped','completed'])
         self.assertIsNone(app.motion_coordinator.owner)
 
+    def test_restart_refuses_to_discard_an_unfinished_homing_transaction(self):
+        from concurrent.futures import Future
+        app,window=self.prepare_suite()
+        pending=Future();window.recovery_future=pending
+        window.start()
+        self.assertFalse(window.active)
+        self.assertIs(window.recovery_future,pending)
+        self.assertIn('previous zero transaction',window.status.options['text'])
+        self.assertIsNone(app.motion_coordinator.owner)
+
+    def test_recovery_rejects_success_evidence_from_another_batch(self):
+        from concurrent.futures import Future
+        from unittest.mock import Mock
+        app,window=self.prepare_suite()
+        request=make_plan(app.system_config,dict(operator='SC',fixture_id='0',calibration_id='0'),
+            dict(cycles=1,minimum_angle_deg=15,maximum_angle_deg=15,acceleration_deg_s2=100),
+            'setup','','manifest.json','now')[126]
+        window.request=request;window.records=[{}];window.pending_zero_recovery=True
+        future=Future();future.set_result(dict(evidence=dict(outcome='sensor_zero_reached',
+            idle_confirmed=True,zero_reference_written=True,parent_batch_id='old-batch',parent_run_id=request.run_id)))
+        window.recovery_future=future;window.finish=Mock()
+        window.next_run()
+        self.assertEqual(window.finish.call_args.args[0],'error')
+        self.assertIn('another batch/run',window.finish.call_args.args[1])
+        self.assertIsNone(app.motion_coordinator.owner)
+
+    def test_restart_same_window_discards_failed_recovery_and_launches_fresh_home(self):
+        from concurrent.futures import Future
+        from types import SimpleNamespace
+        app,window=self.prepare_suite()
+        self.inject_zero_miss=True
+        app.start_rotary_homing=app.__class__.start_rotary_homing.__get__(app)
+        actual_recovery=app.start_suite_zero_recovery
+        failed=Future()
+        def fail_first(owner):
+            app.rotary_homing=SimpleNamespace(active=False,closed=False,
+                evidence_path='simulated_first_home.json')
+            failed.set_result(dict(message='SIMULATED homing failure',evidence=dict(
+                outcome='failed',error='SIMULATED ODrive feedback is stale',idle_confirmed=True,
+                zero_reference_written=False,parent_batch_id=owner.request.batch_id,
+                parent_run_id=owner.request.run_id)))
+            return failed
+        app.start_suite_zero_recovery=fail_first
+        window.fields['start_run'].value=window.fields['end_run'].value='132'
+        window.start();self.assertTrue(window.active,window.status.options)
+        self.pump(lambda:(window.tick(),not window.active)[1],35)
+        self.assertEqual(window.batch_status,'error')
+        self.assertIn('SIMULATED ODrive feedback is stale',window.batch_error)
+        self.assertIs(window.recovery_future,failed)
+        old_manifest=window.manifest_path
+        old_body=json.loads(old_manifest.read_text())
+        old_id=window.requests[0].batch_id
+        old_metadata=Path(window.records[0]['metadata_file']).read_text()
+        # Stand in for the operator's successful manual home between batches.
+        self.angle=0.
+        self.pump(lambda:abs(app.rotary_sensor.measurement()['angle_deg'])<.01)
+        app.start_suite_zero_recovery=actual_recovery
+        window.fields['end_run'].value='133'
+        window.start();self.assertTrue(window.active,window.status.options)
+        self.assertIsNone(window.recovery_future)
+        self.assertFalse(window.pending_zero_recovery)
+        self.assertNotEqual(window.requests[0].batch_id,old_id)
+        self.pump(lambda:(window.tick(),not window.active)[1],45)
+        self.assertEqual(window.batch_status,'completed_with_zero_recovery',window.batch_error)
+        self.assertEqual(len(window.records),2)
+        attempt=window.records[0]['zero_recovery_attempt']
+        self.assertEqual(attempt['parent_batch_id'],window.requests[0].batch_id)
+        self.assertTrue(attempt['zero_reference_written'])
+        self.assertEqual(window.records[1]['run_status'],'completed')
+        self.assertEqual(json.loads(old_manifest.read_text()),old_body)
+        self.assertEqual(Path(old_body['runs'][131]['metadata_file']).read_text(),old_metadata)
+        self.assertIsNone(app.motion_coordinator.owner)
+
     def test_stop_during_fast_run_cancels_remaining(self):
         app,window=self.prepare_suite()
         window.fields['start_run'].value='131';window.fields['end_run'].value='133'

@@ -62,7 +62,8 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(module, 'make_protocol_plan', side_effect=short_plan):
             window.start()
             self.assertTrue(window.active, window.status.options)
-            self.pump(lambda: (window.tick(), launched == [1, 2, 3])[1], 85)
+            self.pump(lambda: (window.tick(), launched == [1, 2, 3] or not window.active)[1], 85)
+            self.assertEqual(launched, [1, 2, 3], window.batch_error or str(window.status.options))
             self.assertIsNone(window.awaiting_stage_review)
             recovered = window.records[1]
             self.assertTrue(recovered['acquisition_complete'])

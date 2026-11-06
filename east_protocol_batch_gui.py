@@ -140,6 +140,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         try:
             if a.loaded_preset_key!=self.preset_key:
                 raise ValueError('The active preset changed; reopen the sequence from Start')
+            if any(future is not None and not future.done() for future in (self.recovery_future,self.preparation_future)):
+                raise ValueError('Wait for the previous zero transaction to finish before starting a new batch')
             if not ready_for_next(a) or a.rotary_homing_active() or a.monitor_error or a.feedback_retry_pending:
                 raise ValueError('Finish current work and resolve feedback/cleanup before starting')
             if a.manual_mode.get() or not a.rotary_reference_verified() or (not self.comparison_suite and not a.rotary_zero_ready()) or a.empty_machine_tare is None:
@@ -211,6 +213,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.batch_status='running';self.batch_error=None
             self.request=None;self.awaiting_run=False;self.cancelled.clear()
             a.operator_stop_requested=False;a.acquisition_error=None
+            # A restarted batch must never consume the previous batch's completed/failed homing future.
+            self.pending_zero_recovery=False;self.recovery_future=None
             self.pending_zero_preparation=False;self.preparation_future=None;self.prepared_for_run=None;self.preparation_records=[];self.reference_history=[]
             self.stage_approved_run = None
             self.awaiting_stage_review = None
@@ -287,9 +291,16 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 return
             if not self.recovery_future.done() or not quiescent(a):return
             result=self.recovery_future.result();e=result['evidence']
+            attempt=self.records[-1].setdefault('zero_recovery_attempt',{})
+            attempt.update(outcome=e.get('outcome'),error=e.get('error'),
+                idle_confirmed=e.get('idle_confirmed'),zero_reference_written=e.get('zero_reference_written'),
+                parent_batch_id=e.get('parent_batch_id'),parent_run_id=e.get('parent_run_id'))
+            if e.get('parent_batch_id') != self.request.batch_id or e.get('parent_run_id') != self.request.run_id:
+                raise RuntimeError('Homing result belongs to another batch/run; refusing stale recovery evidence')
             a.rotary_homing.active=False
             if e.get('outcome')!='sensor_zero_reached' or not e.get('idle_confirmed') or not e.get('zero_reference_written'):
-                raise RuntimeError('Bounded zero recovery did not complete with saved reference and confirmed idle')
+                detail=e.get('error') or f"outcome={e.get('outcome')}; idle={e.get('idle_confirmed')}; saved zero={e.get('zero_reference_written')}"
+                raise RuntimeError(f"Automatic homing failed: {detail}. Evidence: {attempt.get('evidence_file')}")
             if (self.current_identity()!=self.identity_snapshot or a._motion_field_values()!=self.settings_snapshot
                     or a.empty_machine_tare is None or a.empty_machine_tare.to_dict()!=self.tare_snapshot
                     or a.odrive_connection_generation!=self.connection_generation
