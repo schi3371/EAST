@@ -61,6 +61,7 @@ class StrainSequenceTests(unittest.TestCase):
         app.system_config = self.config
         app.run_motion_model_enabled = False
         app.run_motion_model = None
+        app.run_motion_mapping_context = None
         app.run_motion_token = "token"
         app.test_stop_event = Event()
         app.operator_stop_requested = False

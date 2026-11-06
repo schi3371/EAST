@@ -4,6 +4,10 @@ import math
 import time
 
 
+class RotaryZeroMiss(RuntimeError):
+    """A measured zero qualification failure, separate from controller faults."""
+
+
 ZERO_TOLERANCE_DEG = 0.10
 ZERO_DWELL_S = 0.5
 

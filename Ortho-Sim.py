@@ -56,7 +56,7 @@ from east_core import (
     validate_test_parameters,
     write_json_atomic,
 )
-from east_rotary_homing import ZERO_TOLERANCE_DEG
+from east_rotary_homing import ZERO_TOLERANCE_DEG, RotaryZeroMiss
 from east_odrive import ODriveAdapter
 from east_shutdown_ui import BlockedShutdownDialog
 from east_execution import TestEngine, TransportOwner, Lifecycle, AcquisitionLoop, RetainedConnectionRecovery, FeedbackMonitor
@@ -113,10 +113,6 @@ class MovingAverageFilter:
 
 class TestStopped(Exception):
     """Raised inside a motion wait when an operator or acquisition fault stops a run."""
-
-class RotaryZeroMiss(RuntimeError):
-    """A measured zero qualification failure, separate from controller faults."""
-
 
 class MyInterface(OperatorView):
     def __init__(self, master):
@@ -2159,17 +2155,15 @@ class MyInterface(OperatorView):
         from east_motion_mapping import zero_recovery_candidate
         if self.motion_mapping is not owner or not zero_recovery_candidate(self,owner.request):
             raise RuntimeError('Suite zero recovery is not eligible; preserve the failure and stop')
-        comparison=getattr(owner,'comparison_suite',False) and not getattr(owner,'pilot_suite',False)
-        if not comparison and abs(self.rotary_sensor.measurement(require=True)['angle_deg']) > .25:
-            raise RuntimeError('Live zero error exceeds the bounded suite recovery allowance')
+        # The official homing transaction enforces fresh measurements, ownership,
+        # calibrated sensor range, cumulative travel, progress and timeout.
+        self.rotary_sensor.measurement(require=True)
         state=SimpleNamespace(closed=False,active=True,phase='homing',future=None,
             fixture_condition='Empty fixture',resume_parameters=None,managed_by_batch=True,
             parent_batch_id=owner.request.batch_id,parent_run_id=owner.request.run_id)
         self.rotary_homing=state
         try:
-            policy=HomingPolicy() if comparison else HomingPolicy(maximum_step_deg=.1,
-                maximum_travel_deg=.5,maximum_corrections=10,timeout_s=15.)
-            state.future=self.start_rotary_homing(state,policy,batch_owner=owner)
+            state.future=self.start_rotary_homing(state,HomingPolicy(),batch_owner=owner)
         except Exception:
             state.active=False
             raise
@@ -2184,7 +2178,7 @@ class MyInterface(OperatorView):
         if window is not self.rotary_homing or window.closed:
             raise ValueError("Home action is no longer current")
         allowed_batch = (batch_owner is not None and self.motion_mapping is batch_owner
-                         and batch_owner.active and batch_owner.remaining_suite
+                         and batch_owner.active and batch_owner.preset_snapshot.get('test_type') == 'empty_machine_baseline'
                          and (batch_owner.pending_zero_recovery or getattr(batch_owner,'pending_zero_preparation',False)) and not batch_owner.cancelled.is_set()
                          and getattr(window,'managed_by_batch',False))
         if batch_owner is not None and not allowed_batch:
@@ -3514,6 +3508,7 @@ class MyInterface(OperatorView):
     
     def strain_test_control(self):
         """Control the motor and log strain data during the test"""
+        from east_rotary_homing import RotaryZeroMiss
         final_status = "aborted"
         final_error = None
         idle_confirmed = False
@@ -3645,6 +3640,17 @@ class MyInterface(OperatorView):
                 final_status = "aborted"
                 final_error = "operator stop"
                 self.update_terminal("Strain test aborted.\n")
+        except RotaryZeroMiss as exc:
+            final_status = "error"
+            final_error = str(exc)
+            mapping = getattr(self, "motion_mapping", None)
+            if (mapping is not None and getattr(mapping, "active", False)
+                    and getattr(mapping, "preset_snapshot", {}).get("allow_bounded_zero_recovery")):
+                self.update_terminal(
+                    f"Measurement cycles complete. Unassisted zero return recorded: {exc}\n"
+                    "Saving recordings, then automatically homing before continuing.\n")
+            else:
+                self.update_terminal(f"Error during strain test: {exc}\n")
         except Exception as exc:
             final_status = "error"
             final_error = str(exc)
@@ -4110,7 +4116,7 @@ class MyInterface(OperatorView):
                 nominal_motor_target_turns=neutral_target,**observation)
             if not passed:
                 raise RotaryZeroMiss(f"Model return missed rotary zero: mean {observation['mean_deg']:+.4f} degrees, "
-                    f"observed range [{observation['min_deg']:+.4f}, {observation['max_deg']:+.4f}]; separate zero preparation required")
+                    f"observed range [{observation['min_deg']:+.4f}, {observation['max_deg']:+.4f}]; rotary homing required")
 
     def continuous_strain_read(self):
         acquisition = AcquisitionLoop(

@@ -18,7 +18,7 @@ With the fixture empty, verify rotary zero and capture unloaded tare. Turn on **
 
 One numbered cycle per run, ±5°, 0.5°/s requested trajectory, 0.5°/s² ramp. The motor trajectory ceiling is distinct from the requested ramp. The three new fits use the frozen coefficients from the 2 November wider mapping report. The increasing branch is anchored at measured zero and the origin is held for all legs. The same streaming path and guard envelope apply to all seven arms. The earlier two-run pilot used its own alignment procedure and is commissioning evidence.
 
-Keep the run metadata, joined strain CSV, raw rotary CSV and batch manifest together. Use the recorded desired and measured angle samples to score RMS, bias and worst error by sweep direction, reversal/endpoint performance, update gaps and rate limits. Record actual speed and coverage through the planned stiffness window, unassisted return, verification time and failures. Compare one score per run across blocks. A bounded separate homing action may follow a fully persisted run with a small zero miss. Preserve the unassisted outcome and the separate homing evidence. Review and resolve any actual drive or acquisition fault before another test.
+Keep the run metadata, joined strain CSV, raw rotary CSV and batch manifest together. Use the recorded desired and measured angle samples to score RMS, bias and worst error by sweep direction, reversal/endpoint performance, update gaps and rate limits. Record actual speed and coverage through the planned stiffness window, unassisted return, verification time and failures. Compare one score per run across blocks. A separate automatic rotary homing action follows a fully persisted run with a model zero miss. Preserve the unassisted outcome and the separate homing evidence. Review and resolve any actual drive or acquisition fault before another test.
 
 ## B. Qualify finalist controllers at the intended SOP condition
 
@@ -55,7 +55,7 @@ Select the fastest **measured** speed that meets the agreed limits and yields co
 
 Load **Feedback Commissioning Sequence — All Stages (Empty)** with Engineering controls enabled, then press Start. Choose **Start at stage** and **Stop after stage**. Leave the end blank to select through stage 11. Each stage runs Wider feedforward followed by Wider with rotary feedback, with one cycle per run. The two runs share the desired trajectory, fixed zero anchor, streaming schedule and motor ceilings.
 
-**Pause for review after each stage** is on by default. Press **Continue to next stage** after reviewing a pair, or switch the pause option off before starting to authorize automatic progression through the selected range. The confirmation lists all selected motion conditions. Stop and genuine drive, sensor and recording failures halt the sequence. To resume after cleanup, create a new batch at the required stage. Existing recordings remain separate. The older individual stage definitions remain compatible with saved data and are hidden from the preset menu.
+Automatic progression through the selected stage range is the default. **Pause for review after each stage** is optional. If selected before starting, press **Continue to next stage** after reviewing a pair. The confirmation lists all selected motion conditions. Stop and genuine drive, sensor and recording failures halt the sequence. To resume after cleanup, create a new batch at the required stage. Existing recordings remain separate. The older individual stage definitions remain compatible with saved data and are hidden from the preset menu.
 
 | Stage | ROM | Reference speed, °/s | Reference acceleration, °/s² |
 |---|---|---:|---:|
@@ -80,3 +80,10 @@ The planned reference ramp is distinct from the motor trajectory ceilings. The m
 The initial commissioning tracking guard allows the reference travel over the configured motor feedback stale interval plus 0.25° reserve, with a minimum 1°. Actual measured travel is guarded at selected ROM plus 1° and remains subject to the accepted rotary-calibration range. These are provisional fault limits. Evaluate accuracy using the recorded tracking errors, separately from the guard. Sensor freshness, controller faults, Stop, durable recording and post-idle zero checks still apply.
 
 Leg deadlines use the planned ramp duration plus six seconds, within the existing global motion timeout. This accommodates a ±10° traversal at 0.5°/s. The original slow pilot and seven-method screen retain their original settings. Higher stages require bench validation. All commissioning presets are empty-fixture only. Loaded feedback commissioning follows review of the empty-fixture evidence.
+
+
+## Automatic recovery after a model zero-return miss
+
+For automated empty-fixture protocols, a fully saved measurement run that misses its unassisted rotary zero is followed by official rotary homing. There is no separate 0.25° eligibility cutoff. Homing retains its own motion, sensor-validity, progress and timeout checks. After zero and the updated reference are verified and saved, the next measurement run starts automatically. Completed sweeps are never replayed.
+
+The run's unassisted return remains recorded as failed, with its measured offset and range. The batch labels its acquisition as recovered after the separate homing action and records the before/after references and evidence file. At the final run, automatic homing still completes before the batch finishes. Stop, drive faults, stale/invalid sensing, incomplete recording or failed homing halt the sequence. Loaded protocols retain their existing behaviour.

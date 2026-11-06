@@ -98,7 +98,7 @@ class WindowTests(unittest.TestCase):
         meta = json.loads(Path(window.manifest_path).read_text())
         self.assertEqual(meta['selected_start_run'], 9)
         self.assertEqual(meta['selected_end_run'], 10)
-        self.assertTrue(meta['pause_between_stages'])
+        self.assertFalse(meta['pause_between_stages'])
         self.assertEqual(meta['runs'][10]['status'], 'outside_selected_run_range')
 
     def test_stop_while_paused_never_launches_successor(self):

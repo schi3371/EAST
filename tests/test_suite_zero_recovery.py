@@ -13,7 +13,7 @@ import test_motion_model as model_harness
 from test_three_speed_protocol import window_for
 
 class AdmissionTests(unittest.TestCase):
-    def test_only_durable_full_acquisitions_with_small_zero_failure_qualify(self):
+    def test_only_durable_full_acquisitions_with_zero_failure_qualify(self):
         request=plan_harness.PlanTests().plan()[0]
         m=dict(protocol_batch=request.context(),run_status='error',completed_cycles=3,
             outcome_pending_cleanup=False,sample_count=10,error='Model return missed rotary zero: -0.1059 degrees',
@@ -28,10 +28,14 @@ class AdmissionTests(unittest.TestCase):
         self.assertTrue(zero_recovery_candidate(a,request))
         for mutate in [lambda x:x.update(completed_cycles=2),lambda x:x['csv_recorder'].update(pending_rows=1),
                 lambda x:x['csv_recorder'].update(rows_persisted=9),lambda x:x['rotary_sensor']['recording_statistics'].update(invalid_samples=1),
-                lambda x:x['zero_return_check'].update(unassisted_angle_deg=-.3),lambda x:x.update(error='ODrive feedback is stale'),
+                lambda x:x.update(error='ODrive feedback is stale'),
                 lambda x:x['idle_confirmation'].update(confirmed=False),lambda x:x.update(outcome_pending_cleanup=True)]:
             a.run_metadata=copy.deepcopy(m);mutate(a.run_metadata)
             self.assertFalse(zero_recovery_candidate(a,request))
+        for angle in (-.2593, -.346, -.8):
+            a.run_metadata = copy.deepcopy(m)
+            a.run_metadata['zero_return_check']['unassisted_angle_deg'] = angle
+            self.assertTrue(zero_recovery_candidate(a, request))
         a.run_metadata=m;a.engine.cancel_event.set();self.assertFalse(zero_recovery_candidate(a,request));a.engine.cancel_event.clear()
         a.acquisition_error='failed';self.assertFalse(zero_recovery_candidate(a,request))
 
@@ -96,15 +100,15 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(Path(body['reference_history'][0]['evidence_file']).exists())
         evidence=json.loads(Path(body['reference_history'][0]['evidence_file']).read_text())
         self.assertEqual(evidence['purpose'],'separate_suite_zero_recovery')
-        self.assertEqual(evidence['policy']['maximum_travel_deg'],.5)
+        self.assertEqual(evidence['policy']['maximum_travel_deg'],20.)
         self.assertFalse(body['reference_history'][0]['reference_equivalence_assumed'])
         self.app._tare_worker.assert_not_called()
 
-    def test_large_miss_stops_without_any_recovery(self):
+    def test_larger_miss_homes_and_continues_without_repeating_sweeps(self):
         w,body=self.run_case(-.3)
-        self.assertEqual(body['outcome'],'error')
-        self.assertEqual([r['status'] for r in body['runs']],['failed','skipped','skipped'])
-        self.assertEqual(body['reference_history'],[])
+        self.assertEqual(body['outcome'],'completed_with_zero_recovery',body.get('error'))
+        self.assertEqual([r['status'] for r in body['runs']],['acquired_zero_recovered','completed','completed'])
+        self.assertEqual(len(body['reference_history']),1)
 
     def test_operator_start_four_creates_skipped_rows_without_certifying_prior_data(self):
         a=self.prepare();a.loaded_preset_key='remaining_motion_data'
