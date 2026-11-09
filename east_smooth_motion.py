@@ -2,7 +2,9 @@
 from dataclasses import dataclass
 import math
 
-from east_stream_screen import StreamScreenModel
+PRESET = 'smooth_rotary_pair'
+PERIOD_S = .05
+BANDWIDTH = 20.
 
 
 def clamp(value, lower, upper):

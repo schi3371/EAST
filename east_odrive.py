@@ -313,6 +313,7 @@ class ODriveAdapter:
         controller_velocity_limit_turns_s: float,
         control_mode: int,
         input_mode: int,
+        filter_bandwidth: float | None = None,
     ) -> None:
         velocity = _finite_float(velocity_turns_s, "trajectory velocity")
         acceleration = _finite_float(acceleration_turns_s2, "trajectory acceleration")
@@ -322,6 +323,13 @@ class ODriveAdapter:
         if velocity <= 0 or acceleration <= 0 or controller_limit < velocity:
             raise ValueError("Trajectory limits must be positive and internally consistent")
         with self._locked_io():
+            if filter_bandwidth is not None:
+                bandwidth = _finite_float(filter_bandwidth, 'position filter bandwidth')
+                if bandwidth <= 0 or int(self.axis.current_state) != self.idle_state:
+                    raise ValueError('Filtered position configuration requires idle and positive bandwidth')
+                self.axis.controller.config.input_filter_bandwidth = bandwidth
+                self.axis.controller.input_vel = 0.
+                self.axis.controller.input_torque = 0.
             self.axis.controller.config.control_mode = int(control_mode)
             self.axis.controller.config.input_mode = int(input_mode)
             self.axis.trap_traj.config.vel_limit = velocity

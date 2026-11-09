@@ -29,6 +29,7 @@ from odrive.enums import (
     INPUT_MODE_TRAP_TRAJ,
 )
 
+from east_smooth_motion import PRESET as SMOOTH_PAIR
 from east_motion_model import X_LIMIT, ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method, selected_variant, CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 
 from east_core import (
@@ -967,7 +968,7 @@ class MyInterface(OperatorView):
             reason = "Fixture ID does not match the saved machine-zero record"
             raise ReferenceRequiredError(reason)
 
-    def configure_trajectory(self, speed_deg_s, acceleration_deg_s2, turns_per_degree=None):
+    def configure_trajectory(self, speed_deg_s, acceleration_deg_s2, turns_per_degree=None, *, filtered=False):
         if self.odrive_adapter is None:
             raise RuntimeError("ODrive is not connected")
         motion = self.system_config["motion"]
@@ -983,12 +984,20 @@ class MyInterface(OperatorView):
             trajectory_velocity = min(trajectory_velocity, afo_speed_to_odrive_turns_s(motion["maximum_speed_deg_s"], self.system_config))
             trajectory_acceleration = min(trajectory_acceleration, afo_acceleration_to_odrive_turns_s2(motion["maximum_acceleration_deg_s2"], self.system_config))
         controller_limit = trajectory_velocity * float(motion["controller_velocity_safety_multiplier"])
+        input_mode = INPUT_MODE_TRAP_TRAJ
+        options = {}
+        if filtered:
+            from odrive.enums import INPUT_MODE_POS_FILTER
+            from east_smooth_motion import BANDWIDTH
+            input_mode = INPUT_MODE_POS_FILTER
+            options["filter_bandwidth"] = BANDWIDTH
         self.odrive_adapter.configure_trajectory(
             trajectory_velocity,
             trajectory_acceleration,
             controller_limit,
             CONTROL_MODE_POSITION_CONTROL,
-            INPUT_MODE_TRAP_TRAJ,
+            input_mode,
+            **options,
         )
         self.commanded_odrive_velocity = trajectory_velocity
         self.commanded_odrive_acceleration = trajectory_acceleration
@@ -1432,12 +1441,15 @@ class MyInterface(OperatorView):
     def _rotary_acquisition_travel_limit(self):
         from east_feedback_commissioning import policy
         context = getattr(self, "run_motion_mapping_context", None) or {}
+        if context.get('protocol_key') == SMOOTH_PAIR:
+            return 11.
         selected = policy(self.system_config, context.get("feedback_condition_key", context.get("protocol_key", "")))
         return selected["travel_guard_deg"] if selected else 15.1
 
     def _test_feedback(self):
         value = self.rotary_sensor.measurement(require=True)
-        if getattr(self,"run_rotary_targeted",False) is True:
+        if (getattr(self,"run_rotary_targeted",False) is True
+                or (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SMOOTH_PAIR):
             limit = self._rotary_acquisition_travel_limit()
             if abs(value["angle_deg"]) > limit:
                 raise RotaryError(f"Rotary acquisition travel guard exceeded: measured {value['angle_deg']:+.4f} degrees; limit +/-{limit:g}")
@@ -3054,6 +3066,7 @@ class MyInterface(OperatorView):
             self.configure_trajectory(
                 parameters.commanded_afo_speed_deg_s,
                 parameters.commanded_afo_acceleration_deg_s2,
+                filtered=context.get('protocol_key') == SMOOTH_PAIR,
             )
             app_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
             csv_path, metadata_path = create_run_paths(parameters, self.system_config, app_base)
@@ -3531,6 +3544,7 @@ class MyInterface(OperatorView):
         candidate_completed = False
         token = self.run_motion_token
         try:
+            smooth_pair = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SMOOTH_PAIR
             if token is None:
                 raise RuntimeError("Test motion ownership was not acquired")
             if self.test_stop_event.is_set():
@@ -3548,7 +3562,7 @@ class MyInterface(OperatorView):
             from east_stream_screen import SCREEN_PRESET, StreamScreenModel
             from east_full_model_suite import PRESET as FULL_COMPARISON
             screen_key = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key')
-            stream_screen = screen_key in (SCREEN_PRESET, FULL_COMPARISON)
+            stream_screen = screen_key in (SCREEN_PRESET, FULL_COMPARISON, SMOOTH_PAIR)
             from east_feedback_commissioning import condition_for
             motion_context = getattr(self, 'run_motion_mapping_context', None) or {}
             commissioning = condition_for(motion_context.get(
@@ -3565,8 +3579,8 @@ class MyInterface(OperatorView):
                 rotary_angle = self.rotary_sensor.measurement(require=True)["angle_deg"]
                 if stream_screen:
                     self.run_motion_model = StreamScreenModel.anchored(self.run_model_variant, anchor.position_turns, rotary_angle,
-                        full_range=screen_key == FULL_COMPARISON)
-                    self.run_metadata["motion_method"] = f"Streamed {self.run_model_variant}" + (
+                        full_range=screen_key in (FULL_COMPARISON, SMOOTH_PAIR))
+                    self.run_metadata["motion_method"] = ("Smoothed wider cubic" if smooth_pair else f"Streamed {self.run_model_variant}") + (
                         " + rotary feedback" if self.run_feedback_pilot else " feedforward")
                 else:
                     self.run_motion_model = model_class.anchored(anchor.position_turns, rotary_angle)
@@ -3631,10 +3645,11 @@ class MyInterface(OperatorView):
 
             # A successful run uses the dedicated, conservative neutral-return profile.
             motion = self.system_config["motion"]
-            self.configure_trajectory(
-                motion["neutral_return_speed_deg_s"],
-                motion["neutral_return_acceleration_deg_s2"],
-            )
+            if not smooth_pair:
+                self.configure_trajectory(
+                    motion["neutral_return_speed_deg_s"],
+                    motion["neutral_return_acceleration_deg_s2"],
+                )
             neutral_target = mapping.neutral_position_turns
             neutral_target = self.command_test_angle(
                 0.0, neutral_target,
@@ -3704,6 +3719,16 @@ class MyInterface(OperatorView):
                     final_error = f"{final_error}; {suffix}" if final_error else suffix
                 else:
                     idle_confirmed = True
+            if idle_confirmed and smooth_pair:
+                try:
+                    motion = self.system_config["motion"]
+                    self.configure_trajectory(motion["neutral_return_speed_deg_s"],
+                                              motion["neutral_return_acceleration_deg_s2"])
+                except Exception as exc:
+                    candidate_completed = False
+                    final_status = "error"
+                    detail = f"Could not restore native ODrive mode after idle: {exc}"
+                    final_error = f"{final_error}; {detail}" if final_error else detail
             data_alive = False
             if self.data_collection_thread is not None:
                 self.data_collection_thread.join(timeout=2.0)
@@ -3955,11 +3980,75 @@ class MyInterface(OperatorView):
         self.command_position_and_wait(last,phase,token,motor_speed,motor_acceleration,distance_deg=.5)
         return last
 
+    def command_smoothed_angle(self, target, phase, token, speed=None, acceleration=None):
+        from east_smooth_motion import BANDWIDTH, PERIOD_S, FilteredPositionSweep, Sweep
+
+        parameters = self.run_parameters
+        if (parameters.test_type != 'empty_machine_baseline'
+                or (parameters.min_angle_deg, parameters.max_angle_deg,
+                    parameters.commanded_afo_speed_deg_s,
+                    parameters.commanded_afo_acceleration_deg_s2, parameters.cycles)
+                != (10., 10., 5., 100., 3)):
+            raise RuntimeError('Smoothed motion requires the fixed empty-fixture pair')
+        returning = phase == 'returning_to_machine_zero'
+        start = {'moving_to_initial_max': 0., 'moving_to_min': 10.,
+                 'moving_to_max': -10., 'returning_to_machine_zero': 10.}[phase]
+        sweep = Sweep.plan(start, target, 5. if speed is None else speed,
+                           100. if acceleration is None else acceleration)
+        self.motion_phase = phase
+        snapshot, _ = self.check_rotary_acquisition(token)
+        self._write_runtime_checkpoint(MotionState.MOVING, snapshot, clean_shutdown=False,
+                                       extra={'phase': phase, 'control': 'filtered_position'})
+        snapshot, rotary = self.check_rotary_acquisition(token)
+        if abs(start - rotary['angle_deg']) > .5:
+            raise RuntimeError('Smoothed sweep start differs from its planned endpoint')
+        planner = FilteredPositionSweep(sweep, self.run_motion_model, snapshot.position_turns,
+                                       feedback=self.run_feedback_pilot and not returning)
+        log = self.run_metadata.setdefault('smoothed_motion', {
+            'input_mode': 'POS_FILTER', 'bandwidth_per_s': BANDWIDTH,
+            'command_period_s': PERIOD_S, 'maximum_dispatch_gap_s': .15,
+            'feedback': bool(self.run_feedback_pilot), 'gain': planner.GAIN,
+            'deadband_deg': planner.DEAD_BAND_DEG, 'trim_cap_deg': planner.TRIM_CAP_DEG,
+            'trim_rate_deg_s': planner.TRIM_RATE_DEG_S, 'filter_tau_s': planner.FILTER_TAU_S,
+            'samples': [], 'legs': []})
+        log['legs'].append(dict(phase=phase, cycle=self.current_cycle,
+                                planned_duration_s=sweep.duration, feedback=planner.feedback))
+        origin = rotary['sample'][0]
+        row = planner.command(0., measured=rotary['angle_deg'], sample_time=0.)
+        self._submit_position(token, row['target_motor_turns'])
+        previous = time.monotonic()
+        while True:
+            row.update(phase=phase, cycle=self.current_cycle, measured_angle_deg=rotary['angle_deg'],
+                       rotary_sample_host_s=rotary['sample'][0], measured_motor_turns=snapshot.position_turns,
+                       command_issued_at_monotonic_s=previous)
+            log['samples'].append(row)
+            if row['time_s'] >= sweep.duration:
+                break
+            due = origin + (math.floor((previous - origin) / PERIOD_S) + 1) * PERIOD_S
+            if self.test_stop_event.wait(max(0., due - time.monotonic())):
+                raise TestStopped()
+            snapshot, rotary = self.check_rotary_acquisition(token)
+            now = time.monotonic()
+            if now - previous > .15:
+                raise RuntimeError('Smoothed motion command dispatch gap exceeded 150 ms')
+            row = planner.command(now - origin, measured=rotary['angle_deg'],
+                                  sample_time=rotary['sample'][0] - origin)
+            if abs(row['angle_deg'] - rotary['angle_deg']) > 2.:
+                raise RuntimeError('Smoothed motion tracking error exceeded 2 degrees')
+            self._submit_position(token, row['target_motor_turns'])
+            previous = time.monotonic()
+        target_turns = row['target_motor_turns']
+        self.command_position_and_wait(target_turns, phase, token, sweep.peak,
+                                       100. if acceleration is None else acceleration, distance_deg=.5)
+        return target_turns
+
     def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
         """Model targets only for normal tests. Manual/homing/identification stay legacy."""
         if getattr(self,'run_rotary_targeted',False) is True:
             return self.command_rotary_endpoint(angle_deg,phase,token,speed_deg_s,acceleration_deg_s2)
         model = getattr(self, 'run_motion_model', None)
+        if (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SMOOTH_PAIR:
+            return self.command_smoothed_angle(angle_deg, phase, token, speed_deg_s, acceleration_deg_s2)
         if getattr(self,'run_segmented_comparison',False) and self.run_motion_mapping_context.get('stage')=='rotary_feedback_pilot':
             return self.command_rotary_feedback_pilot(angle_deg,phase,token)
         if model is None:

@@ -142,11 +142,14 @@ def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded
 def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
     if key == SEQUENCE_PRESET:
         return make_feedback_sequence(config, identity, settings, setup, baseline, path, loaded, batch_id)
+    from east_smooth_motion import PRESET as SMOOTH_PAIR
+    smooth = key == SMOOTH_PAIR
     condition = condition_for(key)
-    half_range = condition.half_range_deg if condition else 5.
-    speed = condition.speed_deg_s if condition else .5
-    acceleration = condition.acceleration_deg_s2 if condition else 5.
-    if (int(settings['cycles']) != 1 or float(settings['minimum_angle_deg']) != half_range
+    cycles = 3 if smooth else 1
+    half_range = 10. if smooth else (condition.half_range_deg if condition else 5.)
+    speed = 5. if smooth else (condition.speed_deg_s if condition else .5)
+    acceleration = 100. if smooth else (condition.acceleration_deg_s2 if condition else 5.)
+    if (int(settings['cycles']) != cycles or float(settings['minimum_angle_deg']) != half_range
             or float(settings['maximum_angle_deg']) != half_range
             or float(settings['acceleration_deg_s2']) != acceleration):
         raise ValueError('Reload the selected fixed feedback preset')
@@ -160,9 +163,9 @@ def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,b
     for i, (block, method) in enumerate(plan, 1):
         feedback = method == "feedback"
         variant = "candidate" if feedback else method
-        prefix = "StreamScreen" if screen else "Pilot"
+        prefix = "SmoothPair" if smooth else ("StreamScreen" if screen else "Pilot")
         p=validate_test_parameters(dict(file_prefix=f'{prefix}_B{batch_id[:8]}_R{i}',operator=identity['operator'],fixture_id=identity['fixture_id'],
-            calibration_id=identity['calibration_id'],afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=1,
+            calibration_id=identity['calibration_id'],afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=cycles,
             speed_deg_s=speed,acceleration_deg_s2=acceleration,min_angle_deg=half_range,max_angle_deg=half_range),config)
         meta=make_preset_metadata(key,config['test_presets'][key],p,loaded,False)
         if screen:

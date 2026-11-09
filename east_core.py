@@ -377,6 +377,8 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
                 from east_full_model_suite import rows, profile
                 profile(config)
                 expected_speeds = [r[0] for r in rows()]
+            elif key == 'smooth_rotary_pair':
+                expected_speeds = [5., 5.]
             elif key == 'streamed_model_screen':
                 from east_stream_screen import BLOCKS
                 expected_speeds = [0.5] * sum(map(len, BLOCKS))

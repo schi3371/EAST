@@ -12,6 +12,7 @@ from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
 from east_protocol_batch import make_protocol_plan
 from east_stream_screen import SCREEN_PRESET
+from east_smooth_motion import PRESET as SMOOTH_PAIR
 from east_full_model_suite import PRESET as FULL_COMPARISON
 from east_feedback_commissioning import CONDITIONS, SEQUENCE_PRESET, condition_for
 
@@ -22,6 +23,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
     def __init__(self,master,app,preset_key):
         self.app,self.closed,self.active=app,False,False
         self.preset_key=preset_key
+        self.smooth_pair = preset_key == SMOOTH_PAIR
         self.full_comparison = preset_key == FULL_COMPARISON
         self.screen_suite = preset_key in (SCREEN_PRESET, FULL_COMPARISON)
         self.commissioning = condition_for(preset_key)
@@ -51,7 +53,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         ctk.CTkLabel(panel,text=('EMPTY MACHINE — run before mounting the AFO.\n' if empty else 'AFO FITTED — one mounting shared by all three speed conditions.\n')+
             ('One sequence of 11 stages. Each stage runs feedforward then rotary feedback. '
              'Choose a stage range and pause for review between stages.\n'
-             if self.feedback_sequence else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
+             if self.feedback_sequence else 'Two matched runs, rotary feedback off then on. Empty ±10° at 5°/s, three cycles each.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
              if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
@@ -84,7 +86,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
-        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
+        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Smoothed Pair' if self.smooth_pair else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
         self.run_button.grid(row=6,column=0,padx=4,pady=6,sticky='ew')
         self.run_buttons=[self.run_button]
         self.stop_button=ctk.CTkButton(panel,text='Stop Sequence',command=self.stop,fg_color='#b91c1c')
@@ -108,6 +110,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if self.feedback_sequence:
                 stage = r.preset_metadata["feedback_stage"]
                 return f"Stage {stage}, " + ("rotary feedback" if r.feedback_pilot else "feedforward")
+            if self.smooth_pair:
+                return 'Smoothed motion, rotary feedback ' + ('on' if r.feedback_pilot else 'off')
             if self.screen_suite:
                 return f"Block {r.repeat}, {r.model_variant} " + ("with feedback" if r.feedback_pilot else "feedforward")
             return {'updated_10_repeat':f'Updated +/-10 repeat {r.repeat}', 'wide_15_identification':'Original + rotary +/-15 identification', 'stationary_direction_holds':'Stationary directional holds'}.get(r.stage,f'{r.stage}: {getattr(r,"model_variant","current")}')
@@ -125,7 +129,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 ('\nEMPTY FIXTURE ONLY. The full selection reaches the maximum displayed range. '
                  + ('The sequence pauses after each matched pair.' if self.pause_between_stages.get()
                     else 'Automatic continuation through the selected stage range is enabled.')
-                 if self.feedback_sequence else '\nEMPTY FIXTURE ONLY. This batch runs only the selected matched pair. Review tracking, command timing and reversals before another stage.' if self.commissioning else '\nEMPTY FIXTURE ONLY. Full model × speed comparison through 50°/s; ±15° reference, ±16° measured-travel guard. Requested speed is not assumed achieved. Tracking errors are saved; zero misses automatically home and continue. Allow approximately 90–120 minutes for all 147 runs.' if self.full_comparison else '\nEMPTY FIXTURE ONLY. Fixed ±5° at 0.5°/s. Automatic homing follows a fully saved model zero miss.' if self.screen_suite else '\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
+                 if self.feedback_sequence else '\nEMPTY FIXTURE ONLY. This batch runs only the selected matched pair. Review tracking, command timing and reversals before another stage.' if self.commissioning else '\nEMPTY FIXTURE ONLY. Full model × speed comparison through 50°/s; ±15° reference, ±16° measured-travel guard. Requested speed is not assumed achieved. Tracking errors are saved; zero misses automatically home and continue. Allow approximately 90–120 minutes for all 147 runs.' if self.full_comparison else '\nEMPTY FIXTURE ONLY. Fixed ±5° at 0.5°/s. Automatic homing follows a fully saved model zero miss.' if self.screen_suite else '\nEMPTY FIXTURE ONLY. Confirm clearance through both endpoints and stay with the machine.' if self.smooth_pair else '\nEMPTY FIXTURE ONLY. Continuous pilot: +/-5 at 0.5 degrees/s, no automatic escalation. First run is the feedforward reference; second is the feedback pilot.' if self.pilot_suite else '\nEMPTY FIXTURE ONLY. Original 2.055, current and wider cubic. Original angles are nominal; measured travel supervised. No endpoint corrections. Slow moves are split into <=30-second legs; analyse stop/transition phases separately. Confirm +/-15 clearance. The full 22-run sequence takes about 60–90 minutes.' if self.comparison_suite else '\nEMPTY FIXTURE ONLY. Confirm physical clearance through +/-15 degrees plus 0.1-degree tolerance. Methods change automatically by stage. Wide endpoints use rotary feedback: these are identification data, not a feed-forward accuracy test. Stationary holds last 2 seconds, approached from both directions. Allow roughly 25–35 minutes; Stop cancels the remaining suite.' if self.remaining_suite else '')+
                 ('\nAfter a fully saved run misses its model zero, EAST automatically homes using '
                  'the rotary sensor and continues after zero verifies. The unassisted error and '
                  'homing result are saved separately. Stop and other faults halt the batch.'
