@@ -3112,7 +3112,7 @@ class MyInterface(OperatorView):
             self.rotary_samples_file_name = str(csv_path.with_name(csv_path.stem.replace("_strain_data", "")+"_rotary_samples.csv"))
             self.run_metadata["rotary_sensor"] = self.rotary_sensor.metadata()
             if self.run_motion_model_enabled:
-                self.run_metadata["rotary_sensor"]["angle_use"] = "Calibrated angle anchors experimental feed-forward targets and checks zero return; raw motor-derived columns and torque geometry retain legacy conversion"
+                self.run_metadata["rotary_sensor"]["angle_use"] = "Calibrated angle anchors experimental feed-forward targets, supplies fixture angle for torque and plots, and checks zero return; motor-derived columns are diagnostics"
             self.run_metadata["rotary_sensor"]["raw_samples_file"] = Path(self.rotary_samples_file_name).name
             if 'protocol_batch' in self.run_metadata:
                 self.run_metadata['protocol_batch_files'] = {
@@ -3127,7 +3127,7 @@ class MyInterface(OperatorView):
                 "uptime": "omitted during powered monitor captures; read during idle/identity/recovery diagnostics",
                 "limits": "production 150 ms capture and 250 ms position freshness unchanged",
             }
-            self.run_metadata["torque_angle_source"] = "ODrive-derived AFO angle; existing geometry calculation unchanged"
+            self.run_metadata["torque_angle_source"] = "Calibrated rotary fixture angle; inherited force-angle geometry coefficients"
             self.run_metadata["plot_angle_source"] = "Measured Fixture Angle from calibrated rotary sensor"
             self.run_metadata["cycle_definition"] = (
                 "Cycle 0: startup to positive endpoint. Each numbered cycle: "
@@ -3428,7 +3428,8 @@ class MyInterface(OperatorView):
                 mass_kg, raw_weight_grams, force_n = calculate_load(
                     voltage_ratio, tare_offset, self.system_config
                 )
-                raw_torque_nm = calculate_torque_nm(force_n, relative_angle, self.system_config)
+                measured_angle = rotary["angle_deg"]
+                raw_torque_nm = calculate_torque_nm(force_n, measured_angle, self.system_config)
                 
                 # Apply moving average filter to angle, weight, and torque
                 self.angle_filter.add_value(relative_angle)
@@ -3482,7 +3483,7 @@ class MyInterface(OperatorView):
                     f"{afo_velocity_deg_s:.6f}",
                     snapshot.active_errors,
                     f"{rotary_sample[2]:.12g}",
-                    f"{rotary['angle_deg']:.8f}",
+                    f"{measured_angle:.8f}",
                     rotary_sample[1],
                     f"{rotary_sample[0]:.9f}",
                     f"{rotary['sample_age_s']:.9f}",
@@ -3518,7 +3519,7 @@ class MyInterface(OperatorView):
                     self.plot_update_counter += 1
                     if self.plot_update_counter >= self.plot_update_interval:
                         try:
-                            self.plot_data_queue.put_nowait((rotary["angle_deg"], avg_torque))
+                            self.plot_data_queue.put_nowait((measured_angle, avg_torque))
                         except queue.Full:
                             # Display only: raw measurement already queued for recording.
                             pass
@@ -3528,8 +3529,7 @@ class MyInterface(OperatorView):
                 if self.sample_count % 125 == 0:
                     self.update_terminal(f"Raw Weight: {raw_weight_grams:.2f} g, Avg Weight: {avg_weight:.2f} g\n")
                     self.update_terminal(
-                        f"ODrive-derived AFO angle: {relative_angle:.4f} deg, "
-                        f"moving average: {avg_angle:.4f} deg\n"
+                        f"Rotary-measured fixture angle: {measured_angle:.4f} deg\n"
                     )
                     self.update_terminal(f"Raw Torque: {raw_torque_nm:.4f} Nm, Avg Torque: {avg_torque:.4f} Nm\n")
                 
@@ -4224,9 +4224,19 @@ class MyInterface(OperatorView):
         calibration = self.rotary_sensor.calibration.sha256
         factor = float(self.system_config['motion']['afo_degrees_per_odrive_turn'])
         cfg = self.system_config['reference']
+        motion = self.system_config['motion']
+        coarse_threshold_deg = 1.0
+        coarse_step_limit_deg = 4.0
+        coarse_speed = motion['neutral_return_speed_deg_s']
+        coarse_acceleration = motion['neutral_return_acceleration_deg_s2']
+        fine_speed = cfg['recovery_speed_deg_s']
+        fine_acceleration = cfg['recovery_acceleration_deg_s2']
         evidence = dict(target_angle_deg=0., tolerance_deg=policy.tolerance_deg,
             policy=policy.__dict__, corrections=[], attempts=[], status='running',
             method='direct_rotary_feedback',
+            coarse_policy=dict(threshold_deg=coarse_threshold_deg, fraction=.5,
+                maximum_step_deg=coarse_step_limit_deg, speed_deg_s=coarse_speed,
+                acceleration_deg_s2=coarse_acceleration),
             reference_changed=False, tare_changed=False)
         self.run_metadata['automatic_zero_return'] = evidence
         total_travel = 0.
@@ -4272,25 +4282,44 @@ class MyInterface(OperatorView):
                 position_tolerance_turns=afo_degrees_to_odrive_turns(
                     self.system_config['motion']['position_tolerance_deg'], self.system_config))
 
-        def move(delta):
+        def move(delta, *, coarse=False):
             nonlocal total_travel
             snapshot, value = check()
             if len(evidence['corrections']) >= policy.maximum_corrections or total_travel+abs(delta) > policy.maximum_travel_deg:
                 raise RuntimeError('Automatic zero return correction budget exhausted')
             target = snapshot.position_turns + delta/factor
-            event = dict(before_deg=value['angle_deg'], nominal_step_deg=delta, target_motor_turns=target)
+            speed, acceleration = ((coarse_speed, coarse_acceleration) if coarse
+                                   else (fine_speed, fine_acceleration))
+            phase = 'zero_return_coarse' if coarse else 'zero_return_correction'
+            event = dict(before_deg=value['angle_deg'], nominal_step_deg=delta,
+                         target_motor_turns=target, phase=phase)
             evidence['corrections'].append(event)
             total_travel += abs(delta)
-            self.command_position_and_wait(target, 'zero_return_correction', token,
-                cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'],
+            self.command_position_and_wait(target, phase, token, speed, acceleration,
                 distance_deg=abs(delta), position_tolerance_turns=abs(delta / factor) / 4)
             event['after_deg'] = check()[1]['angle_deg']
 
         try:
             check()
-            self.motion_phase = 'zero_return_correction'
-            self.configure_trajectory(cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'])
+            self.motion_phase = 'zero_return_coarse'
             self.update_terminal('Measurement cycles complete. Returning directly to zero using the rotary sensor.\n')
+            observation = observe(policy.dwell_s)
+            if abs(observation['mean_deg']) > coarse_threshold_deg:
+                self.configure_trajectory(coarse_speed, coarse_acceleration)
+                while abs(observation['mean_deg']) > coarse_threshold_deg:
+                    before = observation['mean_deg']
+                    if observation['max_deg'] - observation['min_deg'] > .16:
+                        raise RotaryError('Rotary noise exceeds the centring allowance during coarse return')
+                    delta = -math.copysign(min(coarse_step_limit_deg, .5 * abs(before)), before)
+                    move(delta, coarse=True)
+                    observation = observe(policy.dwell_s)
+                    after = observation['mean_deg']
+                    evidence['corrections'][-1]['settled_after_deg'] = after
+                    if before * after < 0 and abs(after) > coarse_threshold_deg:
+                        raise RuntimeError('Coarse rotary return overshot the fine-centering region')
+                    if abs(before) - abs(after) < .05:
+                        raise RuntimeError('Insufficient rotary progress during coarse return')
+            self.configure_trajectory(fine_speed, fine_acceleration)
             while True:
                 result = home(policy, observe, move, check)
                 evidence['attempts'].append(result)

@@ -24,7 +24,7 @@ Delivered rotary events now retain integer nanosecond timestamps and flag equal 
 
 ## Rotary measurement integration — EAST 1.7.0
 
-The main Connect action now connects the rotary sensor alongside the ODrive and load-cell interface. Normal GUI tests require the accepted sensor calibration and fresh, valid sensor data. Measured fixture angle is displayed and logged alongside the existing motor-derived angle. The event-driven reader requests 8 ms (125 Hz), reports the actual rate, and records every delivered event in a separate rotary-sample CSV. The motor conversion, machine zero, tare and torque geometry calculation remain unchanged.
+The main Connect action now connects the rotary sensor alongside the ODrive and load-cell interface. Normal GUI tests require the accepted sensor calibration and fresh, valid sensor data. Measured fixture angle is displayed and logged alongside the existing motor-derived angle. The event-driven reader requests 8 ms (125 Hz), reports the actual rate, and records every delivered event in a separate rotary-sample CSV. Torque uses the calibrated fixture angle with the existing force-angle geometry coefficients. Motor-derived angle and speed are retained as diagnostic channels.
 
 See [rotary integration and Windows bench verification](docs/ROTARY_SENSOR_INTEGRATION.md). The bundled profile records the independently reported negative-angle rechecks without treating sensor-derived values as new fit references. Windows/hardware verification is pending.
 

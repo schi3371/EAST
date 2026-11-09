@@ -90,7 +90,7 @@ The run's unassisted return remains recorded as failed, with its measured offset
 
 ## Routine sensor-qualified return to zero
 
-Routine tests retain motion ownership from the final sweep endpoint through the rotary-guided return to neutral. The official centring policy reads the calibrated fixture angle, commands a bounded correction, and checks the resulting angle. After the fixture is put in idle, a stationary rotary window must remain within ±0.10°. If the window fails, the routine can correct again within the shared travel, correction-count and time budgets.
+Routine tests retain motion ownership from the final sweep endpoint through the rotary-guided return to neutral. Above 1° from zero, the controller commands half the measured error, capped at a 4° nominal step and using the standard 2°/s return profile. It checks stationary rotary progress after each step and switches to the official fine centring policy within 1°. After the fixture is put in idle, a stationary rotary window must remain within ±0.10°. If the window fails, the routine can correct again within the shared travel, correction-count and time budgets.
 
 Return and settling phases are separate from the numbered stiffness sweeps. `automatic_zero_return` records the correction steps and the final post-idle observation. The tare, calibration and saved zero reference carry through the run. Engineering comparisons retain their separately saved unassisted outcome and batch homing path. The direct return still requires bench confirmation with a fitted AFO.
 

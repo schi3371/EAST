@@ -1,7 +1,9 @@
 """Offline inverse-model and fake-device integration checks. Never discovers hardware."""
+import csv
 import math
 import unittest
 from unittest.mock import Mock
+from east_core import calculate_torque_nm
 from east_motion_model import RunModel, curve, inverse, enabled, validate_range, MODEL_ID
 import test_engine_gui_integration as h
 from east_motion_mapping import ready_for_next
@@ -68,7 +70,7 @@ class ApplicationTests(unittest.TestCase):
             before = a.get_feedback().position_turns
             original_submit(token,target)
             model=getattr(a,'run_motion_model',None)
-            if a.motion_phase == 'zero_return_correction':
+            if a.motion_phase in ('zero_return_coarse', 'zero_return_correction'):
                 self.angle += (target - before) * 2.055
             elif model is not None:
                 segment=a.run_metadata['experimental_motion_model']['segments'][-1]
@@ -85,6 +87,7 @@ class ApplicationTests(unittest.TestCase):
 
     def test_complete_normal_run_targets_and_zero_sensor_check(self):
         a=self.prepare();tare=a.empty_machine_tare;reference=a.reference_manager.record.reference_id
+        a.voltage_ratio_input.getVoltageRatio = lambda: .0001
         self.assertTrue(a.start_strain_test())
         self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)
         self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
@@ -96,6 +99,15 @@ class ApplicationTests(unittest.TestCase):
         a.start_rotary_homing.assert_not_called();a._tare_worker.assert_not_called()
         self.assertTrue(a.rotary_zero_ready())
         self.assertEqual(a.run_metadata['automatic_zero_return']['method'], 'direct_rotary_feedback')
+        self.assertIn('rotary', a.run_metadata['torque_angle_source'])
+        with open(a.strain_file_name, newline='') as handle:
+            row = next(row for row in csv.DictReader(handle)
+                       if abs(float(row['Measured Fixture Angle (deg)'])
+                              - float(row['ODrive-Derived AFO Angle (deg)'])) > .2)
+        force = float(row['Raw Force (N)'])
+        self.assertNotEqual(force, 0.)
+        expected = calculate_torque_nm(force, float(row['Measured Fixture Angle (deg)']), a.system_config)
+        self.assertAlmostEqual(float(row['Raw Torque (Nm)']), expected, places=5)
         self.assertGreater(a.run_metadata['automatic_zero_return']['correction_count'], 0)
         self.assertNotAlmostEqual(abs(self.commands[0][0]-model['initial_alignment']['anchor_motor_turns']),9/2.055,places=2)
 
@@ -116,7 +128,7 @@ class ApplicationTests(unittest.TestCase):
         def physical_submit(token,target):
             raw_submit(token,target)
             segment=a.run_metadata['experimental_motion_model']['segments'][-1]
-            self.angle=curve(target-true_origin,-1 if a.motion_phase == 'zero_return_correction' else segment['direction'])
+            self.angle=curve(target-true_origin,-1 if a.motion_phase in ('zero_return_coarse', 'zero_return_correction') else segment['direction'])
         a._submit_position=physical_submit
         a.start_strain_test()
         self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)

@@ -28,7 +28,7 @@ class AutomaticReturnTests(unittest.TestCase):
         app.last_rotary_logged_key = None
         token = app.motion_coordinator.acquire('test-zero-return')
         self.token = token
-        self.angle = 2.26
+        self.angle = 14.95
         self.zero_reference = app.reference_manager.metadata_snapshot()
         self.tare = app.empty_machine_tare
         reader = app.rotary_sensor.reader
@@ -91,8 +91,14 @@ class AutomaticReturnTests(unittest.TestCase):
             self.assertGreaterEqual(len(record['attempts']), 2)
             self.assertGreater(len(self.correction_commands), 1)
             self.assertEqual(record['method'], 'direct_rotary_feedback')
-            self.assertGreater(record['corrections'][0]['before_deg'], 2.)
-            self.assertAlmostEqual(record['corrections'][0]['nominal_step_deg'], -.5)
+            self.assertAlmostEqual(record['corrections'][0]['before_deg'], 14.95)
+            coarse = [c for c in record['corrections'] if c['phase'] == 'zero_return_coarse']
+            fine = [c for c in record['corrections'] if c['phase'] == 'zero_return_correction']
+            self.assertAlmostEqual(coarse[0]['nominal_step_deg'], -4.)
+            self.assertTrue(all(abs(c['nominal_step_deg']) <= 4. for c in coarse))
+            self.assertTrue(all(abs(c['nominal_step_deg']) <= .5 for c in fine))
+            self.assertLessEqual(abs(fine[0]['before_deg']), 1.)
+            self.assertLess(len(record['corrections']), 20)
             self.assertTrue(app.run_metadata['zero_return_check']['passed'])
             self.assertNotIn('unassisted_angle_deg', app.run_metadata['zero_return_check'])
             self.assertTrue(record['final_observation']['passed'])
