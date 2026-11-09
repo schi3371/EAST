@@ -6,7 +6,8 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
-from east_core import SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS
+from east_core import (FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_SPEEDS,
+                       SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS)
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
 from east_feedback_commissioning import CONDITIONS, PREFIX, SEQUENCE_PRESET, condition_for
@@ -61,13 +62,18 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     if config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data':
         return make_remaining_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
     preset=deepcopy(config['test_presets'][preset_key])
-    speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
+    if preset_key == FITTED_SPEED_SCREEN:
+        speeds = FITTED_SPEED_SCREEN_SPEEDS
+        if preset['test_type'] != 'afo_test':
+            raise ValueError('The fitted speed screen requires an AFO test')
+    else:
+        speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
         raise ValueError('Select a supported explicit speed protocol')
-    if preset_key in SLOW_REPEATABILITY_PRESETS:
+    if preset_key in SLOW_REPEATABILITY_PRESETS or preset_key == FITTED_SPEED_SCREEN:
         angles = float(settings['minimum_angle_deg']), float(settings['maximum_angle_deg'])
         if angles not in ((5., 5.), (10., 10.)):
-            raise ValueError('Repeatability pilot requires symmetric ±5° or ±10°')
+            raise ValueError('This pilot requires symmetric ±5° or ±10°')
     mounting_setup_id=str(mounting_setup_id).strip()
     if not mounting_setup_id:
         raise ValueError('Enter a mounting/setup ID; reuse it if the setup has not changed')

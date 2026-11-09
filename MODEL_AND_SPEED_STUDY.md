@@ -57,6 +57,10 @@ Use **Slow Repeatability — Empty Baseline** and **Slow Repeatability — AFO F
 
 Use reference marks on the AFO cuff and its mating clamp to identify relative movement. Keep intended sliding of the fixture mechanism distinct from cuff motion relative to its clamp. Stop the batch if the cuff slips and record the condition and cycle. A retightening starts a new setup record. Keep completed pre-slip and post-slip runs separate. Evaluate 5°/s separately under supervision if the fixture setup has been checked for that condition.
 
+For a supervised speed escalation, **Fitted AFO Speed Screen — 5 / 10 / 20** records one run per speed at the chosen ±5° or ±10° range. The batch waits in idle after each saved run for the operator to inspect the cuff and approve the next speed. Stop ends the remaining sequence after a slip or fault. These runs screen the mount and measurement window. Continue with repeatability only at conditions that pass. The higher-speed empty engineering evidence does not qualify 30–50°/s with an AFO fitted.
+
+Unloaded tare and moving fixture correction are separate. Use the archived empty profile only after checking setup, motion and calibration equivalence and confirming that substituting it keeps stiffness within the study's predeclared tolerance. The comparison is by rotary angle and sweep direction. Keep the selected baseline file ID with each analysis. A loaded zero reading can document preload, but cannot replace the empty-fixture profile.
+
 ## Combined feedback commissioning sequence
 
 Load **Feedback Commissioning Sequence — All Stages (Empty)** with Engineering controls enabled, then press Start. Choose **Start at stage** and **Stop after stage**. Leave the end blank to select through stage 11. Each stage runs Wider feedforward followed by Wider with rotary feedback, with one cycle per run. The two runs share the desired trajectory, fixed zero anchor, streaming schedule and motor ceilings.

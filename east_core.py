@@ -195,6 +195,8 @@ def empty_machine_tare_identity_mismatches(
 
 SLOW_REPEATABILITY_PRESETS = ("slow_repeatability_empty", "slow_repeatability_afo")
 SLOW_REPEATABILITY_SPEEDS = (0.5, 1.0)
+FITTED_SPEED_SCREEN = "fitted_speed_screen"
+FITTED_SPEED_SCREEN_SPEEDS = (5.0, 10.0, 20.0)
 
 PRESET_MOTION_FIELDS = (
     "cycles",
@@ -383,6 +385,8 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
             elif key == 'smooth_rotary_pair':
                 from east_smooth_motion import runnable_study_conditions
                 expected_speeds = [speed for speed, _ in runnable_study_conditions(config['motion']) for _ in range(2)]
+            elif key == FITTED_SPEED_SCREEN:
+                expected_speeds = list(FITTED_SPEED_SCREEN_SPEEDS)
             elif key in SLOW_REPEATABILITY_PRESETS:
                 expected_speeds = list(SLOW_REPEATABILITY_SPEEDS)
             elif key == 'streamed_model_screen':

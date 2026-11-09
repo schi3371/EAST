@@ -141,6 +141,21 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(body['planned_speed_sequence_deg_s'], [.5, 1.])
         self.assertEqual([r['status'] for r in body['runs']], ['completed', 'completed'])
 
+    def test_fitted_speed_screen_waits_for_approval_and_stop_skips_faster_run(self):
+        w, _ = self.prepare('fitted_speed_screen', cycles=1)
+        self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
+        w.start()
+        self.pump_window(w, lambda: w.awaiting_stage_review == 2)
+        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [5.])
+        w.continue_stage()
+        self.pump_window(w, lambda: w.awaiting_stage_review == 3)
+        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [5., 10.])
+        w.stop()
+        self.pump_window(w, lambda: not w.active)
+        manifest = self.manifest(w)
+        self.assertEqual([r['status'] for r in manifest['runs']], ['completed', 'completed', 'skipped'])
+        self.assertEqual([r['next_run'] for r in manifest['stage_reviews']], [2])
+
     def test_empty_baseline_is_separate_reserved_identity(self):
         w,_=self.prepare('three_speed_empty_baseline');w.start();self.pump_window(w,lambda:not w.active)
         body=self.manifest(w);self.assertEqual(body['outcome'],'completed',w.status.options)
