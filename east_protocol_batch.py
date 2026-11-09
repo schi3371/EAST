@@ -6,13 +6,24 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
-from east_core import (AFO_RETEST, AFO_RETEST_SPEEDS, FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_RANGES, FITTED_SPEED_SCREEN_SPEEDS,
+from east_core import (AFO_MATERIALS, AFO_RETEST, AFO_RETEST_SPEEDS, FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_RANGES, FITTED_SPEED_SCREEN_SPEEDS,
                        SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS)
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
 from east_feedback_commissioning import CONDITIONS, PREFIX, SEQUENCE_PRESET, condition_for
 
 SPEEDS = (0.5, 5.0, 20.0)
+MATERIALS = {
+    "N12F": ("Nylon 12 / FDM", "EPIC LAB"),
+    "CN12F": ("Carbon-fibre Nylon 12 / FDM", "objective3D"),
+    "N11H": ("Nylon 11 / Stratasys H350", "objective3D"),
+    "N12HP": ("Nylon 12 / HP Jet Fusion", "GoProto"),
+    "N11S": ("Nylon 11 / 3D Systems SLS", "GoProto"),
+    "N12S": ("Nylon 12 / 3D Systems SLS", "objective3D"),
+    "N12E": ("Nylon 12 / EOS SLS", "3D Printing Studio"),
+    "PAX": ("PAx / SLS 380", "GoProto"),
+    "DLP": ("Digital light processing", "objective3D"),
+}
 
 @dataclass(frozen=True)
 class ProtocolRequest:
@@ -50,6 +61,9 @@ class ProtocolRequest:
             command_model_enabled=self.command_model_enabled,rotary_targeted=self.rotary_targeted,
             stage=self.stage,repeat=self.repeat,stationary_holds=self.stationary_holds,model_variant=self.model_variant,feedback_pilot=self.feedback_pilot,
             endpoint_feedback_is_not_feedforward_validation=self.rotary_targeted,
+            **{key: self.preset_metadata[key] for key in
+               ('material_code', 'specimen_number', 'material_print_method', 'print_bureau',
+                'specimen_scale_percent', 'empty_reference_name') if key in self.preset_metadata},
             **({"feedback_condition_key": self.feedback_condition_key}
                if self.feedback_condition_key is not None else {}))
 
@@ -72,16 +86,26 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
             raise ValueError('The five-speed study preset must declare fitted AFO mode')
         if empty_calibration:
             preset['test_type'] = 'empty_machine_baseline'
-    elif preset_key == AFO_RETEST:
+    elif preset_key in (AFO_RETEST, AFO_MATERIALS):
         speeds = AFO_RETEST_SPEEDS
         if any(float(settings[key]) != preset[key] for key in
                ('cycles', 'minimum_angle_deg', 'maximum_angle_deg', 'acceleration_deg_s2')):
-            raise ValueError(f"Reload Three-Speed AFO Retest for {preset['cycles']} cycles at ±10° and 100°/s²")
+            raise ValueError(f"Reload {preset['display_name']} for {preset['cycles']} cycles at ±10° and 100°/s²")
         baseline_batch_id = preset['empty_reference_batch_id']
     else:
         speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
         raise ValueError('Select a supported explicit speed protocol')
+    if preset_key == AFO_MATERIALS:
+        code, separator, number = identity.get('afo_id', '').partition('-')
+        if code not in MATERIALS or not separator or number not in ('01', '02', '03', '04', '05'):
+            raise ValueError('Select the print code and physical specimen number')
+        selected_speed = float(identity['materials_speed'])
+        if selected_speed not in speeds:
+            raise ValueError('Select the agreed materials-test speed')
+        speeds = (selected_speed,)
+        if not identity.get('use_short_plate_reference'):
+            baseline_batch_id = ''
     if preset_key in SLOW_REPEATABILITY_PRESETS:
         angles = float(settings['minimum_angle_deg']), float(settings['maximum_angle_deg'])
         if angles not in ((5., 5.), (10., 10.)):
@@ -117,7 +141,11 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         metadata=make_preset_metadata(preset_key,preset,parameters,loaded_at,modified)
         metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(planned_speeds),
                         settings_status='provisional_not_scientifically_validated')
-        if preset_key == AFO_RETEST:
+        if preset_key == AFO_MATERIALS:
+            material, bureau = MATERIALS[code]
+            metadata.update(material_code=code, specimen_number=int(number), material_print_method=material,
+                            print_bureau=bureau, specimen_scale_percent=75)
+        if preset_key in (AFO_RETEST, AFO_MATERIALS) and baseline_batch_id:
             metadata['empty_reference_name'] = preset['empty_reference_name']
         if preset_key == FITTED_SPEED_SCREEN:
             metadata['study_mode'] = 'empty_fixture_calibration' if empty_calibration else 'fitted_speed_screen'

@@ -6,11 +6,11 @@ import threading
 import sys
 import uuid
 import customtkinter as ctk
-from east_core import APP_DIR, AFO_RETEST, FITTED_SPEED_SCREEN, SLOW_REPEATABILITY_PRESETS, write_json_atomic
+from east_core import APP_DIR, AFO_MATERIALS, AFO_RETEST, FITTED_SPEED_SCREEN, SLOW_REPEATABILITY_PRESETS, write_json_atomic
 from east_motion_model import enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
-from east_protocol_batch import make_protocol_plan
+from east_protocol_batch import MATERIALS, make_protocol_plan
 from east_stream_screen import SCREEN_PRESET
 from east_smooth_motion import PRESET as SMOOTH_PAIR
 from east_full_model_suite import PRESET as FULL_COMPARISON
@@ -26,6 +26,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.smooth_pair = preset_key == SMOOTH_PAIR
         self.slow_repeatability = preset_key in SLOW_REPEATABILITY_PRESETS
         self.fitted_speed_screen = preset_key == FITTED_SPEED_SCREEN
+        self.materials = preset_key == AFO_MATERIALS
         self.afo_retest = preset_key == AFO_RETEST
         self.full_comparison = preset_key == FULL_COMPARISON
         self.screen_suite = preset_key in (SCREEN_PRESET, FULL_COMPARISON)
@@ -44,7 +45,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.save_future=None;self.save_action=None;self.manifest_path=None
         self.release_pending=False;self.awaiting_run=False
         self.window=ctk.CTkToplevel(master)
-        self.window.title('EAST — Full Model × Speed Comparison' if self.full_comparison else 'EAST — Rotary Feedback Pilot' if self.pilot_suite else 'EAST — Model Comparison' if self.comparison_suite else 'EAST — Remaining Motion Data' if self.remaining_suite else 'EAST — Five-Speed AFO Study' if self.fitted_speed_screen else 'EAST — Slow Repeatability' if self.slow_repeatability else 'EAST — Three-Speed Protocol')
+        self.window.title('EAST — AFO Materials Study' if self.materials else 'EAST — Full Model × Speed Comparison' if self.full_comparison else 'EAST — Rotary Feedback Pilot' if self.pilot_suite else 'EAST — Model Comparison' if self.comparison_suite else 'EAST — Remaining Motion Data' if self.remaining_suite else 'EAST — Five-Speed AFO Study' if self.fitted_speed_screen else 'EAST — Slow Repeatability' if self.slow_repeatability else 'EAST — Three-Speed Protocol')
         self.window.geometry('800x680');self.window.minsize(660,560)
         self.window.transient(master);self.window.protocol('WM_DELETE_WINDOW',self.close)
         self.window.bind('<Escape>',lambda e:self.stop())
@@ -59,7 +60,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
              if self.feedback_sequence else 'Matched pairs at 0.5, 5 and 10°/s, rotary feedback off then on. Empty ±10°, three cycles per run.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
-             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '±5°, ±10° and ±15°. Each range runs 0.5 → 1 → 5 → 10 → 20°/s, three cycles per run. Each batch advances automatically after each saved run.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three runs: 0.5 → 1 → 5°/s at ±10°, five cycles per run.\n' if self.afo_retest else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
+             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '±5°, ±10° and ±15°. Each range runs 0.5 → 1 → 5 → 10 → 20°/s, three cycles per run. Each batch advances automatically after each saved run.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three runs: 0.5 → 1 → 5°/s at ±10°, five cycles per run.\n' if self.afo_retest else 'Select the labelled specimen and the agreed speed. One run at ±10°, five cycles.\n' if self.materials else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
             'Settings are provisional. No added inter-run rest beyond normal settling, idle and file saving.',
             wraplength=720,justify='left').grid(row=1,column=0,columnspan=2,sticky='ew',pady=6)
         self.identity=ctk.CTkLabel(panel,text='',wraplength=720)
@@ -67,6 +68,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.fields={}
         for row,key,label,value in [(3,'mounting_setup_id','Mounting/setup ID (reuse if not remounted)',('setup_' if empty else 'mount_')+uuid.uuid4().hex[:12]),
                 ((4,'start_run','Start at stage' if self.feedback_sequence else 'Start at run (new batch; earlier runs skipped)','1') if self.remaining_suite else (4,'baseline_batch_id','Empty-fixture reference (optional)',''))]:
+            if self.materials and key == 'baseline_batch_id':
+                continue
             if self.afo_retest and key == 'baseline_batch_id':
                 ctk.CTkLabel(panel, text='Empty-fixture reference').grid(row=row, column=0, sticky='w', padx=4)
                 ctk.CTkLabel(panel, text=preset['empty_reference_name']).grid(row=row, column=1, sticky='ew', pady=4)
@@ -74,6 +77,19 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
+        if self.materials:
+            for row, key, label, choices in (
+                (9, 'material', 'Print code', ['Select print code'] + list(MATERIALS)),
+                (10, 'specimen', 'Physical specimen number', ['Select number', '01', '02', '03', '04', '05']),
+                (11, 'materials_speed', 'Agreed speed (°/s)', ['Select speed', '0.5', '1', '5']),
+                (12, 'materials_reference', 'Empty-fixture reference',
+                 ['Select reference', preset['empty_reference_name'], 'None — fit check only']),
+            ):
+                ctk.CTkLabel(panel, text=label).grid(row=row, column=0, sticky='w', padx=4)
+                menu = ctk.CTkOptionMenu(panel, values=choices)
+                menu.set(choices[0])
+                menu.grid(row=row, column=1, sticky='ew', pady=4)
+                self.fields[key] = menu
         if self.fitted_speed_screen or self.afo_retest:
             count = 3 if self.afo_retest else 15
             ctk.CTkLabel(panel, text=f'Start at run (1–{count})').grid(row=9, column=0, sticky='w', padx=4)
@@ -100,7 +116,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
-        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Smoothed Speed Sequence' if self.smooth_pair else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Fitted AFO' if self.fitted_speed_screen else 'Run Slow Pair' if self.slow_repeatability else 'Run Three-Speed Sequence',command=self.start)
+        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Smoothed Speed Sequence' if self.smooth_pair else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Fitted AFO' if self.fitted_speed_screen else 'Run Slow Pair' if self.slow_repeatability else 'Run Specimen' if self.materials else 'Run Three-Speed Sequence',command=self.start)
         self.run_button.grid(row=6,column=0,padx=4,pady=6,sticky='ew')
         self.run_buttons=[self.run_button]
         if self.fitted_speed_screen:
@@ -118,14 +134,25 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
 
     def current_identity(self):
         a=self.app
-        return dict(file_prefix=a.file_name_input.get().strip(),operator=a.operator_input.get().strip(),
+        identity = dict(file_prefix=a.file_name_input.get().strip(),operator=a.operator_input.get().strip(),
             afo_id=a.afo_id_input.get().strip(),fixture_id=a.fixture_id_input.get().strip(),
             calibration_id=a.calibration_id_input.get().strip())
+        if self.materials:
+            code = self.fields['material'].get()
+            specimen = f"{code}-{self.fields['specimen'].get()}"
+            reference = self.fields['materials_reference'].get()
+            identity.update(afo_id=specimen, file_prefix=specimen,
+                            materials_speed=self.fields['materials_speed'].get(),
+                            materials_reference=reference,
+                            use_short_plate_reference=reference == a.system_config['test_presets'][self.preset_key]['empty_reference_name'])
+        return identity
 
     def confirmation_message(self, requests):
         a = self.app
         p=requests[0].parameters
         def stage_label(r):
+            if self.materials:
+                return f"{r.preset_metadata['material_print_method']} / {r.preset_metadata['print_bureau']}"
             if self.feedback_sequence:
                 stage = r.preset_metadata["feedback_stage"]
                 return f"Stage {stage}, " + ("rotary feedback" if r.feedback_pilot else "feedforward")
@@ -145,7 +172,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nTotal: {len(requests)} runs, {sum(r.parameters.cycles for r in requests if not r.stationary_holds)} numbered sweep cycles'+ (' plus 30 stationary target holds.' if any(r.stationary_holds for r in requests) else '.')+
                 '\nNormal return/settling/recording between runs. One mounting; no independent remount claims.'
                 + (f"\nEmpty-fixture reference: {requests[0].preset_metadata['empty_reference_name']}. "
-                   "Confirm the short plate and slot match the reference." if self.afo_retest else '')
+                   "Confirm the short plate and slot match the reference." if requests[0].baseline_batch_id and (self.afo_retest or self.materials)
+                   else '\nFit check only. No empty-fixture reference selected.' if self.materials else '')
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
                 + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite or self.smooth_pair or self.fitted_speed_screen else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
@@ -176,12 +204,16 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if a.rotary_calibration is not None and not a.rotary_calibration.closed:
                 raise ValueError('Close Rotary Sensor Calibration before starting')
             identity=self.current_identity();settings=a._motion_field_values()
+            if self.materials and identity['materials_reference'] == 'Select reference':
+                raise ValueError('Select the matching short-plate reference or fit check only')
+            if self.materials and identity['materials_speed'] == 'Select speed':
+                raise ValueError('Select the agreed materials-test speed')
             batch_id=uuid.uuid4().hex
             base=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else APP_DIR
             path=base/a.system_config['logging']['output_directory']/(('motion_suite_' if self.remaining_suite else 'three_speed_')+batch_id+'.json')
             requests=make_protocol_plan(a.system_config,self.preset_key,identity,settings,
                 self.fields['mounting_setup_id'].get(),
-                '' if self.remaining_suite or self.afo_retest or empty_calibration else self.fields['baseline_batch_id'].get(),
+                '' if self.remaining_suite or self.afo_retest or self.materials or empty_calibration else self.fields['baseline_batch_id'].get(),
                 path,a.preset_loaded_at,batch_id=batch_id,empty_calibration=empty_calibration)
             self.all_requests=requests
             start_entry = self.fields.get("start_run")

@@ -22,7 +22,7 @@ def window_for(app,ctk,key):
     path=Path(__file__).resolve().parents[1]/'east_protocol_batch_gui.py'
     spec=importlib.util.spec_from_file_location('offline_protocol_window',path)
     module=importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules,{'customtkinter':ctk}),patch.object(ctk,'CTkEntry',harness.Field,create=True),patch.object(ctk,'CTkTextbox',Text,create=True):
+    with patch.dict(sys.modules,{'customtkinter':ctk}),patch.object(ctk,'CTkEntry',harness.Field,create=True),patch.object(ctk,'CTkTextbox',Text,create=True),patch.object(ctk,'CTkOptionMenu',harness.Field,create=True):
         spec.loader.exec_module(module)
         window=module.ThreeSpeedProtocolWindow(app.master,app,key)
     app.motion_mapping=window
@@ -62,6 +62,22 @@ class PlanTests(unittest.TestCase):
                 self.assertTrue(all(r.parameters.max_angle_deg == float(half_range) for r in requests))
         with self.assertRaisesRegex(ValueError, "symmetric"):
             self.plan('slow_repeatability_afo', minimum_angle_deg='5')
+
+    def test_materials_plan_uses_one_speed_and_records_print_identity(self):
+        self.identity.update(afo_id='N12HP-03', materials_speed='1', use_short_plate_reference=True)
+        requests = self.plan('afo_materials', cycles='5')
+        self.assertEqual(len(requests), 1)
+        run = requests[0]
+        self.assertEqual(run.parameters.afo_id, 'N12HP-03')
+        self.assertEqual(run.parameters.commanded_afo_speed_deg_s, 1)
+        self.assertEqual(run.context()['print_bureau'], 'GoProto')
+        self.assertEqual(run.context()['specimen_number'], 3)
+        self.assertTrue(run.baseline_batch_id)
+        self.identity['use_short_plate_reference'] = False
+        self.assertIsNone(self.plan('afo_materials', cycles='5')[0].baseline_batch_id)
+        self.identity['afo_id'] = 'N12HP-06'
+        with self.assertRaisesRegex(ValueError, 'physical specimen number'):
+            self.plan('afo_materials', cycles='5')
 
     def test_afo_retest_uses_three_fixed_conditions(self):
         requests = self.plan('afo_retest', cycles='5')
@@ -177,6 +193,24 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(manifest['stage_reviews'], [])
         self.assertEqual(manifest['total_numbered_cycles'], 45)
         self.assertIn('enter 2 in Start at run', w.status.options['text'])
+
+    def test_materials_window_uses_selected_specimen_without_main_afo_id(self):
+        w, _ = self.prepare('afo_materials', cycles=5)
+        self.app.afo_id_input.value = ''
+        w.start()
+        self.assertFalse(w.active)
+        self.assertIn('Select the matching', w.status.options['text'])
+        w.fields['material'].set('N12HP')
+        w.fields['specimen'].set('03')
+        w.fields['materials_speed'].set('1')
+        w.fields['materials_reference'].set('None — fit check only')
+        self.app._ensure_load_cell = Mock(side_effect=OSError('SIMULATED Bridge unavailable'))
+        w.start()
+        self.pump_window(w, lambda: not w.active)
+        manifest = self.manifest(w)
+        self.assertEqual(manifest['identity']['afo_id'], 'N12HP-03')
+        self.assertEqual(manifest['planned_speed_sequence_deg_s'], [1.])
+        self.assertIsNone(manifest['runs'][0]['context']['baseline_batch_id'])
 
     def test_afo_retest_resume_retains_number_and_baseline_link(self):
         w, _ = self.prepare('afo_retest', cycles=5)

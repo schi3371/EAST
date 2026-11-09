@@ -195,6 +195,7 @@ def empty_machine_tare_identity_mismatches(
 
 SLOW_REPEATABILITY_PRESETS = ("slow_repeatability_empty", "slow_repeatability_afo")
 SLOW_REPEATABILITY_SPEEDS = (0.5, 1.0)
+AFO_MATERIALS = "afo_materials"
 AFO_RETEST = "afo_retest"
 AFO_RETEST_SPEEDS = (0.5, 1.0, 5.0)
 FITTED_SPEED_SCREEN = "fitted_speed_screen"
@@ -390,7 +391,7 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
                 expected_speeds = [speed for speed, _ in runnable_study_conditions(config['motion']) for _ in range(2)]
             elif key == FITTED_SPEED_SCREEN:
                 expected_speeds = list(FITTED_SPEED_SCREEN_SPEEDS)
-            elif key == AFO_RETEST:
+            elif key in (AFO_RETEST, AFO_MATERIALS):
                 expected_speeds = list(AFO_RETEST_SPEEDS)
             elif key in SLOW_REPEATABILITY_PRESETS:
                 expected_speeds = list(SLOW_REPEATABILITY_SPEEDS)

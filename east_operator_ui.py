@@ -6,7 +6,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image
 
-from east_core import FITTED_SPEED_SCREEN, preset_values_modified
+from east_core import AFO_MATERIALS, FITTED_SPEED_SCREEN, preset_values_modified
 from east_gui_tabs import OutputTabs
 from east_motion_model import ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method
 
@@ -571,6 +571,8 @@ class OperatorView:
             if self.loaded_preset_key == "feedback_commissioning_sequence":
                 return f'{name} — {count // 2} stages, feedforward/feedback at each'
             return f'{name} — {count} planned runs at ±{preset["maximum_angle_deg"]:g}°, {preset["speeds_deg_s"][0]:g}°/s'
+        if self.loaded_preset_key == AFO_MATERIALS:
+            return name + ' — choose one specimen and one speed at Start'
         if self.loaded_preset_key == FITTED_SPEED_SCREEN:
             return f"{name} — 15 runs, {preset['cycles']} cycles each at ±5°, ±10° and ±15°"
         if preset.get('execution_kind') == 'speed_sequence':
