@@ -991,6 +991,14 @@ class MyInterface(OperatorView):
             from east_smooth_motion import BANDWIDTH
             input_mode = INPUT_MODE_POS_FILTER
             options["filter_bandwidth"] = BANDWIDTH
+            # The filtered preset keeps one drive configuration through its
+            # neutral return. Give the return reference the same headroom as a sweep.
+            return_velocity = afo_speed_to_odrive_turns_s(
+                motion["neutral_return_speed_deg_s"], self.system_config
+            )
+            controller_limit = max(trajectory_velocity, return_velocity) * float(
+                motion["controller_velocity_safety_multiplier"]
+            )
         self.odrive_adapter.configure_trajectory(
             trajectory_velocity,
             trajectory_acceleration,
