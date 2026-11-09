@@ -79,6 +79,20 @@ class PlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'physical specimen number'):
             self.plan('afo_materials', cycles='5')
 
+    def test_materials_preserves_suffixes_and_requires_duplicate_set(self):
+        self.identity.update(afo_id='CN12F-01', materials_speed='1')
+        with self.assertRaisesRegex(ValueError, 'Set A or Set B'):
+            self.plan('afo_materials', cycles='5')
+        for specimen, code, specimen_set in [('CN12F-B-01', 'CN12F', 'B'),
+                                               ('N11H-S-02', 'N11H-S', None),
+                                               ('WSLS-A-03', 'WSLS', 'A')]:
+            self.identity['afo_id'] = specimen
+            run = self.plan('afo_materials', cycles='5')[0]
+            self.assertEqual(run.parameters.afo_id, specimen)
+            self.assertEqual(run.context()['material_code'], code)
+            self.assertEqual(run.context()['specimen_set'], specimen_set)
+            self.assertEqual(run.context()['sample_source'], 'EPIC Lab')
+
     def test_afo_retest_uses_three_fixed_conditions(self):
         requests = self.plan('afo_retest', cycles='5')
         self.assertEqual([r.parameters.commanded_afo_speed_deg_s for r in requests], [.5, 1., 5.])
@@ -202,6 +216,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertIn('Select the matching', w.status.options['text'])
         w.fields['material'].set('N12HP')
         w.fields['specimen'].set('03')
+        w.fields['specimen_set'].set('Single set')
         w.fields['materials_speed'].set('1')
         w.fields['materials_reference'].set('None — fit check only')
         self.app._ensure_load_cell = Mock(side_effect=OSError('SIMULATED Bridge unavailable'))

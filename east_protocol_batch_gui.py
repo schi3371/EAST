@@ -81,8 +81,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             for row, key, label, choices in (
                 (9, 'material', 'Print code', ['Select print code'] + list(MATERIALS)),
                 (10, 'specimen', 'Physical specimen number', ['Select number', '01', '02', '03', '04', '05']),
-                (11, 'materials_speed', 'Agreed speed (°/s)', ['Select speed', '0.5', '1', '5']),
-                (12, 'materials_reference', 'Empty-fixture reference',
+                (11, 'specimen_set', 'Physical set', ['Select set', 'Single set', 'Set A', 'Set B']),
+                (12, 'materials_speed', 'Agreed speed (°/s)', ['Select speed', '0.5', '1', '5']),
+                (13, 'materials_reference', 'Empty-fixture reference',
                  ['Select reference', preset['empty_reference_name'], 'None — fit check only']),
             ):
                 ctk.CTkLabel(panel, text=label).grid(row=row, column=0, sticky='w', padx=4)
@@ -139,9 +140,11 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             calibration_id=a.calibration_id_input.get().strip())
         if self.materials:
             code = self.fields['material'].get()
-            specimen = f"{code}-{self.fields['specimen'].get()}"
+            specimen_set = self.fields['specimen_set'].get()
+            set_suffix = {'Set A': '-A', 'Set B': '-B'}.get(specimen_set, '')
+            specimen = f"{code}{set_suffix}-{self.fields['specimen'].get()}"
             reference = self.fields['materials_reference'].get()
-            identity.update(afo_id=specimen, file_prefix=specimen,
+            identity.update(afo_id=specimen, file_prefix=specimen, physical_set_choice=specimen_set,
                             materials_speed=self.fields['materials_speed'].get(),
                             materials_reference=reference,
                             use_short_plate_reference=reference == a.system_config['test_presets'][self.preset_key]['empty_reference_name'])
@@ -152,7 +155,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         p=requests[0].parameters
         def stage_label(r):
             if self.materials:
-                return f"{r.preset_metadata['material_print_method']} / {r.preset_metadata['print_bureau']}"
+                detail = r.preset_metadata['material_print_method']
+                bureau = r.preset_metadata['print_bureau']
+                return f"{detail} / {bureau}" if bureau else detail
             if self.feedback_sequence:
                 stage = r.preset_metadata["feedback_stage"]
                 return f"Stage {stage}, " + ("rotary feedback" if r.feedback_pilot else "feedforward")
@@ -206,6 +211,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             identity=self.current_identity();settings=a._motion_field_values()
             if self.materials and identity['materials_reference'] == 'Select reference':
                 raise ValueError('Select the matching short-plate reference or fit check only')
+            if self.materials and identity['physical_set_choice'] == 'Select set':
+                raise ValueError('Select the physical set before starting')
             if self.materials and identity['materials_speed'] == 'Select speed':
                 raise ValueError('Select the agreed materials-test speed')
             batch_id=uuid.uuid4().hex

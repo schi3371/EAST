@@ -17,6 +17,10 @@ MATERIALS = {
     "N12F": ("Nylon 12 / FDM", "EPIC LAB"),
     "CN12F": ("Carbon-fibre Nylon 12 / FDM", "objective3D"),
     "N11H": ("Nylon 11 / Stratasys H350", "objective3D"),
+    "N11H-S": ("Grey Nylon 11, marked N11H-S (unconfirmed)", None),
+    "N11H-P": ("Grey Nylon 11, marked N11H-P (unconfirmed)", None),
+    "N11H-UNCLEAR": ("Grey Nylon 11, marking unclear (unconfirmed)", None),
+    "WSLS": ("White Nylon 12 SLS (code unconfirmed)", None),
     "N12HP": ("Nylon 12 / HP Jet Fusion", "GoProto"),
     "N11S": ("Nylon 11 / 3D Systems SLS", "GoProto"),
     "N12S": ("Nylon 12 / 3D Systems SLS", "objective3D"),
@@ -24,6 +28,8 @@ MATERIALS = {
     "PAX": ("PAx / SLS 380", "GoProto"),
     "DLP": ("Digital light processing", "objective3D"),
 }
+
+DUPLICATE_MATERIAL_SETS = {"CN12F", "N12S", "DLP", "WSLS"}
 
 @dataclass(frozen=True)
 class ProtocolRequest:
@@ -63,7 +69,7 @@ class ProtocolRequest:
             endpoint_feedback_is_not_feedforward_validation=self.rotary_targeted,
             **{key: self.preset_metadata[key] for key in
                ('material_code', 'specimen_number', 'material_print_method', 'print_bureau',
-                'specimen_scale_percent', 'empty_reference_name') if key in self.preset_metadata},
+                'specimen_scale_percent', 'sample_source', 'specimen_set', 'empty_reference_name') if key in self.preset_metadata},
             **({"feedback_condition_key": self.feedback_condition_key}
                if self.feedback_condition_key is not None else {}))
 
@@ -97,7 +103,12 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
         raise ValueError('Select a supported explicit speed protocol')
     if preset_key == AFO_MATERIALS:
-        code, separator, number = identity.get('afo_id', '').partition('-')
+        code, separator, number = identity.get('afo_id', '').rpartition('-')
+        specimen_set = None
+        if code.endswith(('-A', '-B')):
+            code, _, specimen_set = code.rpartition('-')
+        if code in DUPLICATE_MATERIAL_SETS and specimen_set is None:
+            raise ValueError('Choose Set A or Set B for this print code')
         if code not in MATERIALS or not separator or number not in ('01', '02', '03', '04', '05'):
             raise ValueError('Select the print code and physical specimen number')
         selected_speed = float(identity['materials_speed'])
@@ -144,7 +155,8 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         if preset_key == AFO_MATERIALS:
             material, bureau = MATERIALS[code]
             metadata.update(material_code=code, specimen_number=int(number), material_print_method=material,
-                            print_bureau=bureau, specimen_scale_percent=75)
+                            print_bureau=bureau, specimen_scale_percent=75, specimen_set=specimen_set,
+                            sample_source="EPIC Lab")
         if preset_key in (AFO_RETEST, AFO_MATERIALS) and baseline_batch_id:
             metadata['empty_reference_name'] = preset['empty_reference_name']
         if preset_key == FITTED_SPEED_SCREEN:
