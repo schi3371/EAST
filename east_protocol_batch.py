@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
-from east_core import (FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_RANGES, FITTED_SPEED_SCREEN_SPEEDS,
+from east_core import (AFO_RETEST, AFO_RETEST_SPEEDS, FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_RANGES, FITTED_SPEED_SCREEN_SPEEDS,
                        SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS)
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
@@ -71,6 +71,11 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
             raise ValueError('The five-speed study preset must declare fitted AFO mode')
         if empty_calibration:
             preset['test_type'] = 'empty_machine_baseline'
+    elif preset_key == AFO_RETEST:
+        speeds = AFO_RETEST_SPEEDS
+        if any(float(settings[key]) != preset[key] for key in
+               ('cycles', 'minimum_angle_deg', 'maximum_angle_deg', 'acceleration_deg_s2')):
+            raise ValueError('Reload Three-Speed AFO Retest for 3 cycles at ±10° and 100°/s²')
     else:
         speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:

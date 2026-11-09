@@ -6,7 +6,7 @@ import threading
 import sys
 import uuid
 import customtkinter as ctk
-from east_core import APP_DIR, FITTED_SPEED_SCREEN, SLOW_REPEATABILITY_PRESETS, write_json_atomic
+from east_core import APP_DIR, AFO_RETEST, FITTED_SPEED_SCREEN, SLOW_REPEATABILITY_PRESETS, write_json_atomic
 from east_motion_model import enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 from east_batch_gui import RecordedBatchWindow
 from east_motion_mapping import ready_for_next
@@ -26,6 +26,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.smooth_pair = preset_key == SMOOTH_PAIR
         self.slow_repeatability = preset_key in SLOW_REPEATABILITY_PRESETS
         self.fitted_speed_screen = preset_key == FITTED_SPEED_SCREEN
+        self.afo_retest = preset_key == AFO_RETEST
         self.full_comparison = preset_key == FULL_COMPARISON
         self.screen_suite = preset_key in (SCREEN_PRESET, FULL_COMPARISON)
         self.commissioning = condition_for(preset_key)
@@ -58,7 +59,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
              if self.feedback_sequence else 'Matched pairs at 0.5, 5 and 10°/s, rotary feedback off then on. Empty ±10°, three cycles per run.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
-             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '±5°, ±10° and ±15°. Each range runs 0.5 → 1 → 5 → 10 → 20°/s, three cycles per run. Each batch advances automatically after each saved run.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
+             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '±5°, ±10° and ±15°. Each range runs 0.5 → 1 → 5 → 10 → 20°/s, three cycles per run. Each batch advances automatically after each saved run.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three runs: 0.5 → 1 → 5°/s at ±10°, three cycles per run.\n' if self.afo_retest else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
             'Settings are provisional. No added inter-run rest beyond normal settling, idle and file saving.',
             wraplength=720,justify='left').grid(row=1,column=0,columnspan=2,sticky='ew',pady=6)
         self.identity=ctk.CTkLabel(panel,text='',wraplength=720)
@@ -69,8 +70,9 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
-        if self.fitted_speed_screen:
-            ctk.CTkLabel(panel, text='Start at run (1–15)').grid(row=9, column=0, sticky='w', padx=4)
+        if self.fitted_speed_screen or self.afo_retest:
+            count = 3 if self.afo_retest else 15
+            ctk.CTkLabel(panel, text=f'Start at run (1–{count})').grid(row=9, column=0, sticky='w', padx=4)
             entry = ctk.CTkEntry(panel)
             entry.insert(0, '1')
             entry.grid(row=9, column=1, sticky='ew', pady=4)
@@ -443,7 +445,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         return super().finish(status,error)
 
     def batch_status_text(self, message):
-        if not self.fitted_speed_screen or self.batch_status not in ('error', 'cancelled'):
+        if not (self.fitted_speed_screen or self.afo_retest) or self.batch_status not in ('error', 'cancelled'):
             return message
         next_position = len(self.records)
         if self.records and self.records[-1]['outcome'] != 'success':
