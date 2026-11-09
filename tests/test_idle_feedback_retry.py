@@ -128,13 +128,21 @@ class MonitorIntegrationTests(unittest.TestCase):
                             continuous_stop_event=threading.Event(), ui_message_queue=queue.Queue(),
                             _mark_control_health=Mock(),monitor_error=None,
                             feedback_fault_reason=None,odrive_connection_generation=1,
-                            engine=SimpleNamespace(record=Mock()))
+                            engine=SimpleNamespace(record=Mock()),
+                            strain_test_active=owner == 'strain-test', operator_stop_requested=False,
+                            run_motion_mapping_context=None, motion_phase='moving_to_min', run_metadata={})
+        app._allow_powered_feedback_retry=MethodType(gui_method('_allow_powered_feedback_retry'),app)
         app._record_feedback_observation=MethodType(gui_method('_record_feedback_observation'),app)
         app._latch_feedback_fault=MethodType(gui_method('_latch_feedback_fault'),app)
         app.monitor_stop_event.is_set.side_effect=[False]*len(observations)+[True]
         app.odrive_adapter.snapshot.side_effect=observations
         app.odrive_adapter.request_idle.return_value=SimpleNamespace(confirmed=True)
-        gui_method('_feedback_monitor_loop')(app,1,app.odrive_adapter)
+        if owner == 'strain-test':
+            app.latest_feedback = sample(10., current_state=8)
+            with patch('east_execution.time.monotonic', return_value=10.22):
+                gui_method('_feedback_monitor_loop')(app,1,app.odrive_adapter)
+        else:
+            gui_method('_feedback_monitor_loop')(app,1,app.odrive_adapter)
         return app
 
     def test_idle_delay_preserves_zero_publishes_only_fresh_checkpoint(self):
@@ -161,6 +169,15 @@ class MonitorIntegrationTests(unittest.TestCase):
                 self.assertTrue(app._request_coordinated_stop.call_args.kwargs['fault'])
                 app.odrive_adapter.request_idle.assert_not_called()
                 self.assertEqual(app.checkpoint_writer.submit_event.call_count,0)
+
+    def test_standard_test_recovers_one_late_powered_capture(self):
+        late = sample(10.20, .187, current_state=8)
+        fresh = sample(10.21, current_state=8)
+        app = self.run_monitor([FeedbackAcquisitionTimeout(late), fresh], 8, 'strain-test')
+        self.assertIs(app.latest_feedback, fresh)
+        app._request_coordinated_stop.assert_not_called()
+        self.assertEqual(app.feedback_service.statistics()['comparison_rejected_bundle_count'], 1)
+        self.assertNotIn('drive_fault_evidence', app.run_metadata)
 
     def test_repeated_latency_faults_without_publishing_late_samples(self):
         app=self.run_monitor([FeedbackAcquisitionTimeout(sample(at,.266)) for at in (10.266,10.55,10.85)])

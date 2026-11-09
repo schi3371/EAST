@@ -328,7 +328,7 @@ class FeedbackMonitor:
         retry = IdleFeedbackRetry(self.config)
         last_good = self.initial
         delayed = False
-        motion_retry_pending=False
+        motion_retry_expectations = None
         try:
             while not self.stop.is_set():
                 adapter = self.adapter_provider()
@@ -339,18 +339,19 @@ class FeedbackMonitor:
                         include_uptime=expected_state is None,
                         max_capture_duration_s=cfg['maximum_feedback_capture_ms']/1000)
                 except FeedbackAcquisitionTimeout as exc:
+                    self.fault_snapshot = exc.snapshot
                     if self.allow_motion_retry() and self.owner()=='strain-test':
                         # Never publish the incoherent bundle. One immediate retry
                         # is permitted only while the last GOOD observation remains
                         # fresh; the original freshness/capture limits are unchanged.
-                        if motion_retry_pending or expected_state is None or last_good is None:raise
+                        if motion_retry_expectations is not None or expected_state is None or last_good is None:raise
                         last_good.validate(time.monotonic(),cfg['feedback_stale_after_ms']/1000,
                             cfg['maximum_feedback_capture_ms']/1000)
                         bad=exc.snapshot
                         if (bad.active_errors or bad.current_state!=expected_state
                                 or last_good.active_errors or last_good.current_state!=expected_state
                                 or (expected_disarm is not None and (bad.disarm_reason!=expected_disarm or last_good.disarm_reason!=expected_disarm))):raise
-                        motion_retry_pending=True
+                        motion_retry_expectations = (expected_state, expected_disarm)
                         rejection=dict(duration_s=bad.capture_duration_s,
                             transport_queue_wait_s=bad.transport_queue_wait_s,io_lock_wait_s=bad.lock_wait_s,
                             property_brackets=bad.property_brackets_monotonic_s,
@@ -367,12 +368,13 @@ class FeedbackMonitor:
                     self.on_delay(exc,retry.rejected)
                     self.stop.wait(interval)
                     continue
-                if motion_retry_pending:
+                if motion_retry_expectations is not None:
                     last_good.validate(time.monotonic(),cfg['feedback_stale_after_ms']/1000,
                         cfg['maximum_feedback_capture_ms']/1000)
-                    if not self.allow_motion_retry() or self.owner()!='strain-test':
-                        raise FeedbackError('Comparison ownership changed during feedback retry')
-                    motion_retry_pending=False
+                    if (not self.allow_motion_retry() or self.owner() != 'strain-test'
+                            or self.expectations() != motion_retry_expectations):
+                        raise FeedbackError('Motion ownership or drive expectations changed during ODrive feedback retry')
+                    motion_retry_expectations = None
                 retry.accept_fresh(last_good,snapshot)
                 if snapshot.active_errors:
                     self.fault_snapshot = snapshot
@@ -388,6 +390,7 @@ class FeedbackMonitor:
                 if expected_state is not None and expected_disarm is not None and snapshot.disarm_reason != expected_disarm:
                     raise FeedbackError(f'ODrive disarm reason changed during powered motion ({expected_disarm} -> {snapshot.disarm_reason})')
                 self.publish(snapshot)
+                self.fault_snapshot = None
                 last_good = snapshot
                 with self.statistics_lock:
                     self.samples += 1

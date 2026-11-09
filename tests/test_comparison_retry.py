@@ -29,9 +29,11 @@ class RetryTests(unittest.TestCase):
         m,a,p,f,d=self.run_case([(10.18,self.late()),(10.21,good)])
         self.assertEqual(p,[good]);self.assertFalse(f);self.assertEqual(len(d),1)
         self.assertEqual(len(m.statistics()['comparison_rejected_bundles']),1)
+        self.assertIsNone(m.fault_snapshot)
     def test_second_late_bundle_faults(self):
         m,a,p,f,d=self.run_case([(10.18,self.late()),(10.22,self.late(10.21))])
         self.assertFalse(p);self.assertTrue(f);self.assertEqual(a.snapshot.call_count,2)
+        self.assertEqual(m.fault_snapshot.captured_monotonic_s,10.21)
     def test_prior_feedback_age_deadline_is_not_extended(self):
         for events in [[(10.26,self.late())],[(10.18,self.late()),(10.29,sample(10.28,.02,current_state=8))]]:
             m,a,p,f,d=self.run_case(events);self.assertFalse(p);self.assertTrue(f)

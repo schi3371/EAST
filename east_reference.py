@@ -1311,8 +1311,8 @@ def wait_for_settle(
         stationary = abs(last.velocity_turns_s) <= abs(velocity_limit_turns_s)
         if position_error <= abs(tolerance_turns) and stationary:
             if settled_since is None:
-                settled_since = now
-            elif now - settled_since >= dwell_s:
+                settled_since = last.captured_monotonic_s
+            elif last.captured_monotonic_s - settled_since >= dwell_s:
                 return last
         else:
             settled_since = None

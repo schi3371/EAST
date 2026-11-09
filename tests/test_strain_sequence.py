@@ -118,6 +118,17 @@ class StrainSequenceTests(unittest.TestCase):
         app.observe_post_idle_neutral.assert_called_once_with(0)
         self.assertEqual(app.finalize_run.call_args.args[0], "completed")
 
+    def test_powered_feedback_retry_applies_to_standard_strain_tests(self):
+        app = SimpleNamespace(strain_test_active=True, operator_stop_requested=False,
+                              test_stop_event=Event(), run_motion_mapping_context=None)
+        allowed = gui_method("_allow_powered_feedback_retry")
+        self.assertTrue(allowed(app))
+        app.run_motion_mapping_context = {"stage": "rotary_feedback_pilot"}
+        self.assertFalse(allowed(app))
+        app.run_motion_mapping_context = None
+        app.test_stop_event.set()
+        self.assertFalse(allowed(app))
+
     def test_partial_cycle_is_not_completed(self):
         for failure in (TestStopped(), TimeoutError("stalled"), RuntimeError("feedback fault")):
             with self.subTest(failure=type(failure).__name__):

@@ -300,6 +300,13 @@ class ReferenceTests(unittest.TestCase):
         self.assertLessEqual(abs(result.velocity_turns_s), 0.02)
         self.assertGreaterEqual(clock.value, 0.3)
 
+    def test_cached_snapshot_does_not_advance_the_settling_window(self):
+        clock = FakeClock()
+        fixed = snapshot(position=2.0, velocity=0.0, captured=clock.value)
+        with self.assertRaisesRegex(TimeoutError, "settle limits"):
+            wait_for_settle(lambda: fixed, 2.0, 0.01, 0.02, 0.1, 0.15, 0.25,
+                            lambda: False, clock.now, clock.sleep)
+
     def test_error_at_target_is_not_accepted_as_arrival(self):
         clock = FakeClock()
         with self.assertRaises(FeedbackError):

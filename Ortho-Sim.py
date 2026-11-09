@@ -906,12 +906,20 @@ class MyInterface(OperatorView):
             lambda:(self.expected_axis_state,self.expected_disarm_reason),
             lambda:self.motion_coordinator.owner,publish,checkpoint,self._mark_control_health,
             delay,restored,feedback_fault,
-            allow_motion_retry=lambda:bool(getattr(self,'run_segmented_comparison',False)
-                and (getattr(self,'run_motion_mapping_context',None) or {}).get('stage') in ('commissioning','model_comparison')
-                and not self.operator_stop_requested and not self.test_stop_event.is_set()),
+            allow_motion_retry=self._allow_powered_feedback_retry,
             on_motion_delay=lambda exc:self.ui_message_queue.put(('terminal',
-                f'Comparison feedback bundle rejected ({exc.snapshot.capture_duration_s:.3f} s). Retrying once without publishing it; prior good feedback must remain fresh.\n')))
+                f'Late ODrive feedback rejected ({exc.snapshot.capture_duration_s:.3f} s). '
+                'Retrying once while prior feedback remains fresh.\n')))
         self.feedback_service.run()
+
+    def _allow_powered_feedback_retry(self):
+        if not self.strain_test_active or self.operator_stop_requested or self.test_stop_event.is_set():
+            return False
+        context = self.run_motion_mapping_context or {}
+        stage = context.get('stage')
+        if stage in ('commissioning', 'model_comparison'):
+            return self.run_segmented_comparison
+        return not stage and context.get('purpose') != 'nonlinear_motion_identification'
 
     def _mark_control_health(self):
         with self.control_health_lock:
@@ -3125,7 +3133,7 @@ class MyInterface(OperatorView):
                 "brackets": "host monotonic seconds; not hardware synchronisation",
                 "capture_duration": "transport queue wait plus IO lock wait and all requested property reads",
                 "uptime": "omitted during powered monitor captures; read during idle/identity/recovery diagnostics",
-                "limits": "production 150 ms capture and 250 ms position freshness unchanged",
+                "limits": "150 ms capture and 250 ms position freshness; one bounded late-bundle retry in eligible tests",
             }
             self.run_metadata["torque_angle_source"] = "Calibrated rotary fixture angle; inherited force-angle geometry coefficients"
             self.run_metadata["plot_angle_source"] = "Measured Fixture Angle from calibrated rotary sensor"
