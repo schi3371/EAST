@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
-from east_core import (FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_SPEEDS,
+from east_core import (FITTED_SPEED_SCREEN, FITTED_SPEED_SCREEN_RANGES, FITTED_SPEED_SCREEN_SPEEDS,
                        SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS)
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
@@ -75,7 +75,7 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
         raise ValueError('Select a supported explicit speed protocol')
-    if preset_key in SLOW_REPEATABILITY_PRESETS or preset_key == FITTED_SPEED_SCREEN:
+    if preset_key in SLOW_REPEATABILITY_PRESETS:
         angles = float(settings['minimum_angle_deg']), float(settings['maximum_angle_deg'])
         if angles not in ((5., 5.), (10., 10.)):
             raise ValueError('This pilot requires symmetric ±5° or ±10°')
@@ -91,20 +91,30 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     prefix=sanitise_identifier(identity['file_prefix'] or 'MotionSuite')[:24]
     modified=preset_values_modified(settings,preset)
     requests=[]
-    for index,speed in enumerate(speeds,1):
-        label=f'R{index}_{str(speed).replace(".","p")}dps'
+    if preset_key == FITTED_SPEED_SCREEN:
+        if str(settings['cycles']).strip() != str(preset['cycles']):
+            raise ValueError('Reload Five-Speed AFO Study for five cycles per speed and range')
+        conditions = [(speed, angle, angle) for angle in FITTED_SPEED_SCREEN_RANGES for speed in speeds]
+    else:
+        conditions = [(speed, settings['minimum_angle_deg'], settings['maximum_angle_deg']) for speed in speeds]
+    planned_speeds = tuple(speed for speed, _, _ in conditions)
+    for index, (speed, minimum, maximum) in enumerate(conditions, 1):
+        label = f'R{index}_{str(speed).replace(".", "p")}dps'
+        if preset_key == FITTED_SPEED_SCREEN:
+            label += f'_ROM{maximum:g}'
         parameters=validate_test_parameters(dict(file_prefix=f'{prefix}_B{batch_id[:8]}_{label}',
             operator=identity['operator'],fixture_id=identity['fixture_id'],calibration_id=identity['calibration_id'],
             afo_id=identity['afo_id'],test_type=preset['test_type'],cycles=settings['cycles'],speed_deg_s=speed,
-            acceleration_deg_s2=settings['acceleration_deg_s2'],min_angle_deg=settings['minimum_angle_deg'],
-            max_angle_deg=settings['maximum_angle_deg']),config)
+            acceleration_deg_s2=settings['acceleration_deg_s2'],min_angle_deg=minimum,
+            max_angle_deg=maximum),config)
         metadata=make_preset_metadata(preset_key,preset,parameters,loaded_at,modified)
-        metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(speeds),
+        metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(planned_speeds),
                         settings_status='provisional_not_scientifically_validated')
         if preset_key == FITTED_SPEED_SCREEN:
             metadata['study_mode'] = 'empty_fixture_calibration' if empty_calibration else 'fitted_speed_screen'
-        requests.append(ProtocolRequest(batch_id,label,index,len(speeds),parameters,metadata,str(manifest_path),
-                                       mounting_setup_id,speeds,baseline_batch_id,
+            metadata['planned_half_ranges_deg'] = list(FITTED_SPEED_SCREEN_RANGES)
+        requests.append(ProtocolRequest(batch_id,label,index,len(conditions),parameters,metadata,str(manifest_path),
+                                       mounting_setup_id,planned_speeds,baseline_batch_id,
                                        model_variant=selected_variant(config)))
     return requests
 

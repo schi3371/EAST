@@ -58,7 +58,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
              if self.feedback_sequence else 'Matched pairs at 0.5, 5 and 10°/s, rotary feedback off then on. Empty ±10°, three cycles per run.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
-             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '0.5 → 1 → 5 → 10 → 20°/s. Fitted runs pause after each speed so you can check the calf clamp.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
+             if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else '±5°, ±10° and ±15°. Each range runs 0.5 → 1 → 5 → 10 → 20°/s, five cycles per run. Each batch advances automatically after each saved run.\n' if self.fitted_speed_screen else 'Two runs: 0.5 → 1°/s. Set symmetric ±5° or ±10°. Stop the sequence if the AFO shifts.\n' if self.slow_repeatability else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
             'Settings are provisional. No added inter-run rest beyond normal settling, idle and file saving.',
             wraplength=720,justify='left').grid(row=1,column=0,columnspan=2,sticky='ew',pady=6)
         self.identity=ctk.CTkLabel(panel,text='',wraplength=720)
@@ -80,10 +80,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             self.pause_between_stages = ctk.BooleanVar(value=False)
             ctk.CTkCheckBox(panel, text="Pause for review after each stage",
                            variable=self.pause_between_stages, command=self.set_stage_pause_choice).grid(row=10, column=0, sticky="w")
-        if self.feedback_sequence or self.fitted_speed_screen:
             self.continue_stage_button = ctk.CTkButton(
-                panel, text="Continue to next speed" if self.fitted_speed_screen else "Continue to next stage",
-                command=self.continue_stage,
+                panel, text="Continue to next stage", command=self.continue_stage,
                 state="disabled")
             self.continue_stage_button.grid(row=10, column=1, sticky="ew", pady=4)
         self.readonly_fields={'baseline_batch_id'} if empty and not self.remaining_suite else set()
@@ -119,6 +117,8 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if self.feedback_sequence:
                 stage = r.preset_metadata["feedback_stage"]
                 return f"Stage {stage}, " + ("rotary feedback" if r.feedback_pilot else "feedforward")
+            if self.fitted_speed_screen:
+                return 'Empty calibration' if r.parameters.test_type == 'empty_machine_baseline' else 'Fitted screen'
             if self.smooth_pair:
                 return 'Smoothed motion, rotary feedback ' + ('on' if r.feedback_pilot else 'off')
             if self.screen_suite:
@@ -133,7 +133,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nTotal: {len(requests)} runs, {sum(r.parameters.cycles for r in requests if not r.stationary_holds)} numbered sweep cycles'+ (' plus 30 stationary target holds.' if any(r.stationary_holds for r in requests) else '.')+
                 '\nNormal return/settling/recording between runs. One mounting; no independent remount claims.'
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
-                + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite or self.smooth_pair else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
+                + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite or self.smooth_pair or self.fitted_speed_screen else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
                 ('\nEMPTY FIXTURE ONLY. The full selection reaches the maximum displayed range. '
                  + ('The sequence pauses after each matched pair.' if self.pause_between_stages.get()
@@ -178,8 +178,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 raise ValueError("Choose a valid inclusive start/end range")
             start_at = 2 * (start_input - 1) + 1 if self.feedback_sequence else start_input
             end_at = 2 * end_selection if self.feedback_sequence else end_selection
-            self.pause_stages_snapshot = ((self.fitted_speed_screen and not empty_calibration)
-                                          or bool(self.feedback_sequence and self.pause_between_stages.get()))
+            self.pause_stages_snapshot = bool(self.feedback_sequence and self.pause_between_stages.get())
             requests = requests[start_at - 1:end_at]
             self.selected_start_run=start_at
             from east_core import validate_empty_machine_tare
@@ -271,22 +270,15 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         self.save("next")
 
     def next_run(self):
-        if ((self.feedback_sequence or self.fitted_speed_screen)
-                and not self.cancelled.is_set() and not self.pending_zero_recovery
+        if (self.feedback_sequence and not self.cancelled.is_set() and not self.pending_zero_recovery
                 and self.pause_stages_snapshot and 0 < len(self.records) < len(self.requests)):
             request = self.requests[len(self.records)]
             previous = self.requests[len(self.records) - 1]
-            new_stage = (self.fitted_speed_screen
-                         or request.feedback_condition_key != previous.feedback_condition_key)
-            if new_stage and self.stage_approved_run != request.index:
+            if (request.feedback_condition_key != previous.feedback_condition_key
+                    and self.stage_approved_run != request.index):
                 self.awaiting_stage_review = request.index
-                if self.fitted_speed_screen:
-                    speed = request.parameters.commanded_afo_speed_deg_s
-                    message = f"Run saved. Check the cuff and fixture before continuing to {speed:g}°/s."
-                else:
-                    message = (f"Stage complete. Review the saved pair, then continue to stage "
-                               f"{request.preset_metadata['feedback_stage']}.")
-                self.status.configure(text=message)
+                self.status.configure(text=f"Stage complete. Review the saved pair, then continue to stage "
+                                           f"{request.preset_metadata['feedback_stage']}.")
                 self.continue_stage_button.configure(state="normal")
                 return
         if not self.pending_zero_recovery:

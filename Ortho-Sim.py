@@ -33,6 +33,7 @@ from east_smooth_motion import PRESET as SMOOTH_PAIR
 from east_motion_model import X_LIMIT, ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method, selected_variant, CALIBRATION_HASHES, RunModel, enabled as motion_model_enabled, validate_range as validate_model_range, provenance as model_provenance
 
 from east_core import (
+    FITTED_SPEED_SCREEN,
     CSV_COLUMNS,
     ROTARY_RUN_COLUMNS,
     MOTOR_TIMING_COLUMNS,
@@ -474,6 +475,9 @@ class MyInterface(OperatorView):
         preset = self._loaded_preset()
         if state == 'normal' and preset and preset.get('execution_kind') == 'speed_sequence':
             self.speed_input.configure(state='disabled')
+            if self.loaded_preset_key == FITTED_SPEED_SCREEN:
+                for entry in (self.cycles_input, self.min_angle_input, self.max_angle_input):
+                    entry.configure(state='disabled')
         selector = getattr(self,"motion_method_menu",None)
         if selector is not None:
             selector.configure(state=state)

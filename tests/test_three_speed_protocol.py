@@ -63,6 +63,20 @@ class PlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symmetric"):
             self.plan('slow_repeatability_afo', minimum_angle_deg='5')
 
+    def test_five_speed_study_covers_each_range_in_both_modes(self):
+        expected = [(speed, angle) for angle in (5, 10, 15) for speed in (.5, 1, 5, 10, 20)]
+        for empty in (False, True):
+            requests = make_protocol_plan(self.config, 'fitted_speed_screen', self.identity,
+                self.settings, 'SETUP', '' if empty else 'baseline-id', 'batch.json', 'now',
+                empty_calibration=empty)
+            actual = [(r.parameters.commanded_afo_speed_deg_s, r.parameters.max_angle_deg) for r in requests]
+            self.assertEqual(actual, expected)
+            self.assertTrue(all(r.parameters.min_angle_deg == r.parameters.max_angle_deg for r in requests))
+            self.assertTrue(all(r.total == 15 and r.parameters.cycles == 5 for r in requests))
+            self.assertEqual(len({r.parameters.file_prefix for r in requests}), 15)
+        with self.assertRaisesRegex(ValueError, "five cycles"):
+            self.plan('fitted_speed_screen', cycles='3')
+
     def test_invalid_parameters_and_reserved_loaded_identity(self):
         for changes in ({'cycles':'0'},{'minimum_angle_deg':'16'},{'acceleration_deg_s2':'101'}):
             with self.assertRaises(ValueError):self.plan(**changes)
@@ -141,33 +155,35 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(body['planned_speed_sequence_deg_s'], [.5, 1.])
         self.assertEqual([r['status'] for r in body['runs']], ['completed', 'completed'])
 
-    def test_five_speed_fitted_screen_waits_for_approval_and_stop_skips_faster_runs(self):
-        w, _ = self.prepare('fitted_speed_screen', cycles=1)
+    def test_five_speed_fitted_screen_advances_without_approval_and_stop_skips_rest(self):
+        w, _ = self.prepare('fitted_speed_screen', cycles=5)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         w.start()
-        self.pump_window(w, lambda: w.awaiting_stage_review == 2)
+        self.pump_window(w, lambda: w.awaiting_run and w.request.index == 2)
         self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [.5])
-        w.continue_stage()
-        self.pump_window(w, lambda: w.awaiting_stage_review == 3)
-        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [.5, 1.])
+        self.assertIsNone(w.awaiting_stage_review)
         w.stop()
         self.pump_window(w, lambda: not w.active)
         manifest = self.manifest(w)
-        self.assertEqual([r['status'] for r in manifest['runs']], ['completed', 'completed', 'skipped', 'skipped', 'skipped'])
-        self.assertEqual([r['next_run'] for r in manifest['stage_reviews']], [2])
+        self.assertEqual(manifest['runs'][0]['status'], 'completed')
+        self.assertTrue(all(r['status'] == 'skipped' for r in manifest['runs'][2:]))
+        self.assertEqual(manifest['stage_reviews'], [])
+        self.assertEqual(manifest['total_numbered_cycles'], 75)
 
-    def test_five_speed_empty_calibration_completes_without_clamp_pauses(self):
-        w, _ = self.prepare('fitted_speed_screen', cycles=1)
+    def test_five_speed_empty_calibration_starts_without_afo_id(self):
+        w, _ = self.prepare('fitted_speed_screen', cycles=5)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         self.app.afo_id_input.value = ''
         w.start(empty_calibration=True)
+        self.pump_window(w, lambda: w.awaiting_run and w.request.index == 2)
+        self.assertIsNone(w.awaiting_stage_review)
+        self.assertEqual(w.request.parameters.test_type, 'empty_machine_baseline')
+        w.stop()
         self.pump_window(w, lambda: not w.active)
         manifest = self.manifest(w)
-        self.assertEqual(manifest['outcome'], 'completed', w.status.options)
-        self.assertEqual(manifest['test_type'], 'empty_machine_baseline')
         self.assertEqual(manifest['protocol']['study_mode'], 'empty_fixture_calibration')
-        self.assertEqual(manifest['planned_speed_sequence_deg_s'], [.5, 1., 5., 10., 20.])
-        self.assertEqual([r['status'] for r in manifest['runs']], ['completed'] * 5)
+        self.assertEqual(manifest['planned_speed_sequence_deg_s'], [.5, 1., 5., 10., 20.] * 3)
+        self.assertEqual(manifest['runs'][0]['status'], 'completed')
         self.assertEqual(manifest['stage_reviews'], [])
         for row in manifest['runs']:
             self.assertEqual(row['parameters']['afo_id'], 'EMPTY_MACHINE_BASELINE')
