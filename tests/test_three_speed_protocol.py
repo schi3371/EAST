@@ -170,12 +170,17 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(manifest['stage_reviews'], [])
         self.assertEqual(manifest['total_numbered_cycles'], 75)
 
-    def test_five_speed_empty_calibration_starts_without_afo_id(self):
+    def test_five_speed_empty_calibration_resumes_at_run_11_without_afo_id(self):
         w, _ = self.prepare('fitted_speed_screen', cycles=5)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         self.app.afo_id_input.value = ''
+        w.fields['start_run'].value = '16'
         w.start(empty_calibration=True)
-        self.pump_window(w, lambda: w.awaiting_run and w.request.index == 2)
+        self.assertFalse(w.active)
+        self.app.show_resizable_confirmation.assert_not_called()
+        w.fields['start_run'].value = '11'
+        w.start(empty_calibration=True)
+        self.pump_window(w, lambda: w.awaiting_run and w.request.index == 12)
         self.assertIsNone(w.awaiting_stage_review)
         self.assertEqual(w.request.parameters.test_type, 'empty_machine_baseline')
         w.stop()
@@ -183,7 +188,12 @@ class ApplicationTests(unittest.TestCase):
         manifest = self.manifest(w)
         self.assertEqual(manifest['protocol']['study_mode'], 'empty_fixture_calibration')
         self.assertEqual(manifest['planned_speed_sequence_deg_s'], [.5, 1., 5., 10., 20.] * 3)
-        self.assertEqual(manifest['runs'][0]['status'], 'completed')
+        self.assertEqual(manifest['selected_start_run'], 11)
+        self.assertTrue(all(r['status'] == 'skipped_by_operator_before_start' for r in manifest['runs'][:10]))
+        resumed = manifest['runs'][10]
+        self.assertEqual(resumed['status'], 'completed')
+        self.assertEqual(resumed['parameters']['max_angle_deg'], 15.)
+        self.assertEqual(resumed['parameters']['commanded_afo_speed_deg_s'], .5)
         self.assertEqual(manifest['stage_reviews'], [])
         for row in manifest['runs']:
             self.assertEqual(row['parameters']['afo_id'], 'EMPTY_MACHINE_BASELINE')

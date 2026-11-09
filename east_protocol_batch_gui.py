@@ -69,6 +69,12 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ctk.CTkLabel(panel,text=label).grid(row=row,column=0,sticky='w',padx=4)
             entry=ctk.CTkEntry(panel);entry.insert(0,value);entry.grid(row=row,column=1,sticky='ew',pady=4)
             self.fields[key]=entry
+        if self.fitted_speed_screen:
+            ctk.CTkLabel(panel, text='Start at run (1–15)').grid(row=9, column=0, sticky='w', padx=4)
+            entry = ctk.CTkEntry(panel)
+            entry.insert(0, '1')
+            entry.grid(row=9, column=1, sticky='ew', pady=4)
+            self.fields['start_run'] = entry
         if self.comparison_suite:
             ctk.CTkLabel(panel, text="Stop after stage (blank = last)" if self.feedback_sequence else "Stop after run (blank = last)").grid(row=9, column=0, sticky="w", padx=4)
             entry = ctk.CTkEntry(panel)
@@ -170,11 +176,18 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 '' if self.remaining_suite or empty_calibration else self.fields['baseline_batch_id'].get(),
                 path,a.preset_loaded_at,batch_id=batch_id,empty_calibration=empty_calibration)
             self.all_requests=requests
-            start_input = int(self.fields["start_run"].get()) if self.remaining_suite else 1
+            start_entry = self.fields.get("start_run")
+            start_text = start_entry.get().strip() if start_entry is not None else "1"
+            try:
+                start_input = int(start_text)
+            except ValueError as exc:
+                raise ValueError("Enter a whole number for the starting run") from exc
             end_input = self.fields["end_run"].get().strip() if self.comparison_suite else ""
             selection_count = len(CONDITIONS) if self.feedback_sequence else len(requests)
             end_selection = int(end_input) if end_input else selection_count
             if not 1 <= start_input <= end_selection <= selection_count:
+                if self.fitted_speed_screen:
+                    raise ValueError(f"Starting run must be between 1 and {selection_count}")
                 raise ValueError("Choose a valid inclusive start/end range")
             start_at = 2 * (start_input - 1) + 1 if self.feedback_sequence else start_input
             end_at = 2 * end_selection if self.feedback_sequence else end_selection
@@ -200,7 +213,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             ):
                 return
             # Freeze only if modal nested actions did not change any preparation.
-            if self.remaining_suite and int(self.fields["start_run"].get())!=start_input:
+            if start_entry is not None and start_entry.get().strip() != start_text:
                 raise ValueError("Starting run changed during confirmation; review again")
             if self.comparison_suite and self.fields["end_run"].get().strip() != end_input:
                 raise ValueError("Ending run changed during confirmation; review again")
