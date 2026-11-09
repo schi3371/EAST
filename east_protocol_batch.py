@@ -53,7 +53,10 @@ class ProtocolRequest:
                if self.feedback_condition_key is not None else {}))
 
 
-def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id=None):
+def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id=None,
+                       *, empty_calibration=False):
+    if empty_calibration and preset_key != FITTED_SPEED_SCREEN:
+        raise ValueError('Empty fixture calibration is part of the five-speed study')
     from east_full_model_suite import PRESET, make_plan
     if preset_key == PRESET:
         return make_plan(config,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
@@ -65,7 +68,9 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     if preset_key == FITTED_SPEED_SCREEN:
         speeds = FITTED_SPEED_SCREEN_SPEEDS
         if preset['test_type'] != 'afo_test':
-            raise ValueError('The fitted speed screen requires an AFO test')
+            raise ValueError('The five-speed study preset must declare fitted AFO mode')
+        if empty_calibration:
+            preset['test_type'] = 'empty_machine_baseline'
     else:
         speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
@@ -96,6 +101,8 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         metadata=make_preset_metadata(preset_key,preset,parameters,loaded_at,modified)
         metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(speeds),
                         settings_status='provisional_not_scientifically_validated')
+        if preset_key == FITTED_SPEED_SCREEN:
+            metadata['study_mode'] = 'empty_fixture_calibration' if empty_calibration else 'fitted_speed_screen'
         requests.append(ProtocolRequest(batch_id,label,index,len(speeds),parameters,metadata,str(manifest_path),
                                        mounting_setup_id,speeds,baseline_batch_id,
                                        model_variant=selected_variant(config)))

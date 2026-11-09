@@ -141,20 +141,36 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(body['planned_speed_sequence_deg_s'], [.5, 1.])
         self.assertEqual([r['status'] for r in body['runs']], ['completed', 'completed'])
 
-    def test_fitted_speed_screen_waits_for_approval_and_stop_skips_faster_run(self):
+    def test_five_speed_fitted_screen_waits_for_approval_and_stop_skips_faster_runs(self):
         w, _ = self.prepare('fitted_speed_screen', cycles=1)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         w.start()
         self.pump_window(w, lambda: w.awaiting_stage_review == 2)
-        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [5.])
+        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [.5])
         w.continue_stage()
         self.pump_window(w, lambda: w.awaiting_stage_review == 3)
-        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [5., 10.])
+        self.assertEqual([r['context']['planned_speed_deg_s'] for r in w.records], [.5, 1.])
         w.stop()
         self.pump_window(w, lambda: not w.active)
         manifest = self.manifest(w)
-        self.assertEqual([r['status'] for r in manifest['runs']], ['completed', 'completed', 'skipped'])
+        self.assertEqual([r['status'] for r in manifest['runs']], ['completed', 'completed', 'skipped', 'skipped', 'skipped'])
         self.assertEqual([r['next_run'] for r in manifest['stage_reviews']], [2])
+
+    def test_five_speed_empty_calibration_completes_without_clamp_pauses(self):
+        w, _ = self.prepare('fitted_speed_screen', cycles=1)
+        self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
+        self.app.afo_id_input.value = ''
+        w.start(empty_calibration=True)
+        self.pump_window(w, lambda: not w.active)
+        manifest = self.manifest(w)
+        self.assertEqual(manifest['outcome'], 'completed', w.status.options)
+        self.assertEqual(manifest['test_type'], 'empty_machine_baseline')
+        self.assertEqual(manifest['protocol']['study_mode'], 'empty_fixture_calibration')
+        self.assertEqual(manifest['planned_speed_sequence_deg_s'], [.5, 1., 5., 10., 20.])
+        self.assertEqual([r['status'] for r in manifest['runs']], ['completed'] * 5)
+        self.assertEqual(manifest['stage_reviews'], [])
+        for row in manifest['runs']:
+            self.assertEqual(row['parameters']['afo_id'], 'EMPTY_MACHINE_BASELINE')
 
     def test_empty_baseline_is_separate_reserved_identity(self):
         w,_=self.prepare('three_speed_empty_baseline');w.start();self.pump_window(w,lambda:not w.active)

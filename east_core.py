@@ -196,7 +196,7 @@ def empty_machine_tare_identity_mismatches(
 SLOW_REPEATABILITY_PRESETS = ("slow_repeatability_empty", "slow_repeatability_afo")
 SLOW_REPEATABILITY_SPEEDS = (0.5, 1.0)
 FITTED_SPEED_SCREEN = "fitted_speed_screen"
-FITTED_SPEED_SCREEN_SPEEDS = (5.0, 10.0, 20.0)
+FITTED_SPEED_SCREEN_SPEEDS = (0.5, 1.0, 5.0, 10.0, 20.0)
 
 PRESET_MOTION_FIELDS = (
     "cycles",
