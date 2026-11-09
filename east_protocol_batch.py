@@ -93,7 +93,7 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     requests=[]
     if preset_key == FITTED_SPEED_SCREEN:
         if str(settings['cycles']).strip() != str(preset['cycles']):
-            raise ValueError('Reload Five-Speed AFO Study for five cycles per speed and range')
+            raise ValueError(f"Reload Five-Speed AFO Study for {preset['cycles']} cycles per speed and range")
         conditions = [(speed, angle, angle) for angle in FITTED_SPEED_SCREEN_RANGES for speed in speeds]
     else:
         conditions = [(speed, settings['minimum_angle_deg'], settings['maximum_angle_deg']) for speed in speeds]

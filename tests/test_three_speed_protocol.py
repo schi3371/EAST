@@ -67,15 +67,15 @@ class PlanTests(unittest.TestCase):
         expected = [(speed, angle) for angle in (5, 10, 15) for speed in (.5, 1, 5, 10, 20)]
         for empty in (False, True):
             requests = make_protocol_plan(self.config, 'fitted_speed_screen', self.identity,
-                self.settings, 'SETUP', '' if empty else 'baseline-id', 'batch.json', 'now',
+                dict(self.settings, cycles='3'), 'SETUP', '' if empty else 'baseline-id', 'batch.json', 'now',
                 empty_calibration=empty)
             actual = [(r.parameters.commanded_afo_speed_deg_s, r.parameters.max_angle_deg) for r in requests]
             self.assertEqual(actual, expected)
             self.assertTrue(all(r.parameters.min_angle_deg == r.parameters.max_angle_deg for r in requests))
-            self.assertTrue(all(r.total == 15 and r.parameters.cycles == 5 for r in requests))
+            self.assertTrue(all(r.total == 15 and r.parameters.cycles == 3 for r in requests))
             self.assertEqual(len({r.parameters.file_prefix for r in requests}), 15)
-        with self.assertRaisesRegex(ValueError, "five cycles"):
-            self.plan('fitted_speed_screen', cycles='3')
+        with self.assertRaisesRegex(ValueError, "3 cycles"):
+            self.plan('fitted_speed_screen', cycles='5')
 
     def test_invalid_parameters_and_reserved_loaded_identity(self):
         for changes in ({'cycles':'0'},{'minimum_angle_deg':'16'},{'acceleration_deg_s2':'101'}):
@@ -156,7 +156,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual([r['status'] for r in body['runs']], ['completed', 'completed'])
 
     def test_five_speed_fitted_screen_advances_without_approval_and_stop_skips_rest(self):
-        w, _ = self.prepare('fitted_speed_screen', cycles=5)
+        w, _ = self.prepare('fitted_speed_screen', cycles=3)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         w.start()
         self.pump_window(w, lambda: w.awaiting_run and w.request.index == 2)
@@ -168,10 +168,10 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(manifest['runs'][0]['status'], 'completed')
         self.assertTrue(all(r['status'] == 'skipped' for r in manifest['runs'][2:]))
         self.assertEqual(manifest['stage_reviews'], [])
-        self.assertEqual(manifest['total_numbered_cycles'], 75)
+        self.assertEqual(manifest['total_numbered_cycles'], 45)
 
     def test_five_speed_empty_calibration_resumes_at_run_11_without_afo_id(self):
-        w, _ = self.prepare('fitted_speed_screen', cycles=5)
+        w, _ = self.prepare('fitted_speed_screen', cycles=3)
         self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
         self.app.afo_id_input.value = ''
         w.fields['start_run'].value = '16'
