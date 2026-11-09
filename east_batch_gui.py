@@ -62,6 +62,9 @@ class RecordedBatchWindow:
         # Keep active ownership until the final sidecar is durably saved.
         self.save('finish')
 
+    def batch_status_text(self, message):
+        return message
+
     def stop(self):
         self.cancelled.set()
         if self.active:
@@ -105,13 +108,14 @@ class RecordedBatchWindow:
                                 self.active = False
                                 self.batch_status='error'
                                 self.batch_error=f'Manifest save failed: {exc}'
-                                self.status.configure(text=f'Batch manifest save failed; sequence stopped: {exc}')
+                                self.status.configure(text=self.batch_status_text(f'Batch manifest save failed; sequence stopped: {exc}'))
                                 app.update_terminal(f'Batch manifest save failed: {exc}\n')
                         else:
                             if action == 'finish':
                                 self.active = False
                                 self.request = None
-                                self.status.configure(text=f'{self.batch_status.upper()}: {self.batch_error or "all runs saved"}')
+                                self.status.configure(text=self.batch_status_text(
+                                    f'{self.batch_status.upper()}: {self.batch_error or "all runs saved"}'))
                             else:
                                 self.next_run()
                 elif getattr(self,'awaiting_run',False):
@@ -182,7 +186,7 @@ class RecordedBatchWindow:
                 if quiescent(app):
                     self.release_pending=False;app.set_test_inputs_state('normal');app._refresh_motion_controls()
                 app.update_terminal(self.batch_error+'\n')
-                try:self.status.configure(text='ERROR: '+self.batch_error)
+                try:self.status.configure(text=self.batch_status_text('ERROR: '+self.batch_error))
                 except Exception:pass  # The original failure may be a destroyed widget.
                 return
         if not quiescent(app):return

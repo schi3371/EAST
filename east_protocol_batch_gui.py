@@ -442,6 +442,20 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             status='completed_with_zero_recovery'
         return super().finish(status,error)
 
+    def batch_status_text(self, message):
+        if not self.fitted_speed_screen or self.batch_status not in ('error', 'cancelled'):
+            return message
+        next_position = len(self.records)
+        if self.records and self.records[-1]['outcome'] != 'success':
+            run = self.requests[next_position - 1].index
+            location = f'Run R{run} did not complete.'
+        elif next_position < len(self.requests):
+            run = self.requests[next_position].index
+            location = f'Sequence stopped before R{run}.'
+        else:
+            return message
+        return f'{location} To resume, enter {run} in Start at run.\n{message}'
+
     def check_setup_continuity(self):
         a=self.app
         reason=None

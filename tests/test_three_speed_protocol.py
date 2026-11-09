@@ -169,6 +169,19 @@ class ApplicationTests(unittest.TestCase):
         self.assertTrue(all(r['status'] == 'skipped' for r in manifest['runs'][2:]))
         self.assertEqual(manifest['stage_reviews'], [])
         self.assertEqual(manifest['total_numbered_cycles'], 45)
+        self.assertIn('enter 2 in Start at run', w.status.options['text'])
+
+    def test_five_speed_failure_shows_original_run_number_when_resumed(self):
+        w, _ = self.prepare('fitted_speed_screen', cycles=3)
+        self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
+        self.app._ensure_load_cell = Mock(side_effect=OSError('SIMULATED Bridge unavailable'))
+        w.fields['start_run'].value = '12'
+        w.start()
+        self.pump_window(w, lambda: not w.active)
+        self.assertIn('Run R12 did not complete', w.status.options['text'])
+        self.assertIn('enter 12 in Start at run', w.status.options['text'])
+        self.assertIn('ERROR: ' + w.batch_error, w.status.options['text'])
+        self.assertEqual(self.manifest(w)['runs'][11]['status'], 'failed')
 
     def test_five_speed_empty_calibration_resumes_at_run_11_without_afo_id(self):
         w, _ = self.prepare('fitted_speed_screen', cycles=3)
