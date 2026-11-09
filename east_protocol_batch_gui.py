@@ -53,7 +53,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         ctk.CTkLabel(panel,text=('EMPTY MACHINE — run before mounting the AFO.\n' if empty else 'AFO FITTED — one mounting shared by all three speed conditions.\n')+
             ('One sequence of 11 stages. Each stage runs feedforward then rotary feedback. '
              'Choose a stage range and pause for review between stages.\n'
-             if self.feedback_sequence else 'Two matched runs, rotary feedback off then on. Empty ±10° at 5°/s, three cycles each.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
+             if self.feedback_sequence else 'Matched pairs at 0.5, 5 and 10°/s, rotary feedback off then on. Empty ±10°, three cycles per run.\n' if self.smooth_pair else f"Two matched runs: feedforward then feedback. Empty ±{self.commissioning.half_range_deg:g}°, "
              f"{self.commissioning.speed_deg_s:g}°/s, reference acceleration "
              f"{self.commissioning.acceleration_deg_s2:g}°/s². Review this pair before selecting another stage.\n"
              if self.commissioning else '147 runs: seven methods × seven speeds × three repeats. Empty ±15°, acceleration 100°/s². Includes 30, 40 and 50°/s. Start/end run allow resuming.\n' if self.full_comparison else '21 runs in three blocks of seven methods. Start with runs 1–7. Empty ±5° at 0.5°/s.\n' if self.screen_suite else '2 runs: wider cubic feedforward then continuous rotary-feedback PILOT. Empty +/-5 at 0.5 degrees/s only.\n' if self.pilot_suite else '22 runs: Original/Candidate +/-5 and +/-10 checks, then 18 Original/Current/Candidate +/-15 runs.\n' if self.comparison_suite else '10 runs: two Updated +/-10 repeat sets, rotary-supervised +/-15 identification at all three speeds, then stationary holds.\n' if self.remaining_suite else 'Three complete runs: 0.5 → 5 → 20°/s. Main ROM, acceleration and cycles apply to EACH speed.\n')+
@@ -86,7 +86,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
         if empty and not self.remaining_suite:self.fields['baseline_batch_id'].configure(state='disabled')
         self.status=ctk.CTkLabel(panel,text=('Ready. Load the fixed preset, confirm the empty fixture, then run all stages.' if self.remaining_suite else 'Ready. Common cycles apply to EACH speed; the full total is shown before Run.'),wraplength=720)
         self.status.grid(row=5,column=0,columnspan=2,sticky='ew',pady=6)
-        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Smoothed Pair' if self.smooth_pair else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
+        self.run_button=ctk.CTkButton(panel,text='Run All Model × Speed Tests' if self.full_comparison else 'Run Feedback Sequence' if self.feedback_sequence else 'Run Smoothed Speed Sequence' if self.smooth_pair else 'Run Feedback Pilot' if self.pilot_suite else 'Run Model Comparison' if self.comparison_suite else 'Run Remaining Data Suite' if self.remaining_suite else 'Run Three-Speed Sequence',command=self.start)
         self.run_button.grid(row=6,column=0,padx=4,pady=6,sticky='ew')
         self.run_buttons=[self.run_button]
         self.stop_button=ctk.CTkButton(panel,text='Stop Sequence',command=self.stop,fg_color='#b91c1c')
@@ -115,7 +115,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
             if self.screen_suite:
                 return f"Block {r.repeat}, {r.model_variant} " + ("with feedback" if r.feedback_pilot else "feedforward")
             return {'updated_10_repeat':f'Updated +/-10 repeat {r.repeat}', 'wide_15_identification':'Original + rotary +/-15 identification', 'stationary_direction_holds':'Stationary directional holds'}.get(r.stage,f'{r.stage}: {getattr(r,"model_variant","current")}')
-        summary='\n'.join(f'Run {r.index}: {stage_label(r)} — {r.parameters.commanded_afo_speed_deg_s:g}°/s, +/-{r.parameters.max_angle_deg:g}°, {"30 holds + 30s zero recording" if r.stationary_holds else str(r.parameters.cycles)+" cycles"}' for r in requests)
+        summary='\n'.join(f'Run {r.index}: {stage_label(r)} — {r.parameters.commanded_afo_speed_deg_s:g}°/s, {r.parameters.commanded_afo_acceleration_deg_s2:g}°/s², +/-{r.parameters.max_angle_deg:g}°, {"30 holds + 30s zero recording" if r.stationary_holds else str(r.parameters.cycles)+" cycles"}' for r in requests)
         empty=p.test_type=='empty_machine_baseline'
         return (
             ('EMPTY MACHINE — remove AFO and removable loads.' if empty else f'AFO: {p.afo_id} — same mounting for all speeds.')+
@@ -124,7 +124,7 @@ class ThreeSpeedProtocolWindow(RecordedBatchWindow):
                 f'\nTotal: {len(requests)} runs, {sum(r.parameters.cycles for r in requests if not r.stationary_holds)} numbered sweep cycles'+ (' plus 30 stationary target holds.' if any(r.stationary_holds for r in requests) else '.')+
                 '\nNormal return/settling/recording between runs. One mounting; no independent remount claims.'
                 + (' Each comparison run receives a separately recorded rotary-zero check and fresh motor reference before dispatch; zeroing movement occurs only if needed.' if self.comparison_suite and not self.pilot_suite else '')
-                + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
+                + ('\nROM and acceleration follow the fixed settings for each stage.' if self.remaining_suite or self.smooth_pair else f'\nROM: −{p.min_angle_deg:g}° to +{p.max_angle_deg:g}°; acceleration {p.commanded_afo_acceleration_deg_s2:g}°/s².')
                 + ('\nMethods follow the explicit staged plan.' if self.remaining_suite else ('\nExperimental cubic targets; extrapolation allowed to machine limit; speed varies.' if motion_model_enabled(a.system_config) else '\nLegacy fixed conversion.'))+
                 ('\nEMPTY FIXTURE ONLY. The full selection reaches the maximum displayed range. '
                  + ('The sequence pauses after each matched pair.' if self.pause_between_stages.get()

@@ -142,13 +142,14 @@ def make_comparison_plan(config,key,identity,settings,setup,baseline,path,loaded
 def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,batch_id=None):
     if key == SEQUENCE_PRESET:
         return make_feedback_sequence(config, identity, settings, setup, baseline, path, loaded, batch_id)
-    from east_smooth_motion import PRESET as SMOOTH_PAIR
+    from east_smooth_motion import PRESET as SMOOTH_PAIR, runnable_study_conditions
     smooth = key == SMOOTH_PAIR
     condition = condition_for(key)
     cycles = 3 if smooth else 1
     half_range = 10. if smooth else (condition.half_range_deg if condition else 5.)
     speed = 5. if smooth else (condition.speed_deg_s if condition else .5)
-    acceleration = 100. if smooth else (condition.acceleration_deg_s2 if condition else 5.)
+    preset = config["test_presets"][key]
+    acceleration = preset["acceleration_deg_s2"] if smooth else (condition.acceleration_deg_s2 if condition else 5.)
     if (int(settings['cycles']) != cycles or float(settings['minimum_angle_deg']) != half_range
             or float(settings['maximum_angle_deg']) != half_range
             or float(settings['acceleration_deg_s2']) != acceleration):
@@ -159,8 +160,13 @@ def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,b
     screen = key == SCREEN_PRESET
     plan = ([(block, method) for block, order in enumerate(BLOCKS, 1) for method in order]
             if screen else [(1, "candidate"), (1, "feedback")])
-    sequence = (speed,) * len(plan)
-    for i, (block, method) in enumerate(plan, 1):
+    rows = [(block, method, speed, acceleration) for block, method in plan]
+    if smooth:
+        rows = [(stage, method, stage_speed, stage_acceleration)
+                for stage, (stage_speed, stage_acceleration) in enumerate(runnable_study_conditions(config["motion"]), 1)
+                for method in ("candidate", "feedback")]
+    sequence = tuple(row[2] for row in rows)
+    for i, (block, method, speed, acceleration) in enumerate(rows, 1):
         feedback = method == "feedback"
         variant = "candidate" if feedback else method
         prefix = "SmoothPair" if smooth else ("StreamScreen" if screen else "Pilot")
@@ -171,7 +177,7 @@ def make_feedback_plan(config,key,identity,settings,setup,baseline,path,loaded,b
         if screen:
             meta.update(screen_method=method, screen_block=block)
         label = f'R{i} {variant} ' + ('rotary feedback' if feedback else 'feedforward')
-        requests.append(ProtocolRequest(batch_id, label, i, len(plan), p, meta,
+        requests.append(ProtocolRequest(batch_id, label, i, len(rows), p, meta,
             str(path), str(setup).strip(), sequence, None, command_model_enabled=True,
             stage='rotary_feedback_pilot', repeat=block, model_variant=variant, feedback_pilot=feedback))
     return requests

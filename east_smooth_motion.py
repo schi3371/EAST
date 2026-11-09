@@ -5,6 +5,25 @@ import math
 PRESET = 'smooth_rotary_pair'
 PERIOD_S = .05
 BANDWIDTH = 20.
+HALF_RANGE_DEG = 10.
+PLATEAU_HALF_RANGE_DEG = 8.
+STUDY_SPEEDS = (.5, 5., 10., 20., 30., 40., 50.)
+
+
+def plateau_acceleration(speed):
+    """Peak acceleration for the cubic speed ramp over the available 2 degrees."""
+    return .75 * speed**2 / (HALF_RANGE_DEG - PLATEAU_HALF_RANGE_DEG)
+
+
+def runnable_study_conditions(motion):
+    """Select conditions that meet the full requested plateau within current limits."""
+    conditions = []
+    for speed in STUDY_SPEEDS:
+        acceleration = max(motion["minimum_acceleration_deg_s2"], plateau_acceleration(speed))
+        if (motion["minimum_speed_deg_s"] <= speed <= motion["maximum_speed_deg_s"]
+                and acceleration <= motion["maximum_acceleration_deg_s2"]):
+            conditions.append((speed, acceleration))
+    return conditions
 
 
 def clamp(value, lower, upper):

@@ -378,7 +378,8 @@ def load_tester_config(path: Optional[Path] = None) -> Dict[str, Any]:
                 profile(config)
                 expected_speeds = [r[0] for r in rows()]
             elif key == 'smooth_rotary_pair':
-                expected_speeds = [5., 5.]
+                from east_smooth_motion import runnable_study_conditions
+                expected_speeds = [speed for speed, _ in runnable_study_conditions(config['motion']) for _ in range(2)]
             elif key == 'streamed_model_screen':
                 from east_stream_screen import BLOCKS
                 expected_speeds = [0.5] * sum(map(len, BLOCKS))

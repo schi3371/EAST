@@ -3981,20 +3981,20 @@ class MyInterface(OperatorView):
         return last
 
     def command_smoothed_angle(self, target, phase, token, speed=None, acceleration=None):
-        from east_smooth_motion import BANDWIDTH, PERIOD_S, FilteredPositionSweep, Sweep
+        from east_smooth_motion import BANDWIDTH, PERIOD_S, FilteredPositionSweep, Sweep, runnable_study_conditions
 
         parameters = self.run_parameters
         if (parameters.test_type != 'empty_machine_baseline'
-                or (parameters.min_angle_deg, parameters.max_angle_deg,
-                    parameters.commanded_afo_speed_deg_s,
-                    parameters.commanded_afo_acceleration_deg_s2, parameters.cycles)
-                != (10., 10., 5., 100., 3)):
+                or (parameters.min_angle_deg, parameters.max_angle_deg, parameters.cycles) != (10., 10., 3)
+                or (parameters.commanded_afo_speed_deg_s, parameters.commanded_afo_acceleration_deg_s2)
+                not in runnable_study_conditions(self.system_config["motion"])):
             raise RuntimeError('Smoothed motion requires the fixed empty-fixture pair')
         returning = phase == 'returning_to_machine_zero'
         start = {'moving_to_initial_max': 0., 'moving_to_min': 10.,
                  'moving_to_max': -10., 'returning_to_machine_zero': 10.}[phase]
-        sweep = Sweep.plan(start, target, 5. if speed is None else speed,
-                           100. if acceleration is None else acceleration)
+        speed = parameters.commanded_afo_speed_deg_s if speed is None else speed
+        acceleration = parameters.commanded_afo_acceleration_deg_s2 if acceleration is None else acceleration
+        sweep = Sweep.plan(start, target, speed, acceleration)
         self.motion_phase = phase
         snapshot, _ = self.check_rotary_acquisition(token)
         self._write_runtime_checkpoint(MotionState.MOVING, snapshot, clean_shutdown=False,
@@ -4039,7 +4039,7 @@ class MyInterface(OperatorView):
             previous = time.monotonic()
         target_turns = row['target_motor_turns']
         self.command_position_and_wait(target_turns, phase, token, sweep.peak,
-                                       100. if acceleration is None else acceleration, distance_deg=.5)
+                                       acceleration, distance_deg=.5)
         return target_turns
 
     def command_test_angle(self, angle_deg, legacy_target, phase, token, speed_deg_s=None, acceleration_deg_s2=None):
