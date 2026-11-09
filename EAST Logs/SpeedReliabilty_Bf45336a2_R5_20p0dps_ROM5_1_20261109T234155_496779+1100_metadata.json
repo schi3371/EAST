@@ -1,0 +1,1085 @@
+{
+  "achieved_average_sample_rate_hz": 76.78308345617356,
+  "acquisition_overruns": 580,
+  "automatic_zero_return": {
+    "attempts": [
+      {
+        "centring_mean_limit_deg": 0.04,
+        "corrections": [
+          {
+            "after_deg": 0.45103726718629567,
+            "before_deg": 0.9749124503301712,
+            "nominal_step_deg": -0.4874562251650856
+          },
+          {
+            "after_deg": 0.18593957820011475,
+            "before_deg": 0.45103726718629567,
+            "nominal_step_deg": -0.22551863359314783
+          },
+          {
+            "after_deg": 0.09761924949279949,
+            "before_deg": 0.18593957820011475,
+            "nominal_step_deg": -0.09296978910005738
+          },
+          {
+            "after_deg": 0.008363585398610596,
+            "before_deg": 0.09761924949279949,
+            "nominal_step_deg": -0.04880962474639974
+          }
+        ],
+        "final_observation": {
+          "completed_at_monotonic_s": 648243.328,
+          "duration_s": 0.5,
+          "max_deg": 0.025029000742392782,
+          "mean_deg": 0.008363585398610596,
+          "min_deg": -0.011151005431344174,
+          "motor_final_turns": 0.020954012870788574,
+          "motor_max_turns": 0.020954012870788574,
+          "motor_min_turns": 0.02063053846359253,
+          "observation_elapsed_s": 0.5,
+          "samples": 32,
+          "settle_grace_s": 0.0,
+          "stationary_resets": 0
+        },
+        "nominal_travel_deg": 0.8547542726046905,
+        "outcome": "sensor_zero_reached",
+        "policy": {
+          "dwell_s": 0.5,
+          "maximum_corrections": 80,
+          "maximum_step_deg": 0.5,
+          "maximum_travel_deg": 20.0,
+          "timeout_s": 120.0,
+          "tolerance_deg": 0.1
+        },
+        "zero_reference_written": false
+      }
+    ],
+    "coarse_policy": {
+      "acceleration_deg_s2": 5.0,
+      "fraction": 0.5,
+      "maximum_step_deg": 4.0,
+      "speed_deg_s": 2.0,
+      "threshold_deg": 1.0
+    },
+    "correction_count": 6,
+    "corrections": [
+      {
+        "after_deg": 2.4024172064190736,
+        "before_deg": 4.9780718459279,
+        "nominal_step_deg": -2.485044816032905,
+        "phase": "zero_return_coarse",
+        "settled_after_deg": 2.395192511436261,
+        "target_motor_turns": 1.0240088168065244
+      },
+      {
+        "after_deg": 0.9725833624327436,
+        "before_deg": 2.3933722048756465,
+        "nominal_step_deg": -1.1975962557181306,
+        "phase": "zero_return_coarse",
+        "settled_after_deg": 0.9723120123864302,
+        "target_motor_turns": 0.44036054283527537
+      },
+      {
+        "after_deg": 0.4476114728517189,
+        "before_deg": 0.9780103633587771,
+        "nominal_step_deg": -0.4874562251650856,
+        "phase": "zero_return_correction",
+        "target_motor_turns": 0.2005782655225393
+      },
+      {
+        "after_deg": 0.1972458301294182,
+        "before_deg": 0.4353102707526375,
+        "nominal_step_deg": -0.22551863359314783,
+        "phase": "zero_return_correction",
+        "target_motor_turns": 0.09106471336041352
+      },
+      {
+        "after_deg": 0.10390141420114674,
+        "before_deg": 0.18856262864773043,
+        "nominal_step_deg": -0.09296978910005738,
+        "phase": "zero_return_correction",
+        "target_motor_turns": 0.04520146695349025
+      },
+      {
+        "after_deg": 0.01851659963111274,
+        "before_deg": 0.09015301185513636,
+        "nominal_step_deg": -0.04880962474639974,
+        "phase": "zero_return_correction",
+        "target_motor_turns": 0.021536384120495255
+      }
+    ],
+    "final_observation": {
+      "completed_at_monotonic_s": 648244.359,
+      "duration_s": 0.5,
+      "max_deg": 0.022858200371956627,
+      "mean_deg": 0.0127391048952461,
+      "method": "direct_rotary_feedback",
+      "min_deg": -0.0050004043818034916,
+      "motor_final_turns": 0.020747244358062744,
+      "motor_max_turns": 0.020752251148223877,
+      "motor_min_turns": 0.020739734172821045,
+      "nominal_motor_target_turns": 0.02081078290939331,
+      "observation_elapsed_s": 1.0,
+      "passed": true,
+      "phase": "post_idle_stationary_window",
+      "samples": 32,
+      "settle_grace_s": 0.5,
+      "stationary_resets": 0,
+      "tolerance_deg": 0.1,
+      "window_policy": "rolling_after_settling_grace"
+    },
+    "idle_confirmed": true,
+    "method": "direct_rotary_feedback",
+    "nominal_travel_deg": 4.537395344355726,
+    "policy": {
+      "dwell_s": 0.5,
+      "maximum_corrections": 80,
+      "maximum_step_deg": 0.5,
+      "maximum_travel_deg": 20.0,
+      "timeout_s": 120.0,
+      "tolerance_deg": 0.1
+    },
+    "reference_changed": false,
+    "status": "completed",
+    "tare_changed": false,
+    "target_angle_deg": 0.0,
+    "tolerance_deg": 0.1
+  },
+  "baseline_matching": {
+    "acceleration_deg_s2": 100.0,
+    "automatic_subtraction_applied": false,
+    "calibration_id": "1",
+    "correction_equation": "AFO torque = loaded-machine torque - matched empty-machine torque",
+    "fixture_id": "1",
+    "machine_zero_reference_generation": 331,
+    "machine_zero_reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+    "maximum_angle_deg": 5.0,
+    "minimum_angle_deg": 5.0,
+    "movement_direction_source": "Match increasing_machine_angle and decreasing_machine_angle CSV rows separately.",
+    "purpose": "Preserves the dimensions required to pair loaded-machine and unloaded empty-machine torque-angle sweeps during later analysis.",
+    "session_mapping_verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:c3ce3b65ecdd4d76bb168d00df28dfaf",
+    "session_mapping_verified_at": "2026-11-09T23:34:50.819+11:00",
+    "speed_deg_s": 20.0,
+    "tare_captured_at": "2026-11-09T23:00:17.457+11:00",
+    "tare_phidget_channel": 1,
+    "tare_phidget_serial_number": 513296,
+    "test_type": "afo_test",
+    "total_rom_deg": 10.0
+  },
+  "calibration": {
+    "calibration_id": "1",
+    "calibration_status": "provisional; calibration certificate and direction must be verified",
+    "empty_machine_tare": {
+      "calibration_id": "1",
+      "captured_at": "2026-11-09T23:00:17.457+11:00",
+      "fixture_id": "1",
+      "offset_v_per_v": -7.1589020624999996e-06,
+      "operator_id": "SC",
+      "phidget_channel": 1,
+      "phidget_serial_number": 513296,
+      "sample_count": 16
+    },
+    "force_angle_polynomial_deg": [
+      -0.0328,
+      -1.0013,
+      90.272
+    ],
+    "geometry_status": "provisional; verify dimensions and polynomial experimentally",
+    "lever_arm_m": 0.4792,
+    "mass_kg_per_voltage_ratio": 25014.7939492599,
+    "standard_gravity_m_s2": 9.80665,
+    "tare_offset_v_per_v": -7.1589020624999996e-06,
+    "tare_samples": 16
+  },
+  "completed_at": "2026-11-09T23:42:19.109+11:00",
+  "completed_cycles": 5,
+  "csv_file": "SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5_1_20261109T234155_496779+1100_strain_data.csv",
+  "csv_recorder": {
+    "error": null,
+    "pending_rows": 0,
+    "rows_persisted": 1772,
+    "worker_complete": true
+  },
+  "cycle_definition": "Cycle 0: startup to positive endpoint. Each numbered cycle: positive to negative to positive endpoint, with both sweeps settled. Final machine-zero return is excluded from analysis sweeps.",
+  "duration_s": 23.07799999997951,
+  "engine_evidence": {
+    "fault": {
+      "reason": "Feedback monitor failure: Expected value of type RemoteObject or None but got 'EmptyInterface'. An example for a RemoteObject is this expression: odrv0.axis0.controller._input_pos_property"
+    },
+    "feedback_health": {
+      "connection_generation": 2,
+      "healthy": true,
+      "position_at": 648244.406,
+      "recorded_at": 648244.406
+    },
+    "feedback_latest": {
+      "connection_generation": 2,
+      "position_at": 648244.406,
+      "recorded_at": 648244.406
+    },
+    "feedback_recovery": {
+      "connection_generation": 2,
+      "position_at": 647789.875,
+      "validated": true
+    },
+    "idle": {
+      "active_errors": 0,
+      "connection_generation": 2,
+      "observed_at": "2026-11-09T23:42:19.049+11:00",
+      "observed_monotonic_s": 648244.359,
+      "state": 1
+    },
+    "persistence_health": {
+      "healthy": true,
+      "operation": "idle checkpoint"
+    },
+    "reference_continuity": {
+      "proven": false,
+      "reason": "Monitoring recovered; coordinate continuity not proven. Verify physical machine zero."
+    },
+    "rotary_health": {
+      "age_s": 0.0,
+      "rate_hz": 125.55391432791728,
+      "reason": "Ready",
+      "valid": true
+    },
+    "rotary_zero": {
+      "calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+      "final_angle_deg": 0.0029591969764055648,
+      "reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+      "verified": true
+    },
+    "tare": {
+      "identity": {
+        "calibration_id": "1",
+        "captured_at": "2026-11-09T23:00:17.457+11:00",
+        "fixture_id": "1",
+        "offset_v_per_v": -7.1589020624999996e-06,
+        "operator_id": "SC",
+        "phidget_channel": 1,
+        "phidget_serial_number": 513296,
+        "sample_count": 16
+      },
+      "valid": true
+    }
+  },
+  "error": null,
+  "experimental_motion_model": {
+    "anchor_motor_turns": 2.1394035816192627,
+    "anchor_rotary_angle_deg": 4.786317813207063,
+    "b": [
+      -0.1427128197,
+      2.3654951387,
+      0.0010129331,
+      -0.0058765584
+    ],
+    "c": [
+      -0.1461277652,
+      -0.0002424609,
+      -0.0006208927,
+      6.1889e-06
+    ],
+    "control": "inverse-cubic feed-forward targets, not continuous rotary feedback",
+    "enabled": true,
+    "extrapolation_allowed": true,
+    "fit_nominal_speeds_deg_s": [
+      0.5,
+      5.0
+    ],
+    "fitted_motor_range_turns": [
+      -4.38,
+      4.38
+    ],
+    "initial_alignment": {
+      "anchor_motor_turns": -0.0020675063133239746,
+      "anchor_rotary_angle_deg": 0.00476819728510236,
+      "origin_turns": -0.12620391390465596
+    },
+    "inverse_bracket_turns": [
+      -8.0,
+      8.0
+    ],
+    "model_id": "direction-cubic-20261102-v1",
+    "numbered_cycle_origin_locked_after_initial_positioning": true,
+    "origin_turns": -0.030902581714049582,
+    "reversals": "branch selected from planned destination direction; transient behaviour unvalidated",
+    "rotary_calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+    "segments": [
+      {
+        "cycle": 0,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648221.468,
+        "motor_acceleration_turns_s2": 42.83831908543462,
+        "motor_feedback_at_monotonic_s": 648221.453,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.567663817086924,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_initial_max",
+        "rotary_sample_age_s": 0.0,
+        "start_motor_turns": -0.0020675063133239746,
+        "start_rotary_angle_deg": 0.00476819728510236,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.1378058323907916,
+        "turns_per_degree_secant": 0.4283831908543462
+      },
+      {
+        "cycle": 1,
+        "direction": -1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648222.312,
+        "motor_acceleration_turns_s2": 44.070548444110614,
+        "motor_feedback_at_monotonic_s": 648222.296,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.814109688822123,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_min",
+        "rotary_sample_age_s": 0.01600000006146729,
+        "start_motor_turns": 2.1394035816192627,
+        "start_rotary_angle_deg": 4.786317813207063,
+        "target_angle_deg": -5.0,
+        "target_motor_turns": -2.173480351144782,
+        "turns_per_degree_secant": 0.44070548444110613
+      },
+      {
+        "cycle": 1,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648223.375,
+        "motor_acceleration_turns_s2": 43.78785999923866,
+        "motor_feedback_at_monotonic_s": 648223.343,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.757571999847732,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_max",
+        "rotary_sample_age_s": 0.0,
+        "start_motor_turns": -2.1738836765289307,
+        "start_rotary_angle_deg": -5.064412467718114,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.233107164581398,
+        "turns_per_degree_secant": 0.4378785999923866
+      },
+      {
+        "cycle": 2,
+        "direction": -1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648224.437,
+        "motor_acceleration_turns_s2": 44.23274611728836,
+        "motor_feedback_at_monotonic_s": 648224.421,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.846549223457671,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_min",
+        "rotary_sample_age_s": 0.01600000006146729,
+        "start_motor_turns": 2.2333734035491943,
+        "start_rotary_angle_deg": 4.962876243334932,
+        "target_angle_deg": -5.0,
+        "target_motor_turns": -2.173480351144782,
+        "turns_per_degree_secant": 0.4423274611728836
+      },
+      {
+        "cycle": 2,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648225.531,
+        "motor_acceleration_turns_s2": 43.86469607970515,
+        "motor_feedback_at_monotonic_s": 648225.515,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.77293921594103,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_max",
+        "rotary_sample_age_s": 0.015999999945051968,
+        "start_motor_turns": -2.17352294921875,
+        "start_rotary_angle_deg": -5.04596066456952,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.233107164581398,
+        "turns_per_degree_secant": 0.4386469607970515
+      },
+      {
+        "cycle": 3,
+        "direction": -1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648226.593,
+        "motor_acceleration_turns_s2": 44.24889399498698,
+        "motor_feedback_at_monotonic_s": 648226.578,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.849778798997397,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_min",
+        "rotary_sample_age_s": 0.0,
+        "start_motor_turns": 2.2333812713623047,
+        "start_rotary_angle_deg": 4.959258242717539,
+        "target_angle_deg": -5.0,
+        "target_motor_turns": -2.173480351144782,
+        "turns_per_degree_secant": 0.4424889399498698
+      },
+      {
+        "cycle": 3,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648227.656,
+        "motor_acceleration_turns_s2": 43.834703454996394,
+        "motor_feedback_at_monotonic_s": 648227.64,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.766940690999279,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_max",
+        "rotary_sample_age_s": 0.015999999945051968,
+        "start_motor_turns": -2.173523187637329,
+        "start_rotary_angle_deg": -5.05283486574254,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.233107164581398,
+        "turns_per_degree_secant": 0.43834703454996393
+      },
+      {
+        "cycle": 4,
+        "direction": -1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648228.718,
+        "motor_acceleration_turns_s2": 44.205030089464096,
+        "motor_feedback_at_monotonic_s": 648228.703,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.841006017892818,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_min",
+        "rotary_sample_age_s": 0.015000000013969839,
+        "start_motor_turns": 2.2333309650421143,
+        "start_rotary_angle_deg": 4.9690268443844445,
+        "target_angle_deg": -5.0,
+        "target_motor_turns": -2.173480351144782,
+        "turns_per_degree_secant": 0.4420503008946409
+      },
+      {
+        "cycle": 4,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648229.781,
+        "motor_acceleration_turns_s2": 43.82778451730493,
+        "motor_feedback_at_monotonic_s": 648229.765,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.765556903460984,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_max",
+        "rotary_sample_age_s": 0.015999999945051968,
+        "start_motor_turns": -2.1734619140625,
+        "start_rotary_angle_deg": -5.054282065989469,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.233107164581398,
+        "turns_per_degree_secant": 0.43827784517304924
+      },
+      {
+        "cycle": 5,
+        "direction": -1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648230.859,
+        "motor_acceleration_turns_s2": 44.24845351018896,
+        "motor_feedback_at_monotonic_s": 648230.843,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.849690702037792,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_min",
+        "rotary_sample_age_s": 0.0,
+        "start_motor_turns": 2.23333740234375,
+        "start_rotary_angle_deg": 4.959258242717539,
+        "target_angle_deg": -5.0,
+        "target_motor_turns": -2.173480351144782,
+        "turns_per_degree_secant": 0.4424845351018896
+      },
+      {
+        "cycle": 5,
+        "direction": 1,
+        "extrapolated": false,
+        "issued_at_monotonic_s": 648231.937,
+        "motor_acceleration_turns_s2": 43.87673247586673,
+        "motor_feedback_at_monotonic_s": 648231.906,
+        "motor_rate_capped": false,
+        "motor_velocity_turns_s": 8.775346495173347,
+        "nominal_acceleration_deg_s2": 100.0,
+        "nominal_speed_deg_s": 20.0,
+        "outside_training_speed_range": true,
+        "phase": "moving_to_max",
+        "rotary_sample_age_s": 0.03100000007543713,
+        "start_motor_turns": -2.173462152481079,
+        "start_rotary_angle_deg": -5.043066264075605,
+        "target_angle_deg": 5.0,
+        "target_motor_turns": 2.233107164581398,
+        "turns_per_degree_secant": 0.4387673247586673
+      }
+    ],
+    "speed_method": "secant average conversion per segment; instantaneous angular speed is not constant",
+    "status": "experimental_not_prospectively_validated",
+    "target_limit_deg": 15.0,
+    "zero_alignment": "provisional zero anchor, refined once after initial increasing positioning; fixed during numbered cycles"
+  },
+  "gui_timing": {
+    "drains": 34167,
+    "maximum_drain_s": 0.3279999999795109,
+    "maximum_gap_s": 0.8120000000344589
+  },
+  "hardware": {
+    "connected_phidget_serial_number": 513296,
+    "odrive_axis": 0,
+    "odrive_connection_timeout_s": 5.0,
+    "odrive_serial_number": "3943355F3231",
+    "phidget_attachment_timeout_ms": 5000,
+    "phidget_channel": 1,
+    "phidget_serial_number": null
+  },
+  "idle_confirmation": {
+    "confirmed": true,
+    "monitor_error": null,
+    "motion_owner": null
+  },
+  "last_idle_observation": {
+    "active_errors": 0,
+    "connection_generation": 2,
+    "observed_at": "2026-11-09T23:42:19.049+11:00",
+    "observed_monotonic_s": 648244.359,
+    "state": 1
+  },
+  "machine_zero_reference": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-09T23:34:50.819+11:00",
+      "established_by": "SC",
+      "fixture_id": "1",
+      "generation": 331,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 5.960464477539063e-08,
+      "reference_generation": 331,
+      "reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:c3ce3b65ecdd4d76bb168d00df28dfaf",
+      "verified_at": "2026-11-09T23:34:50.819+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "machine_zero_reference_final": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-09T23:34:50.819+11:00",
+      "established_by": "SC",
+      "fixture_id": "1",
+      "generation": 331,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 5.960464477539063e-08,
+      "reference_generation": 331,
+      "reference_id": "239e4816-6c27-4506-ba65-d767157e7133",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:c3ce3b65ecdd4d76bb168d00df28dfaf",
+      "verified_at": "2026-11-09T23:34:50.819+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "maximum_acquisition_lateness_s": 0.022999999928288162,
+  "motion_conversion": {
+    "afo_degrees_per_odrive_turn": 2.055,
+    "controller_velocity_safety_multiplier": 1.25,
+    "conversion_status": "legacy manual/identification conversion; normal tests use optional experimental model",
+    "experimental_model": {
+      "enabled": true,
+      "model_id": "direction-cubic-20261102-v1",
+      "status": "experimental; rotary-anchored inverse targets, not prospective validation or continuous angle control"
+    },
+    "manual_acceleration_deg_s2": 10.0,
+    "manual_continuous_increment_deg": 0.2,
+    "manual_speed_deg_s": 5.0,
+    "manual_update_interval_ms": 50,
+    "maximum_acceleration_deg_s2": 100.0,
+    "maximum_afo_angle_deg": 15.0,
+    "maximum_cycles": 100,
+    "maximum_motion_timeout_s": 70.0,
+    "maximum_speed_deg_s": 20.0,
+    "minimum_acceleration_deg_s2": 0.1,
+    "minimum_constant_speed_span_deg": 5.0,
+    "minimum_speed_deg_s": 0.1,
+    "motion_timeout_margin_s": 5.0,
+    "neutral_return_acceleration_deg_s2": 5.0,
+    "neutral_return_speed_deg_s": 2.0,
+    "position_tolerance_deg": 0.05
+  },
+  "motion_method": "Updated cubic (experimental)",
+  "motor_feedback_connection_statistics": {
+    "achieved_rate_hz": 50.4175055282368,
+    "comparison_rejected_bundle_count": 0,
+    "comparison_rejected_bundles": [],
+    "error": null,
+    "maximum_gap_s": 0.15600000007543713,
+    "rejected_history_truncated": false,
+    "samples": 22915,
+    "scope": "connection_lifetime",
+    "timestamp_basis": "host position-read completion; original times preserved"
+  },
+  "motor_feedback_statistics": {
+    "achieved_rate_hz": 46.92387904077939,
+    "comparison_rejected_bundle_count": 0,
+    "comparison_rejected_bundles": [],
+    "ended_at_monotonic_s": 648244.421,
+    "error": null,
+    "maximum_gap_s": 0.0940000000409782,
+    "rejected_history_truncated": false,
+    "samples": 1081,
+    "scope": "run_window",
+    "started_at_monotonic_s": 648221.343,
+    "timestamp_basis": "host position-read completion; original times preserved"
+  },
+  "motor_timing_provenance": {
+    "brackets": "host monotonic seconds; not hardware synchronisation",
+    "capture_duration": "transport queue wait plus IO lock wait and all requested property reads",
+    "limits": "150 ms capture and 250 ms position freshness; one bounded late-bundle retry in eligible tests",
+    "position_timestamp": "host completion of position remote read, not end of the multi-property bundle",
+    "uptime": "omitted during powered monitor captures; read during idle/identity/recovery diagnostics"
+  },
+  "move_distance_definition": "Nominal Move Distance (deg) stores absolute target minus validated pre-command feedback position, converted to AFO degrees.",
+  "odrive_active_configuration": {
+    "capabilities": {
+      "pos_abs": null,
+      "pos_abs_available": true,
+      "raw_phase_available": false,
+      "watchdog_feed_available": true
+    },
+    "controller": {
+      "control_mode": 3,
+      "input_mode": 5,
+      "velocity_limit_turns_s": 12.165450096130371
+    },
+    "fingerprint": {
+      "axis": 0,
+      "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+      "details": {
+        "absolute_setpoints": false,
+        "circular_setpoint_range": 1.0,
+        "circular_setpoints": false,
+        "commutation_encoder": 10,
+        "commutation_mapper_offset_valid": true,
+        "commutation_mapper_scale": 7.0,
+        "load_encoder": 10,
+        "motor_type": 0,
+        "pos_vel_mapper_offset_valid": false,
+        "pos_vel_mapper_scale": 1.0,
+        "rs485_encoder_protocol_mode": 2
+      },
+      "firmware": "0.6.8",
+      "odrive_serial": "62960821023281"
+    },
+    "health": {
+      "pos_vel_mapper_active_errors": null,
+      "pos_vel_mapper_status": 9,
+      "rs485_encoder_active_errors": null,
+      "rs485_encoder_status": 0
+    },
+    "snapshot": {
+      "active_errors": 0,
+      "capture_duration_s": 0.0,
+      "capture_started_monotonic_s": 648220.796,
+      "captured_at": "2026-11-09T23:41:55.496+11:00",
+      "captured_monotonic_s": 648220.796,
+      "current_state": 1,
+      "disarm_reason": 0,
+      "lock_wait_s": 0.0,
+      "position_finished_monotonic_s": 648220.796,
+      "position_started_monotonic_s": 648220.796,
+      "position_turns": -0.002048015594482422,
+      "property_brackets_monotonic_s": {
+        "active_errors": [
+          648220.796,
+          648220.796
+        ],
+        "current_state": [
+          648220.796,
+          648220.796
+        ],
+        "disarm_reason": [
+          648220.796,
+          648220.796
+        ],
+        "position": [
+          648220.796,
+          648220.796
+        ],
+        "uptime": [
+          648220.796,
+          648220.796
+        ],
+        "velocity": [
+          648220.796,
+          648220.796
+        ]
+      },
+      "raw_phase": null,
+      "system_uptime": 455185.0,
+      "transport_queue_wait_s": 0.0,
+      "velocity_finished_monotonic_s": 648220.796,
+      "velocity_started_monotonic_s": 648220.796,
+      "velocity_turns_s": -0.0027959062717854977
+    },
+    "trajectory": {
+      "acceleration_limit_turns_s2": 48.661800384521484,
+      "deceleration_limit_turns_s2": 48.661800384521484,
+      "velocity_limit_turns_s": 9.732359886169434
+    },
+    "watchdog": {
+      "enabled": false,
+      "timeout_s": 0.0
+    }
+  },
+  "odrive_final_configuration_error": "Live diagnostic omitted during finalization to avoid blocking run outcome",
+  "outcome_pending_cleanup": false,
+  "plot_angle_source": "Measured Fixture Angle from calibrated rotary sensor",
+  "protocol": {
+    "actual_commanded_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 5,
+      "maximum_angle_deg": 5.0,
+      "minimum_angle_deg": 5.0,
+      "speed_deg_s": 20.0
+    },
+    "execution_kind": "speed_sequence",
+    "loaded_at": "2026-11-09T23:00:06.905+11:00",
+    "original_preset_values": {
+      "acceleration_deg_s2": 100.0,
+      "cycles": 5,
+      "maximum_angle_deg": 5.0,
+      "minimum_angle_deg": 5.0,
+      "speeds_deg_s": [
+        0.5,
+        1.0,
+        5.0,
+        10.0,
+        20.0
+      ]
+    },
+    "planned_half_ranges_deg": [
+      5.0,
+      10.0,
+      15.0
+    ],
+    "planned_speed_sequence_deg_s": [
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0,
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0,
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0
+    ],
+    "preset_display_name": "Five-Speed AFO Study",
+    "preset_key": "fitted_speed_screen",
+    "preset_modified": false,
+    "preset_version": "1.2",
+    "settings_status": "provisional_not_scientifically_validated",
+    "study_mode": "fitted_speed_screen",
+    "test_type": "afo_test"
+  },
+  "protocol_batch": {
+    "additional_inter_run_rest_s": 0.0,
+    "automatic_baseline_correction": false,
+    "baseline_batch_id": null,
+    "baseline_link_status": "not_linked",
+    "batch_id": "f45336a2af8a4fe5a9d85b6b29f99e7d",
+    "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\three_speed_f45336a2af8a4fe5a9d85b6b29f99e7d.json",
+    "command_model_enabled": null,
+    "endpoint_feedback_is_not_feedforward_validation": false,
+    "feedback_pilot": false,
+    "independent_remount_trials": false,
+    "model_variant": "current",
+    "mounting_setup_id": "mount_c0e52b734458",
+    "planned_speed_deg_s": 20.0,
+    "planned_speed_sequence_deg_s": [
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0,
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0,
+      0.5,
+      1.0,
+      5.0,
+      10.0,
+      20.0
+    ],
+    "protocol_key": "fitted_speed_screen",
+    "protocol_version": "1.2",
+    "purpose": "three_speed_afo_testing",
+    "repeat": 0,
+    "rotary_targeted": false,
+    "run_id": "R5_20p0dps_ROM5",
+    "run_index": 5,
+    "same_mounting_across_speed_conditions": true,
+    "settings_status": "provisional_not_scientifically_validated",
+    "stage": "",
+    "stationary_holds": false,
+    "total_runs": 15
+  },
+  "protocol_batch_files": {
+    "batch_manifest": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\three_speed_f45336a2af8a4fe5a9d85b6b29f99e7d.json",
+    "metadata_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5_1_20261109T234155_496779+1100_metadata.json",
+    "rotary_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5_1_20261109T234155_496779+1100_rotary_samples.csv",
+    "strain_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5_1_20261109T234155_496779+1100_strain_data.csv"
+  },
+  "rotary_sensor": {
+    "angle_use": "Calibrated angle anchors experimental feed-forward targets, supplies fixture angle for torque and plots, and checks zero return; motor-derived columns are diagnostics",
+    "calibration": {
+      "motor_control_changed": false,
+      "profile": {
+        "accepted_on": "2026-10-14",
+        "calibration_id": "P3022_RATIO_20261014_V1",
+        "channel": 0,
+        "checked_angle_range_deg": [
+          -15.33,
+          15.4
+        ],
+        "fit_angle_range_deg": [
+          -5.7,
+          15.4
+        ],
+        "fit_max_abs_error_deg": 0.10805882011706025,
+        "fit_method": "OLS on equal-weight means of first 12 positions (36 captures); sensor-derived extensions excluded",
+        "fit_r_squared": 0.9999028472198792,
+        "fit_rmse_deg": 0.06436985602580216,
+        "hub_port": 0,
+        "hub_serial": 750256,
+        "input_mode": "Voltage ratio",
+        "intercept_deg": -143.89867375834794,
+        "motor_conversion_changed": false,
+        "mounting_reference": "Existing EAST fixture-shaft coupling at physical 90 degrees; operator confirmed unchanged 2026-10-14",
+        "original_export_sha256": "756458fa13cf215af9afae19db6de589016fe455ce45be55be9a8c6d124539e4",
+        "reference_instrument": "WOLF WDAM425 digital angle measure",
+        "schema_version": 1,
+        "sensor_label_serial": "20211220116",
+        "sensor_model": "P3022-V1-CW360",
+        "sign_convention": "Dorsiflexion positive; plantarflexion negative; physical 90 degrees is zero",
+        "slope_deg_per_ratio": 361.80006173743607,
+        "source_data": "analysis/rotary_sensor_calibration/calibration_results.csv",
+        "source_data_sha256": "7c36281ccc4f5d25c49697ca5234c8a84313477c7f9b1b8d489c7db7d8c8f18c",
+        "status": "accepted_for_measurement",
+        "validation": {
+          "basis": "Operator reported independent remeasurement agreed with six negative sensor-derived estimates",
+          "dynamic_validation": "pending Windows hardware bench test",
+          "quantified_validation_error_deg": null,
+          "raw_remeasurement_values_supplied": false
+        }
+      },
+      "profile_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+      "range_margin_deg": 0.25
+    },
+    "connection": {
+      "change_trigger": 0.0,
+      "channel": 0,
+      "channel_sku": "VOLTAGERATIOINPUT_PORT",
+      "connection_id": "c3ce3b65ecdd4d76bb168d00df28dfaf",
+      "host_clock": "GetTickCount64()",
+      "host_clock_resolution_s": 0.015625,
+      "hub_port": 0,
+      "hub_serial": 750256,
+      "input_mode": "Voltage ratio",
+      "interval_ms": 8,
+      "maximum_interval_ms": 60000,
+      "minimum_interval_ms": 1,
+      "requested_interval_ms": 8,
+      "sku": "HUB0007",
+      "timestamp_basis": "host arrival of Phidget change event; not hardware-synchronised",
+      "timestamp_tie_count": 157106,
+      "timestamp_units": "integer host monotonic nanoseconds plus seconds for joining"
+    },
+    "join_method": "Latest delivered sample at load-cell read; age and sequence recorded; no interpolation",
+    "profile_error": null,
+    "raw_samples_file": "SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5_1_20261109T234155_496779+1100_rotary_samples.csv",
+    "recording_statistics": {
+      "achieved_event_rate_hz": 124.96200772871347,
+      "delivered_samples": 2879,
+      "extrapolated_samples": 0,
+      "extrapolation_accuracy": "not independently checked beyond calibration range",
+      "invalid_samples": 0,
+      "linear_extrapolation_allowed": false,
+      "maximum_inter_sample_gap_s": 0.032,
+      "recording_error": null,
+      "tied_timestamp_events": 1436
+    },
+    "required_for_normal_tests": true
+  },
+  "rotary_targeted_acquisition": {
+    "bulk_fraction": 0.8,
+    "enabled": false,
+    "endpoint_accuracy_not_independent_model_validation": false,
+    "endpoint_records": [],
+    "fine_speed_deg_s": 1.0,
+    "holds": [],
+    "stationary_holds": false
+  },
+  "rotary_zero_reference": {
+    "angle_at_initialization_deg": 0.00838619790246753,
+    "calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+    "method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:c3ce3b65ecdd4d76bb168d00df28dfaf",
+    "tolerance_deg": 0.1
+  },
+  "run_status": "completed",
+  "sample_count": 1772,
+  "schema_version": 4,
+  "software": {
+    "commit": "c4528c754f92c414b761d69686f829e57ec297ca",
+    "gui_version": "1.17.0-reliability-audit",
+    "version": "1.17.0-reliability-audit",
+    "working_tree_dirty": true
+  },
+  "started_at": "2026-11-09T23:41:55.528+11:00",
+  "test_parameter_status": "operator-entered commanded values; not independent physical measurements",
+  "test_parameters": {
+    "afo_id": "1",
+    "calibration_id": "1",
+    "commanded_afo_acceleration_deg_s2": 100.0,
+    "commanded_afo_speed_deg_s": 20.0,
+    "cycles": 5,
+    "file_prefix": "SpeedReliabilty_Bf45336a2_R5_20p0dps_ROM5",
+    "fixture_id": "1",
+    "max_angle_deg": 5.0,
+    "min_angle_deg": 5.0,
+    "operator": "SC",
+    "test_type": "afo_test"
+  },
+  "torque_angle_source": "Calibrated rotary fixture angle; inherited force-angle geometry coefficients",
+  "zero_return_check": {
+    "completed_at_monotonic_s": 648244.359,
+    "duration_s": 0.5,
+    "max_deg": 0.022858200371956627,
+    "mean_deg": 0.0127391048952461,
+    "method": "direct_rotary_feedback",
+    "min_deg": -0.0050004043818034916,
+    "motor_final_turns": 0.020747244358062744,
+    "motor_max_turns": 0.020752251148223877,
+    "motor_min_turns": 0.020739734172821045,
+    "nominal_motor_target_turns": 0.02081078290939331,
+    "observation_elapsed_s": 1.0,
+    "passed": true,
+    "phase": "post_idle_stationary_window",
+    "samples": 32,
+    "settle_grace_s": 0.5,
+    "stationary_resets": 0,
+    "tolerance_deg": 0.1,
+    "window_policy": "rolling_after_settling_grace"
+  }
+}
