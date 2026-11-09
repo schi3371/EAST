@@ -97,6 +97,27 @@ class ODriveAdapterTests(unittest.TestCase):
         self.assertEqual(self.device.axis0.controller.input_pos, 4.5)
         self.assertEqual(self.device.axis0.current_state, 8)
 
+    def test_restore_native_mode_in_idle_with_motion_admission_closed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from east_execution import TransportOwner
+
+        axis = self.device.axis0
+        axis.controller.config.input_mode = 3
+        owner = TransportOwner(1, motion_allowed=lambda: False)
+        self.adapter.transport = owner
+        try:
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                worker.submit(self.adapter.restore_native_input_mode, 5).result(2)
+                self.assertEqual(axis.controller.config.input_mode, 5)
+                self.assertEqual(axis.controller.input_pos, -999.)
+                self.assertEqual(axis.request_count, 0)
+                axis.current_state = 8
+                with self.assertRaisesRegex(RuntimeError, "fault-free idle"):
+                    worker.submit(self.adapter.restore_native_input_mode, 3).result(2)
+                self.assertEqual(axis.controller.config.input_mode, 5)
+        finally:
+            self.assertTrue(owner.close(1))
+
     def test_pre_cancelled_worker_never_arms(self):
         with self.assertRaises(RuntimeError):
             self.adapter.enter_closed_loop_holding_current(cancelled=lambda: True)

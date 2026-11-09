@@ -337,6 +337,14 @@ class ODriveAdapter:
             self.axis.trap_traj.config.decel_limit = acceleration
             self.axis.controller.config.vel_limit = controller_limit
 
+    @transported(priority=5)
+    def restore_native_input_mode(self, input_mode: int) -> None:
+        """Restore the configured native mode after idle, without commanding motion."""
+        with self._locked_io():
+            if int(self.axis.current_state) != self.idle_state or int(self.axis.active_errors):
+                raise RuntimeError("Native input mode can only be restored in fault-free idle")
+            self.axis.controller.config.input_mode = int(input_mode)
+
     @transported(motion=True, priority=5)
     def command_position(self, target_turns: float, cancelled=lambda: False) -> None:
         target = _finite_float(target_turns, "target position")

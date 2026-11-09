@@ -3726,9 +3726,7 @@ class MyInterface(OperatorView):
                     idle_confirmed = True
             if idle_confirmed and smooth_pair:
                 try:
-                    motion = self.system_config["motion"]
-                    self.configure_trajectory(motion["neutral_return_speed_deg_s"],
-                                              motion["neutral_return_acceleration_deg_s2"])
+                    self.odrive_adapter.restore_native_input_mode(INPUT_MODE_TRAP_TRAJ)
                 except Exception as exc:
                     candidate_completed = False
                     final_status = "error"
