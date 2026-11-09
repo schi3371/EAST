@@ -128,15 +128,21 @@ class FilteredPositionSweep:
         error = None
         if self.feedback:
             if (measured is None or sample_time is None or not math.isfinite(measured)
-                    or not math.isfinite(sample_time) or not 0 <= elapsed - sample_time <= self.MAX_SAMPLE_AGE_S
-                    or (self.previous_sample is not None and sample_time <= self.previous_sample)):
-                raise ValueError("Rotary sample is stale, invalid, or out of order")
-            error = self.sweep.at(sample_time)[0] - measured
-            if filtered_error is None:
-                filtered_error = error
-            else:
-                weight = -math.expm1(-(sample_time - self.previous_sample) / self.FILTER_TAU_S)
-                filtered_error += weight * (error - filtered_error)
+                    or not math.isfinite(sample_time)):
+                raise ValueError("Rotary sample is invalid")
+            if not 0 <= elapsed - sample_time <= self.MAX_SAMPLE_AGE_S:
+                raise ValueError("Rotary sample is stale or dated in the future")
+            if self.previous_sample is not None and sample_time < self.previous_sample:
+                raise ValueError("Rotary sample is out of order")
+            # A repeated read or another callback in the same Windows clock tick
+            # has no elapsed sensor time. Retain the last filtered error.
+            if sample_time != self.previous_sample:
+                error = self.sweep.at(sample_time)[0] - measured
+                if filtered_error is None:
+                    filtered_error = error
+                else:
+                    weight = -math.expm1(-(sample_time - self.previous_sample) / self.FILTER_TAU_S)
+                    filtered_error += weight * (error - filtered_error)
             outside_dead_band = math.copysign(max(0., abs(filtered_error) - self.DEAD_BAND_DEG), filtered_error)
             # Restrict trim to the tested travel, with room to slew back to zero.
             cap = min(self.TRIM_CAP_DEG, self.TRIM_RATE_DEG_S * max(0., self.sweep.duration - elapsed))
@@ -167,6 +173,7 @@ class FilteredPositionSweep:
         self.filtered_error, self.trim = filtered_error, trim
         return dict(time_s=elapsed, angle_deg=desired, angular_speed_deg_s=velocity,
                     timestamp_aligned_error_deg=error, filtered_error_deg=filtered_error,
+                    rotary_filter_updated=error is not None,
                     rotary_trim_deg=trim, nominal_motor_turns=nominal,
                     nominal_motor_speed_turns_s=velocity / slope + offset_velocity,
                     target_motor_turns=target)

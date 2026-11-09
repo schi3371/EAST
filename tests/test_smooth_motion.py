@@ -48,10 +48,15 @@ class SmoothMotionTests(unittest.TestCase):
         row = planner.command(.15, measured=delayed_angle, sample_time=.09)
         self.assertEqual(row["timestamp_aligned_error_deg"], 0.)
         self.assertEqual(row["rotary_trim_deg"], 0.)
+        tied = planner.command(.16, measured=delayed_angle + .02, sample_time=.09)
+        self.assertFalse(tied["rotary_filter_updated"])
+        self.assertEqual(tied["filtered_error_deg"], row["filtered_error_deg"])
+        with self.assertRaisesRegex(ValueError, "out of order"):
+            planner.command(.17, measured=delayed_angle, sample_time=.08)
         with self.assertRaisesRegex(ValueError, "stale"):
             planner.command(.25, measured=delayed_angle, sample_time=.09)
-        with self.assertRaisesRegex(ValueError, "out of order"):
-            planner.command(.16, measured=delayed_angle, sample_time=.09)
+        next_row = planner.command(.26, measured=sweep.at(.25)[0], sample_time=.25)
+        self.assertTrue(next_row["rotary_filter_updated"])
 
     def test_trim_stays_bounded_and_returns_to_same_endpoint_at_full_range(self):
         for start, target in ((-15., 15.), (15., -15.)):

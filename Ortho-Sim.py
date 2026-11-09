@@ -4022,25 +4022,36 @@ class MyInterface(OperatorView):
         log['legs'].append(dict(phase=phase, cycle=self.current_cycle,
                                 planned_duration_s=sweep.duration, feedback=planner.feedback))
         origin = rotary['sample'][0]
+        rotary_source = rotary['sample'][4]
         row = planner.command(0., measured=rotary['angle_deg'], sample_time=0.)
         self._submit_position(token, row['target_motor_turns'])
         previous = time.monotonic()
         while True:
             row.update(phase=phase, cycle=self.current_cycle, measured_angle_deg=rotary['angle_deg'],
-                       rotary_sample_host_s=rotary['sample'][0], measured_motor_turns=snapshot.position_turns,
+                       rotary_sample_host_s=rotary['sample'][0], rotary_sequence=rotary['sample'][3],
+                       measured_motor_turns=snapshot.position_turns,
                        command_issued_at_monotonic_s=previous)
             log['samples'].append(row)
             if row['time_s'] >= sweep.duration:
                 break
-            due = origin + (math.floor((previous - origin) / PERIOD_S) + 1) * PERIOD_S
+            grid_due = origin + (math.floor((previous - origin) / PERIOD_S) + 1) * PERIOD_S
+            due = max(grid_due, previous + PERIOD_S / 2)
             if self.test_stop_event.wait(max(0., due - time.monotonic())):
                 raise TestStopped()
             snapshot, rotary = self.check_rotary_acquisition(token)
             now = time.monotonic()
             if now - previous > .15:
                 raise RuntimeError('Smoothed motion command dispatch gap exceeded 150 ms')
-            row = planner.command(now - origin, measured=rotary['angle_deg'],
-                                  sample_time=rotary['sample'][0] - origin)
+            if rotary['sample'][4] != rotary_source:
+                raise RuntimeError('Rotary connection changed during smoothed motion')
+            try:
+                row = planner.command(now - origin, measured=rotary['angle_deg'],
+                                      sample_time=rotary['sample'][0] - origin)
+            except ValueError as exc:
+                log['rejected_command'] = dict(reason=str(exc), phase=phase, cycle=self.current_cycle,
+                    host_monotonic_s=now, rotary_sample_host_s=rotary['sample'][0],
+                    rotary_sequence=rotary['sample'][3], rotary_angle_deg=rotary['angle_deg'])
+                raise
             if abs(row['angle_deg'] - rotary['angle_deg']) > 2.:
                 raise RuntimeError('Smoothed motion tracking error exceeded 2 degrees')
             self._submit_position(token, row['target_motor_turns'])
