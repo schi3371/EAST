@@ -43,7 +43,8 @@ class ProtocolRequest:
             planned_speed_sequence_deg_s=list(self.speed_sequence),protocol_key=self.preset_metadata['preset_key'],
             protocol_version=self.preset_metadata['preset_version'],batch_manifest=self.manifest_path,
             additional_inter_run_rest_s=0.0,baseline_batch_id=self.baseline_batch_id,
-            baseline_link_status='operator_supplied_unverified' if self.baseline_batch_id else 'not_linked',
+            baseline_link_status=('preset_reference' if self.preset_metadata.get('empty_reference_name')
+                                  else 'operator_supplied_unverified' if self.baseline_batch_id else 'not_linked'),
             same_mounting_across_speed_conditions=True,independent_remount_trials=False,
             automatic_baseline_correction=False,settings_status='provisional_not_scientifically_validated',
             command_model_enabled=self.command_model_enabled,rotary_targeted=self.rotary_targeted,
@@ -75,7 +76,8 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         speeds = AFO_RETEST_SPEEDS
         if any(float(settings[key]) != preset[key] for key in
                ('cycles', 'minimum_angle_deg', 'maximum_angle_deg', 'acceleration_deg_s2')):
-            raise ValueError('Reload Three-Speed AFO Retest for 3 cycles at ±10° and 100°/s²')
+            raise ValueError(f"Reload Three-Speed AFO Retest for {preset['cycles']} cycles at ±10° and 100°/s²")
+        baseline_batch_id = preset['empty_reference_batch_id']
     else:
         speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
     if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
@@ -115,6 +117,8 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
         metadata=make_preset_metadata(preset_key,preset,parameters,loaded_at,modified)
         metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(planned_speeds),
                         settings_status='provisional_not_scientifically_validated')
+        if preset_key == AFO_RETEST:
+            metadata['empty_reference_name'] = preset['empty_reference_name']
         if preset_key == FITTED_SPEED_SCREEN:
             metadata['study_mode'] = 'empty_fixture_calibration' if empty_calibration else 'fitted_speed_screen'
             metadata['planned_half_ranges_deg'] = list(FITTED_SPEED_SCREEN_RANGES)

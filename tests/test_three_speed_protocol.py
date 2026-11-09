@@ -64,11 +64,11 @@ class PlanTests(unittest.TestCase):
             self.plan('slow_repeatability_afo', minimum_angle_deg='5')
 
     def test_afo_retest_uses_three_fixed_conditions(self):
-        requests = self.plan('afo_retest', cycles='3')
+        requests = self.plan('afo_retest', cycles='5')
         self.assertEqual([r.parameters.commanded_afo_speed_deg_s for r in requests], [.5, 1., 5.])
-        self.assertTrue(all(r.parameters.cycles == 3 for r in requests))
+        self.assertTrue(all(r.parameters.cycles == 5 for r in requests))
         with self.assertRaisesRegex(ValueError, 'Reload Three-Speed AFO Retest'):
-            self.plan('afo_retest', cycles='3', maximum_angle_deg='15')
+            self.plan('afo_retest', cycles='5', maximum_angle_deg='15')
 
     def test_five_speed_study_covers_each_range_in_both_modes(self):
         expected = [(speed, angle) for angle in (5, 10, 15) for speed in (.5, 1, 5, 10, 20)]
@@ -179,15 +179,15 @@ class ApplicationTests(unittest.TestCase):
         self.assertIn('enter 2 in Start at run', w.status.options['text'])
 
     def test_afo_retest_resume_retains_number_and_baseline_link(self):
-        w, _ = self.prepare('afo_retest', cycles=3)
+        w, _ = self.prepare('afo_retest', cycles=5)
         w.fields['start_run'].value = '2'
-        w.fields['baseline_batch_id'].value = 'c5aaf905'
+        self.assertNotIn('baseline_batch_id', w.fields)
         self.app._ensure_load_cell = Mock(side_effect=OSError('SIMULATED Bridge unavailable'))
         w.start()
         self.pump_window(w, lambda: not w.active)
         manifest = self.manifest(w)
         self.assertEqual(manifest['runs'][0]['status'], 'skipped_by_operator_before_start')
-        self.assertEqual(manifest['runs'][1]['context']['baseline_batch_id'], 'c5aaf905')
+        self.assertEqual(manifest['runs'][1]['context']['baseline_batch_id'], 'c5aaf9052435437bb2ccb050e453b92c')
         self.assertIn('enter 2 in Start at run', w.status.options['text'])
 
     def test_five_speed_failure_shows_original_run_number_when_resumed(self):
