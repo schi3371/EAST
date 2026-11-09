@@ -28,7 +28,7 @@ class AutomaticReturnTests(unittest.TestCase):
         app.last_rotary_logged_key = None
         token = app.motion_coordinator.acquire('test-zero-return')
         self.token = token
-        self.angle = -.26
+        self.angle = 2.26
         self.zero_reference = app.reference_manager.metadata_snapshot()
         self.tare = app.empty_machine_tare
         reader = app.rotary_sensor.reader
@@ -52,7 +52,7 @@ class AutomaticReturnTests(unittest.TestCase):
         def idle(*args, **kwargs):
             result = original_idle(*args, **kwargs)
             self.idle_count += 1
-            if second_idle_drift and self.idle_count == 2:
+            if second_idle_drift and self.idle_count == 1:
                 self.angle = -.18
             return result
         app.safe_idle_motor = idle
@@ -64,7 +64,7 @@ class AutomaticReturnTests(unittest.TestCase):
         def worker():
             try:
                 app.enter_closed_loop(self.token)
-                app.complete_rotary_zero_return(app.get_feedback().position_turns, self.token)
+                app.complete_rotary_zero_return(self.token)
             except Exception as exc:
                 self.failure = exc
         thread = threading.Thread(target=worker)
@@ -90,8 +90,11 @@ class AutomaticReturnTests(unittest.TestCase):
             self.assertEqual(record['status'], 'completed')
             self.assertGreaterEqual(len(record['attempts']), 2)
             self.assertGreater(len(self.correction_commands), 1)
-            self.assertAlmostEqual(app.run_metadata['zero_return_check']['unassisted_angle_deg'], -.26, places=3)
-            self.assertFalse(app.run_metadata['zero_return_check']['passed'])
+            self.assertEqual(record['method'], 'direct_rotary_feedback')
+            self.assertGreater(record['corrections'][0]['before_deg'], 2.)
+            self.assertAlmostEqual(record['corrections'][0]['nominal_step_deg'], -.5)
+            self.assertTrue(app.run_metadata['zero_return_check']['passed'])
+            self.assertNotIn('unassisted_angle_deg', app.run_metadata['zero_return_check'])
             self.assertTrue(record['final_observation']['passed'])
             self.assertLessEqual(abs(self.angle), .1)
             self.assertTrue(record['idle_confirmed'])

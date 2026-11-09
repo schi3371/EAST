@@ -65,9 +65,12 @@ class ApplicationTests(unittest.TestCase):
         original_submit=a._submit_position
         self.commands=[]
         def submit(token,target):
+            before = a.get_feedback().position_turns
             original_submit(token,target)
             model=getattr(a,'run_motion_model',None)
-            if model is not None:
+            if a.motion_phase == 'zero_return_correction':
+                self.angle += (target - before) * 2.055
+            elif model is not None:
                 segment=a.run_metadata['experimental_motion_model']['segments'][-1]
                 self.angle=curve(target-model.origin_turns,segment['direction'])
                 self.commands.append((target,self.angle,segment['phase']))
@@ -83,16 +86,17 @@ class ApplicationTests(unittest.TestCase):
     def test_complete_normal_run_targets_and_zero_sensor_check(self):
         a=self.prepare();tare=a.empty_machine_tare;reference=a.reference_manager.record.reference_id
         self.assertTrue(a.start_strain_test())
-        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)
         self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
         model=a.run_metadata['experimental_motion_model']
         self.assertEqual(model['model_id'],MODEL_ID);self.assertTrue(model['enabled'])
-        self.assertEqual([round(v[1],6) for v in self.commands],[9,-9,9,0])
-        self.assertEqual(len(model['segments']),4)
+        self.assertEqual([round(v[1],6) for v in self.commands],[9,-9,9])
+        self.assertEqual(len(model['segments']),3)
         self.assertIs(a.empty_machine_tare,tare);self.assertEqual(a.reference_manager.record.reference_id,reference)
         a.start_rotary_homing.assert_not_called();a._tare_worker.assert_not_called()
         self.assertTrue(a.rotary_zero_ready())
-        self.assertNotAlmostEqual(self.commands[-1][0],a.reference_manager.require_verified().neutral_position_turns,places=2)
+        self.assertEqual(a.run_metadata['automatic_zero_return']['method'], 'direct_rotary_feedback')
+        self.assertGreater(a.run_metadata['automatic_zero_return']['correction_count'], 0)
         self.assertNotAlmostEqual(abs(self.commands[0][0]-model['initial_alignment']['anchor_motor_turns']),9/2.055,places=2)
 
     def test_model_default_load_and_range_block_before_motion(self):
@@ -104,21 +108,6 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse(a.start_strain_test())
         self.assertIsNone(a.strain_thread)
 
-    def test_return_miss_is_preserved_and_corrected_before_success(self):
-        a=self.prepare();original=a._submit_position
-        def wrong_return(token,target):
-            original(token,target)
-            if a.motion_phase=='returning_to_machine_zero':self.angle=.25
-        a._submit_position=wrong_return
-        a.start_strain_test()
-        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
-        self.assertEqual(a.run_metadata['run_status'],'completed', a.run_metadata.get('error'))
-        self.assertFalse(a.run_metadata['zero_return_check']['passed'])
-        self.assertAlmostEqual(a.run_metadata['zero_return_check']['unassisted_angle_deg'], .25)
-        self.assertEqual(a.run_metadata['automatic_zero_return']['status'], 'completed')
-        self.assertTrue(a.run_metadata['automatic_zero_return']['final_observation']['passed'])
-        self.assertGreater(a.run_metadata['automatic_zero_return']['correction_count'], 0)
-
     def test_unknown_initial_zero_branch_refines_against_fixed_plant(self):
         a=self.prepare()
         zero=a.latest_feedback.position_turns
@@ -127,13 +116,13 @@ class ApplicationTests(unittest.TestCase):
         def physical_submit(token,target):
             raw_submit(token,target)
             segment=a.run_metadata['experimental_motion_model']['segments'][-1]
-            self.angle=curve(target-true_origin,segment['direction'])
+            self.angle=curve(target-true_origin,-1 if a.motion_phase == 'zero_return_correction' else segment['direction'])
         a._submit_position=physical_submit
         a.start_strain_test()
-        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)
         self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
         self.assertAlmostEqual(a.run_motion_model.origin_turns,true_origin,places=8)
-        self.assertAlmostEqual(self.angle,0,places=8)
+        self.assertLessEqual(abs(self.angle), .1)
         self.assertTrue(a.run_metadata['experimental_motion_model']['numbered_cycle_origin_locked_after_initial_positioning'])
 
     def test_three_speed_model_batch_uses_normal_recorders(self):
@@ -141,7 +130,7 @@ class ApplicationTests(unittest.TestCase):
         a=self.prepare();a.loaded_preset_key='three_speed_empty_baseline';a.acceleration_input.value='100'
         w,_=window_for(a,self.module.ctk,'three_speed_empty_baseline')
         w.start()
-        self.pump(lambda:(w.tick(),not w.active)[1],20)
+        self.pump(lambda:(w.tick(),not w.active)[1],105)
         self.assertEqual(w.batch_status,'completed',w.batch_error)
         self.assertEqual(len(w.records),3)
         self.assertEqual(a.run_metadata['experimental_motion_model']['segments'][0]['nominal_speed_deg_s'],20)
@@ -156,18 +145,18 @@ class ApplicationTests(unittest.TestCase):
     def test_full_fifteen_degree_model_run_records_extrapolation(self):
         a=self.prepare();a.min_angle_input.value='15';a.max_angle_input.value='15'
         a.start_strain_test()
-        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)
         self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
         segments=a.run_metadata['experimental_motion_model']['segments']
         self.assertTrue(segments[0]['extrapolated'])
-        self.assertEqual([s['target_angle_deg'] for s in segments],[15,-15,15,0])
+        self.assertEqual([s['target_angle_deg'] for s in segments],[15,-15,15])
 
     def test_original_selection_executes_legacy_and_preserves_tare(self):
         from east_motion_model import ORIGINAL_METHOD
         a=self.prepare();tare=a.empty_machine_tare
         self.assertTrue(a.select_motion_method(ORIGINAL_METHOD))
         a.start_strain_test()
-        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,15)
+        self.pump(lambda:a.run_finalized and a.run_metadata is not None and not a.strain_test_active,65)
         self.assertEqual(a.run_metadata['run_status'],'completed',a.run_metadata.get('error'))
         self.assertFalse(a.run_metadata['experimental_motion_model']['enabled'])
         self.assertEqual(a.run_metadata['motion_method'],ORIGINAL_METHOD)

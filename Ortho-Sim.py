@@ -3551,8 +3551,9 @@ class MyInterface(OperatorView):
         idle_confirmed = False
         candidate_completed = False
         token = self.run_motion_token
+        motion_context = getattr(self, 'run_motion_mapping_context', None) or {}
+        smooth_pair = motion_context.get('protocol_key') == SMOOTH_PAIR
         try:
-            smooth_pair = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key') == SMOOTH_PAIR
             if token is None:
                 raise RuntimeError("Test motion ownership was not acquired")
             if self.test_stop_event.is_set():
@@ -3569,10 +3570,9 @@ class MyInterface(OperatorView):
             absolute_max = self.reference_manager.target_for_angle(parameters.max_angle_deg)
             from east_stream_screen import SCREEN_PRESET, StreamScreenModel
             from east_full_model_suite import PRESET as FULL_COMPARISON
-            screen_key = (getattr(self, 'run_motion_mapping_context', None) or {}).get('protocol_key')
+            screen_key = motion_context.get('protocol_key')
             stream_screen = screen_key in (SCREEN_PRESET, FULL_COMPARISON, SMOOTH_PAIR)
             from east_feedback_commissioning import condition_for
-            motion_context = getattr(self, 'run_motion_mapping_context', None) or {}
             commissioning = condition_for(motion_context.get(
                 'feedback_condition_key', motion_context.get('protocol_key', '')))
             if getattr(self, "run_motion_model_enabled", False) is True:
@@ -3651,27 +3651,24 @@ class MyInterface(OperatorView):
                     self.completed_cycles = cycle
                     self.update_terminal(f"Completed cycle {cycle}/{parameters.cycles}\n")
 
-            # A successful run uses the dedicated, conservative neutral-return profile.
             motion = self.system_config["motion"]
-            if not smooth_pair:
-                self.configure_trajectory(
-                    motion["neutral_return_speed_deg_s"],
-                    motion["neutral_return_acceleration_deg_s2"],
-                )
-            neutral_target = mapping.neutral_position_turns
-            neutral_target = self.command_test_angle(
-                0.0, neutral_target,
-                "returning_to_machine_zero",
-                token,
-                speed_deg_s=motion["neutral_return_speed_deg_s"],
-                acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
-            )
-            if not motion_context or parameters.test_type == 'afo_test':
-                # Routine tests are complete only after sensor-qualified zero.
-                # Engineering comparisons retain their separate unassisted result.
-                self.complete_rotary_zero_return(neutral_target, token)
+            engineering_return = (motion_context.get('stage')
+                                  or motion_context.get('purpose') == 'nonlinear_motion_identification')
+            if not engineering_return or parameters.test_type == 'afo_test':
+                self.complete_rotary_zero_return(token)
                 idle_confirmed = True
             else:
+                # Engineering comparisons measure the model's unassisted return.
+                if not smooth_pair:
+                    self.configure_trajectory(
+                        motion["neutral_return_speed_deg_s"],
+                        motion["neutral_return_acceleration_deg_s2"],
+                    )
+                neutral_target = self.command_test_angle(
+                    0.0, mapping.neutral_position_turns, "returning_to_machine_zero", token,
+                    speed_deg_s=motion["neutral_return_speed_deg_s"],
+                    acceleration_deg_s2=motion["neutral_return_acceleration_deg_s2"],
+                )
                 idle_result = self.safe_idle_motor("trajectory return complete; verifying final zero", token=token)
                 if not idle_result or not idle_result.confirmed:
                     raise RuntimeError("Test finished but ODrive idle could not be confirmed")
@@ -4138,6 +4135,8 @@ class MyInterface(OperatorView):
         speed_deg_s=None,
         acceleration_deg_s2=None,
         distance_deg=None,
+        *,
+        position_tolerance_turns=None,
     ):
         if self.test_stop_event.is_set():
             raise TestStopped()
@@ -4175,6 +4174,8 @@ class MyInterface(OperatorView):
         tolerance_turns = afo_degrees_to_odrive_turns(
             self.system_config["motion"]["position_tolerance_deg"], self.system_config
         )
+        if position_tolerance_turns is not None:
+            tolerance_turns = min(tolerance_turns, position_tolerance_turns)
         velocity_limit_turns_s = afo_speed_to_odrive_turns_s(
             self.system_config["reference"]["settle_velocity_limit_deg_s"],
             self.system_config,
@@ -4214,13 +4215,8 @@ class MyInterface(OperatorView):
                 f"latest position={position} turns, remaining error={remaining} deg. {exc}"
             ) from exc
 
-    def complete_rotary_zero_return(self, neutral_target, token):
-        """Own the entire return, including powered corrections and post-idle settling.
-
-        The initial unassisted result is immutable. Correction samples have their
-        own phase; neither tare, model coefficients nor the zero reference change.
-        Stop or any health fault prevents another enable/command.
-        """
+    def complete_rotary_zero_return(self, token):
+        """Return directly from the final endpoint using the GUI homing policy."""
         from copy import deepcopy
         from east_rotary_homing import home, HomingPolicy, RotaryZeroMiss
         from east_zero_window import collect_stationary_window
@@ -4232,6 +4228,7 @@ class MyInterface(OperatorView):
         cfg = self.system_config['reference']
         evidence = dict(target_angle_deg=0., tolerance_deg=policy.tolerance_deg,
             policy=policy.__dict__, corrections=[], attempts=[], status='running',
+            method='direct_rotary_feedback',
             reference_changed=False, tare_changed=False)
         self.run_metadata['automatic_zero_return'] = evidence
         total_travel = 0.
@@ -4287,39 +4284,36 @@ class MyInterface(OperatorView):
             evidence['corrections'].append(event)
             total_travel += abs(delta)
             self.command_position_and_wait(target, 'zero_return_correction', token,
-                cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'], distance_deg=abs(delta))
+                cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'],
+                distance_deg=abs(delta), position_tolerance_turns=abs(delta / factor) / 4)
             event['after_deg'] = check()[1]['angle_deg']
 
-        original = None
         try:
-            idle()
-            self.motion_phase = 'unassisted_zero_observation'
-            try:
-                self.observe_post_idle_neutral(neutral_target)
-            except RotaryZeroMiss:
-                pass
-            original = deepcopy(self.run_metadata['zero_return_check'])
-            evidence['unassisted_passed'] = original['passed']
-            passed = original['passed']
-            while not passed:
-                check()
-                self.update_terminal('Return offset recorded; correcting to rotary zero before completing the test.\n')
-                self.enter_closed_loop(token)
-                armed = True
-                self.motion_phase = 'zero_return_correction'
+            check()
+            self.motion_phase = 'zero_return_correction'
+            self.configure_trajectory(cfg['recovery_speed_deg_s'], cfg['recovery_acceleration_deg_s2'])
+            self.update_terminal('Measurement cycles complete. Returning directly to zero using the rotary sensor.\n')
+            while True:
                 result = home(policy, observe, move, check)
                 evidence['attempts'].append(result)
                 idle()
                 self.motion_phase = 'corrected_zero_observation'
                 try:
                     self.observe_post_idle_neutral(self.get_feedback().position_turns)
-                    passed = True
                 except RotaryZeroMiss:
                     passed = False
-                evidence['final_observation'] = deepcopy(self.run_metadata['zero_return_check'])
-                self.run_metadata['zero_return_check'] = original
-            if 'final_observation' not in evidence:
-                evidence['final_observation'] = deepcopy(original)
+                else:
+                    passed = True
+                observation = self.run_metadata['zero_return_check']
+                observation.pop('unassisted_angle_deg', None)
+                observation['method'] = 'direct_rotary_feedback'
+                evidence['final_observation'] = deepcopy(observation)
+                if passed:
+                    break
+                check()
+                self.enter_closed_loop(token)
+                armed = True
+                self.motion_phase = 'zero_return_correction'
             check()
             final_idle = self.safe_idle_motor('rotary zero verified; return complete', token=token)
             if not final_idle or not final_idle.confirmed:
@@ -4330,9 +4324,6 @@ class MyInterface(OperatorView):
         except Exception as exc:
             evidence.update(status='failed', error=str(exc), nominal_travel_deg=total_travel)
             raise
-        finally:
-            if original is not None:
-                self.run_metadata['zero_return_check'] = original
 
     def observe_post_idle_neutral(self, neutral_target):
         self.observe_idle_neutral(

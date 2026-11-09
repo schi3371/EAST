@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import east_core
 from east_reference import MotionConflictError, MotionState
+from east_smooth_motion import PRESET as SMOOTH_PAIR
 
 
 class TestStopped(Exception):
@@ -20,7 +21,7 @@ def gui_method(name, **overrides):
     tree = ast.parse(source.read_text())
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
     namespace = dict(vars(east_core), TestStopped=TestStopped, threading=threading,
-                     MotionConflictError=MotionConflictError, MotionState=MotionState)
+                     MotionConflictError=MotionConflictError, MotionState=MotionState, SMOOTH_PAIR=SMOOTH_PAIR)
     namespace.update(overrides)
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
     return namespace[name]
@@ -56,12 +57,13 @@ class StrainSequenceTests(unittest.TestCase):
         with self.assertRaisesRegex(TimeoutError, "moving_to_max.*distance=20.*timeout=25.01"):
             method(app, 10 / 2.055, "moving_to_max", "token")
 
-    def run_sequence(self, failure=None):
+    def run_sequence(self, failure=None, *, comparison=False):
         app = Mock()
         app.system_config = self.config
         app.run_motion_model_enabled = False
+        app.run_segmented_comparison = False
         app.run_motion_model = None
-        app.run_motion_mapping_context = None
+        app.run_motion_mapping_context = {"stage": "model_comparison"} if comparison else None
         app.run_motion_token = "token"
         app.test_stop_event = Event()
         app.operator_stop_requested = False
@@ -69,7 +71,7 @@ class StrainSequenceTests(unittest.TestCase):
         app.completed_cycles = 0
         app.run_metadata = {"rotary_sensor": {}}
         app.rotary_sensor.finish_recording.return_value = {}
-        app.run_parameters = SimpleNamespace(min_angle_deg=10, max_angle_deg=10, cycles=3,
+        app.run_parameters = SimpleNamespace(test_type="empty_machine_baseline", min_angle_deg=10, max_angle_deg=10, cycles=3,
                                             commanded_afo_speed_deg_s=1,
                                             commanded_afo_acceleration_deg_s2=100)
         app.reference_manager.require_verified.return_value = SimpleNamespace(neutral_position_turns=0)
@@ -100,13 +102,20 @@ class StrainSequenceTests(unittest.TestCase):
 
     def test_three_full_cycles_then_neutral_and_idle(self):
         app, moves = self.run_sequence()
-        self.assertEqual([m[0] for m in moves], [0, 1, 1, 2, 2, 3, 3, 3])
-        self.assertEqual([round(m[2] * 2.055) for m in moves], [10, -10, 10, -10, 10, -10, 10, 0])
+        self.assertEqual([m[0] for m in moves], [0, 1, 1, 2, 2, 3, 3])
+        self.assertEqual([round(m[2] * 2.055) for m in moves], [10, -10, 10, -10, 10, -10, 10])
         self.assertEqual(moves[0][1], "moving_to_initial_max")
         self.assertEqual(app.completed_cycles, 3)
-        app.complete_rotary_zero_return.assert_called_once_with(0, "token")
+        app.complete_rotary_zero_return.assert_called_once_with("token")
         app.observe_post_idle_neutral.assert_not_called()
         app.safe_idle_motor.assert_not_called()
+        self.assertEqual(app.finalize_run.call_args.args[0], "completed")
+
+    def test_comparison_retains_unassisted_model_return(self):
+        app, moves = self.run_sequence(comparison=True)
+        self.assertEqual(moves[-1][1:], ("returning_to_machine_zero", 0))
+        app.complete_rotary_zero_return.assert_not_called()
+        app.observe_post_idle_neutral.assert_called_once_with(0)
         self.assertEqual(app.finalize_run.call_args.args[0], "completed")
 
     def test_partial_cycle_is_not_completed(self):

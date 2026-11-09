@@ -90,9 +90,10 @@ The run's unassisted return remains recorded as failed, with its measured offset
 
 ## Routine sensor-qualified return to zero
 
-Routine single tests and loaded AFO protocols retain motion ownership through final zero qualification. After the unassisted return is observed in idle, any residual offset triggers the official rotary centring policy within that same run. The fixture is then put in idle and observed again; a post-idle miss triggers another correction attempt within the shared travel, correction-count and time budgets. Completion requires a fresh stationary rotary window inside ±0.10°, confirmed idle and healthy recording/feedback. Stop cancels the operation; no failed measurement sweep is restarted.
+Routine tests retain motion ownership from the final sweep endpoint through the rotary-guided return to neutral. The official centring policy reads the calibrated fixture angle, commands a bounded correction, and checks the resulting angle. After the fixture is put in idle, a stationary rotary window must remain within ±0.10°. If the window fails, the routine can correct again within the shared travel, correction-count and time budgets.
 
-`zero_return_check` preserves the original unassisted outcome. `automatic_zero_return` records correction steps, powered centring attempts and the final post-idle result. Correction/observation phases are separate from stiffness sweeps. Tare, model coefficients and the machine-zero reference are not changed. Empty-fixture engineering comparisons retain their separately saved unassisted outcome and existing batch homing path so historical controller comparisons remain interpretable. This software workflow still requires bench confirmation with a fitted AFO before SOP approval.
+Return and settling phases are separate from the numbered stiffness sweeps. `automatic_zero_return` records the correction steps and the final post-idle observation. The tare, calibration and saved zero reference carry through the run. Engineering comparisons retain their separately saved unassisted outcome and batch homing path. The direct return still requires bench confirmation with a fitted AFO.
+
 
 ## Full automated model × speed comparison (empty fixture)
 
