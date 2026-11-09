@@ -26,11 +26,11 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(p[-1].stationary_holds)
         self.assertEqual({r.mounting_setup_id for r in p},{'SAME_SETUP'})
         self.assertTrue(all(not r.context()['independent_remount_trials'] for r in p))
-    def test_wide_slow_plan_is_segmented_without_raising_global_timeout(self):
+    def test_wide_slow_plan_and_standard_sweep_both_fit_the_budget(self):
         c=load_tester_config();p=self.plan()[6].parameters
-        self.assertEqual(c['motion']['maximum_motion_timeout_s'],60)
+        self.assertEqual(c['motion']['maximum_motion_timeout_s'],70)
         values=dict(file_prefix='test',operator='SC',fixture_id='0',calibration_id='0',afo_id='EMPTY_MACHINE_BASELINE',test_type='empty_machine_baseline',cycles=3,speed_deg_s=.5,acceleration_deg_s2=100,min_angle_deg=15,max_angle_deg=15)
-        with self.assertRaises(ValueError):validate_test_parameters(values,c)
+        self.assertEqual(validate_test_parameters(values,c).max_angle_deg,15)
         self.assertEqual(validate_test_parameters(values,c,segmented_rotary_motion=True).max_angle_deg,15)
 
 class PositioningTests(unittest.TestCase):

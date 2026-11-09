@@ -70,7 +70,7 @@ class PlanTests(unittest.TestCase):
             self.assertLessEqual(limits['motor_acceleration_nominal_deg_s2'],100)
         self.assertEqual(config,snapshot)
         self.assertEqual(config['motion']['maximum_speed_deg_s'],20)
-        self.assertEqual(config['motion']['maximum_motion_timeout_s'],60)
+        self.assertEqual(config['motion']['maximum_motion_timeout_s'],70)
         values=dict(file_prefix='test',operator='SC',fixture_id='0',calibration_id='0',afo_id='AFO',
             test_type='afo_test',cycles=1,speed_deg_s=50,acceleration_deg_s2=100,min_angle_deg=15,max_angle_deg=15)
         with self.assertRaisesRegex(ValueError,'Speed'):

@@ -21,6 +21,6 @@ Fresh rotary measurements, accepted calibration identity, ownership, Stop, recor
 
 Original nominal +/-15-degree commands can produce a different measured range. Do not treat the removal of the model fit clamp as a rotary-supervised wide-range identification protocol; that guided acquisition workflow has not yet been implemented.
 
-The existing motion-timeout limits also remain. For example, a full -15 to +15 degree sweep at 0.5 degrees/s needs more than the current 60-second motion-timeout ceiling once the margin is included, so that combination is rejected. The range change does not silently relax this existing timeout.
+The standard motion-timeout ceiling is 70 s per move. It covers the study boundary from −15° to +15° at 0.5°/s and the configured minimum acceleration of 0.1°/s². The timeout calculation adds 60 s from distance divided by speed, 5 s from speed divided by acceleration and a 5 s settling margin. Individual moves use their calculated deadlines.
 
 Offline verification: the full 319-test suite had one error in a simulated batch-window fixture; the other 318 tests passed. After correcting that fixture, all 15 motion-method tests passed on the final rerun. Hardware operation was not tested.

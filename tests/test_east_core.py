@@ -72,35 +72,30 @@ class EastCoreTests(unittest.TestCase):
             expected_motion_time + self.config["motion"]["motion_timeout_margin_s"],
         )
 
-    def test_quasi_static_sweep_uses_bounded_60_second_timeout(self):
+    def test_quasi_static_sweep_budget_covers_the_study_envelope(self):
         motion = self.config["motion"]
-        self.assertEqual(motion["motion_timeout_margin_s"], 5.0)
-        self.assertEqual(motion["maximum_motion_timeout_s"], 60.0)
+        half_range = motion["maximum_afo_angle_deg"]
+        minimum_study_speed = 0.5
+        minimum_acceleration = motion["minimum_acceleration_deg_s2"]
+        worst_case = (2 * half_range / minimum_study_speed
+                      + minimum_study_speed / minimum_acceleration
+                      + motion["motion_timeout_margin_s"])
+        self.assertEqual(motion["maximum_motion_timeout_s"], worst_case)
 
-        timeout = motion_timeout_seconds(20.0, 0.5, 100.0, self.config)
-        self.assertAlmostEqual(timeout, 45.005)
-        self.assertEqual(round(timeout, 2), 45.01)
-        self.assertLessEqual(timeout, motion["maximum_motion_timeout_s"])
-
-        values = valid_values()
-        values.update(
-            speed_deg_s="0.5",
-            acceleration_deg_s2="100",
-            min_angle_deg="10",
-            max_angle_deg="10",
-        )
-        parameters = validate_test_parameters(values, self.config)
-        self.assertEqual(parameters.commanded_afo_speed_deg_s, 0.5)
-
-        with self.assertRaisesRegex(ValueError, "exceeding the 60 s maximum"):
-            motion_timeout_seconds(30.0, 0.5, 100.0, self.config)
-
-        self.assertAlmostEqual(
-            motion_timeout_seconds(20.0, 1.0, 100.0, self.config), 25.01
-        )
-        self.assertAlmostEqual(
-            motion_timeout_seconds(20.0, 5.0, 100.0, self.config), 9.05
-        )
+        for test_type in ("afo_test", "empty_machine_baseline"):
+            for acceleration in (minimum_acceleration, motion["maximum_acceleration_deg_s2"]):
+                with self.subTest(test_type=test_type, acceleration=acceleration):
+                    values = valid_values()
+                    values.update(test_type=test_type, speed_deg_s=str(minimum_study_speed),
+                                  acceleration_deg_s2=str(acceleration),
+                                  min_angle_deg=str(half_range), max_angle_deg=str(half_range))
+                    parameters = validate_test_parameters(values, self.config)
+                    self.assertEqual(parameters.commanded_afo_speed_deg_s, minimum_study_speed)
+        self.assertAlmostEqual(motion_timeout_seconds(30., 0.5, 100., self.config), 65.005)
+        self.assertAlmostEqual(motion_timeout_seconds(30., 0.5, 0.1, self.config), worst_case)
+        self.assertAlmostEqual(motion_timeout_seconds(20., 0.5, 100., self.config), 45.005)
+        with self.assertRaisesRegex(ValueError, "exceeding the 70 s maximum"):
+            motion_timeout_seconds(30., 0.1, 0.1, self.config)
 
     def test_validate_test_parameters(self):
         parameters = validate_test_parameters(valid_values(), self.config)

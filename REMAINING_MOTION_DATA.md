@@ -25,7 +25,7 @@ This provides raw motor-position/rotary-angle data throughout the wider travel, 
 
 The bulk fraction is a conservative planning margin for this experimentally observed mechanism, not a certified travel guarantee. Fresh sensor measurements, controller state, ownership, Stop and recorded data remain supervised. Readings beyond +/-15 degrees plus the 0.1-degree tolerance fault the acquisition. Mechanical clearance still needs operator confirmation. No loaded AFO belongs in this suite.
 
-The 0.5-degree/s full traversal is split into bounded moves, so the existing global 60-second per-move timeout remains unchanged. The fine positioning retains the official correction-count, cumulative-travel and timeout guards. Interior directional hold targets allow approach from both sides without commanding travel beyond the outer +/-15-degree envelope; outer endpoints are approached from inside the range.
+The 0.5-degree/s full traversal is split into bounded moves, independently of the standard 70-second per-move timeout. The fine positioning retains the official correction-count, cumulative-travel and timeout guards. Interior directional hold targets allow approach from both sides without commanding travel beyond the outer +/-15-degree envelope; outer endpoints are approached from inside the range.
 
 ## Homing edge-noise correction
 
