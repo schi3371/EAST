@@ -572,10 +572,11 @@ class OperatorView:
                 return f'{name} — {count // 2} stages, feedforward/feedback at each'
             return f'{name} — {count} planned runs at ±{preset["maximum_angle_deg"]:g}°, {preset["speeds_deg_s"][0]:g}°/s'
         if preset.get('execution_kind') == 'speed_sequence':
-            name += ' — 0.5 → 5 → 20°/s; cycles EACH speed'
+            speeds = preset['speeds_deg_s']
+            name += ' — ' + ' → '.join(f'{speed:g}' for speed in speeds) + '°/s; cycles EACH speed'
             try:
                 cycles = int(self.cycles_input.get())
-                name += f' ({3*cycles} total numbered cycles)'
+                name += f' ({len(speeds)*cycles} total numbered cycles)'
             except (TypeError,ValueError):
                 pass
         if preset_values_modified(self._motion_field_values(), preset):

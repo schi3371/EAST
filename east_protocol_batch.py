@@ -6,6 +6,7 @@ import uuid
 from typing import Optional
 from east_core import validate_test_parameters, make_preset_metadata, preset_values_modified, sanitise_identifier
 
+from east_core import SLOW_REPEATABILITY_PRESETS, SLOW_REPEATABILITY_SPEEDS
 from east_motion_model import selected_variant
 from east_stream_screen import BLOCKS, SCREEN_PRESET
 from east_feedback_commissioning import CONDITIONS, PREFIX, SEQUENCE_PRESET, condition_for
@@ -60,8 +61,13 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     if config['test_presets'][preset_key].get('protocol_kind')=='remaining_motion_data':
         return make_remaining_plan(config,preset_key,identity,settings,mounting_setup_id,baseline_batch_id,manifest_path,loaded_at,batch_id)
     preset=deepcopy(config['test_presets'][preset_key])
-    if preset.get('execution_kind')!='speed_sequence' or tuple(preset['speeds_deg_s'])!=SPEEDS:
-        raise ValueError('Select a supported explicit three-speed protocol')
+    speeds = SLOW_REPEATABILITY_SPEEDS if preset_key in SLOW_REPEATABILITY_PRESETS else SPEEDS
+    if preset.get('execution_kind') != 'speed_sequence' or tuple(preset['speeds_deg_s']) != speeds:
+        raise ValueError('Select a supported explicit speed protocol')
+    if preset_key in SLOW_REPEATABILITY_PRESETS:
+        angles = float(settings['minimum_angle_deg']), float(settings['maximum_angle_deg'])
+        if angles not in ((5., 5.), (10., 10.)):
+            raise ValueError('Repeatability pilot requires symmetric ±5° or ±10°')
     mounting_setup_id=str(mounting_setup_id).strip()
     if not mounting_setup_id:
         raise ValueError('Enter a mounting/setup ID; reuse it if the setup has not changed')
@@ -74,7 +80,7 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
     prefix=sanitise_identifier(identity['file_prefix'] or 'MotionSuite')[:24]
     modified=preset_values_modified(settings,preset)
     requests=[]
-    for index,speed in enumerate(SPEEDS,1):
+    for index,speed in enumerate(speeds,1):
         label=f'R{index}_{str(speed).replace(".","p")}dps'
         parameters=validate_test_parameters(dict(file_prefix=f'{prefix}_B{batch_id[:8]}_{label}',
             operator=identity['operator'],fixture_id=identity['fixture_id'],calibration_id=identity['calibration_id'],
@@ -82,10 +88,10 @@ def make_protocol_plan(config,preset_key,identity,settings,mounting_setup_id,bas
             acceleration_deg_s2=settings['acceleration_deg_s2'],min_angle_deg=settings['minimum_angle_deg'],
             max_angle_deg=settings['maximum_angle_deg']),config)
         metadata=make_preset_metadata(preset_key,preset,parameters,loaded_at,modified)
-        metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(SPEEDS),
+        metadata.update(execution_kind='speed_sequence',planned_speed_sequence_deg_s=list(speeds),
                         settings_status='provisional_not_scientifically_validated')
-        requests.append(ProtocolRequest(batch_id,label,index,3,parameters,metadata,str(manifest_path),
-                                       mounting_setup_id,SPEEDS,baseline_batch_id,
+        requests.append(ProtocolRequest(batch_id,label,index,len(speeds),parameters,metadata,str(manifest_path),
+                                       mounting_setup_id,speeds,baseline_batch_id,
                                        model_variant=selected_variant(config)))
     return requests
 

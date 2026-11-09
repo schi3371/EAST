@@ -52,6 +52,17 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(all(r.parameters.test_type=='empty_machine_baseline' and r.parameters.afo_id=='EMPTY_MACHINE_BASELINE' for r in b))
         self.assertNotEqual(b[0].batch_id,p[0].batch_id)
         self.assertTrue(all(not r.context()['automatic_baseline_correction'] for r in b))
+    def test_slow_repeatability_pairs_match_by_range_and_speed(self):
+        for half_range in ('5', '10'):
+            for key in ('slow_repeatability_empty', 'slow_repeatability_afo'):
+                requests = self.plan(key, cycles='3', minimum_angle_deg=half_range,
+                                     maximum_angle_deg=half_range)
+                self.assertEqual([r.parameters.commanded_afo_speed_deg_s for r in requests], [.5, 1.])
+                self.assertTrue(all(r.total == 2 and r.parameters.cycles == 3 for r in requests))
+                self.assertTrue(all(r.parameters.max_angle_deg == float(half_range) for r in requests))
+        with self.assertRaisesRegex(ValueError, "symmetric"):
+            self.plan('slow_repeatability_afo', minimum_angle_deg='5')
+
     def test_invalid_parameters_and_reserved_loaded_identity(self):
         for changes in ({'cycles':'0'},{'minimum_angle_deg':'16'},{'acceleration_deg_s2':'101'}):
             with self.assertRaises(ValueError):self.plan(**changes)
@@ -120,6 +131,16 @@ class ApplicationTests(unittest.TestCase):
             with open(row['strain_file'],newline='') as f:
                 reader=csv.reader(f);self.assertEqual(next(reader),CSV_COLUMNS+ROTARY_RUN_COLUMNS+MOTOR_TIMING_COLUMNS);self.assertGreater(sum(1 for _ in reader),0)
             self.assertTrue(Path(row['rotary_file']).exists())
+    def test_slow_repeatability_gui_records_two_loaded_runs(self):
+        w,_ = self.prepare('slow_repeatability_afo', cycles=1)
+        self.app.min_angle_input.value = self.app.max_angle_input.value = '5'
+        w.start()
+        self.pump_window(w, lambda: not w.active)
+        body = self.manifest(w)
+        self.assertEqual(body['outcome'], 'completed', w.status.options)
+        self.assertEqual(body['planned_speed_sequence_deg_s'], [.5, 1.])
+        self.assertEqual([r['status'] for r in body['runs']], ['completed', 'completed'])
+
     def test_empty_baseline_is_separate_reserved_identity(self):
         w,_=self.prepare('three_speed_empty_baseline');w.start();self.pump_window(w,lambda:not w.active)
         body=self.manifest(w);self.assertEqual(body['outcome'],'completed',w.status.options)

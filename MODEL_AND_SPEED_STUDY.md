@@ -51,6 +51,12 @@ Before scoring, agree on the largest acceptable repeat difference and remount va
 
 Select the fastest **measured** speed that meets the agreed limits and yields complete, usable runs. If 20°/s falls short and 5°/s qualifies, use 5°/s. If faster conditions fail, evaluate 0.5°/s against the same criteria. If stiffness shifts systematically with speed, document the selected rate as part of the measurement definition.
 
+## Calf-clamp repeatability pilot
+
+Use **Slow Repeatability — Empty Baseline** and **Slow Repeatability — AFO Fitted**. Each batch runs 0.5 then 1°/s at the selected symmetric ±5° or ±10° range. Record a matched empty batch at each range before mounting. Use three cycles per run and keep the acceleration, mount and rest consistent. The preset runs one pair per Start. The operator performs and documents remounts and reviews the clamp between batches.
+
+Use reference marks on the AFO cuff and its mating clamp to identify relative movement. Keep intended sliding of the fixture mechanism distinct from cuff motion relative to its clamp. Stop the batch if the cuff slips and record the condition and cycle. A retightening starts a new setup record. Keep completed pre-slip and post-slip runs separate. Evaluate 5°/s separately under supervision if the fixture setup has been checked for that condition.
+
 ## Combined feedback commissioning sequence
 
 Load **Feedback Commissioning Sequence — All Stages (Empty)** with Engineering controls enabled, then press Start. Choose **Start at stage** and **Stop after stage**. Leave the end blank to select through stage 11. Each stage runs Wider feedforward followed by Wider with rotary feedback, with one cycle per run. The two runs share the desired trajectory, fixed zero anchor, streaming schedule and motor ceilings.
