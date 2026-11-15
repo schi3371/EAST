@@ -724,11 +724,13 @@ def draw_operator_plot(canvas, title, angle_data, torque_data):
         font=("Arial", 9, "bold"), tags="plot",
     )
     canvas.create_text(
-        18, height / 2, text="Torque (Nm)", fill=TEXT,
+        18, height / 2, text="Resisting torque (Nm)", fill=TEXT,
         font=("Arial", 11, "bold"), angle=90, tags="plot",
     )
 
     if angle_data and torque_data:
+        # Display the opposing moment without changing the recorded torque.
+        torque_data = [-torque for torque in torque_data]
         x_min, x_max = min(angle_data), max(angle_data)
         y_min, y_max = min(torque_data), max(torque_data)
     else:
