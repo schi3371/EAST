@@ -1971,6 +1971,8 @@ class MyInterface(OperatorView):
                     self.set_status(item[1], item[2])
                 elif item[0] == "inputs":
                     self.set_test_inputs_state(item[1])
+                elif item[0] == "stiffness_ready":
+                    self.stiffness_results.completed(item[1], self.output_tabs.get() == "Stiffness Results")
                 elif item[0] == "run_buttons":
                     self._refresh_motion_controls()
                 elif item[0] == "offer_isolated_exit":
@@ -4520,6 +4522,9 @@ class MyInterface(OperatorView):
             try:
                 write_json_atomic(Path(self.metadata_file_name), self.run_metadata)
                 self.run_finalized = True
+                if (status == "completed" and not self.run_metadata["outcome_pending_cleanup"]
+                        and self.run_metadata.get("test_parameters", {}).get("test_type") == "afo_test"):
+                    self.ui_message_queue.put(("stiffness_ready", self.metadata_file_name))
             except Exception as exc:
                 status = "error"
                 self.run_metadata["run_status"] = "error"
@@ -4560,6 +4565,8 @@ class MyInterface(OperatorView):
     def _on_output_tab_changed(self):
         if self.output_tabs.get() == "Plot":
             self.master.after_idle(self.update_plot)
+        elif self.output_tabs.get() == "Stiffness Results":
+            self.stiffness_results.show_latest()
 
     def create_plot_window(self, *, select_plot=True):
         """Initialise the embedded Plot tab; retain the legacy caller name."""

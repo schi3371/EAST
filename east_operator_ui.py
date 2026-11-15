@@ -532,6 +532,8 @@ class OperatorView:
         self.output_tabs.grid(row=0, column=1, sticky="nsew")
         terminal_tab = self.output_tabs.add("Session Terminal")
         self.plot_container = self.output_tabs.add("Plot")
+        from east_stiffness_view import StiffnessResults
+        self.stiffness_results = StiffnessResults(self.output_tabs.add("Stiffness Results"))
         terminal_tab.grid_columnconfigure(0, weight=1)
         terminal_tab.grid_rowconfigure(0, weight=1)
         self.terminal = ctk.CTkTextbox(
