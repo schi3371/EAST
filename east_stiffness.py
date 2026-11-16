@@ -16,6 +16,8 @@ SETTINGS = ("commanded_afo_speed_deg_s", "commanded_afo_acceleration_deg_s2",
 CALIBRATION = ("mass_kg_per_voltage_ratio", "standard_gravity_m_s2", "lever_arm_m",
                "force_angle_polynomial_deg")
 WINDOWS = ((1, 4), (-4, -1))
+STANDARD_EMPTY_BATCH = "c5aaf9052435437bb2ccb050e453b92c"
+STANDARD_EMPTY_NAME = "Empty calibration · 1°/s Standard AFO Test"
 
 
 def sibling(path, recorded_name):
@@ -31,8 +33,8 @@ def read_run(path):
     return metadata
 
 
-def linked_reference(path, loaded):
-    batch = (loaded.get("protocol_batch") or {}).get("baseline_batch_id")
+def linked_reference(path, loaded, batch=None):
+    batch = batch or (loaded.get("protocol_batch") or {}).get("baseline_batch_id")
     if not batch:
         raise ValueError("This run has no linked empty reference. Choose a matching empty recording.")
     manifests = [p for p in path.parent.glob(f"*{batch}.json")
@@ -111,12 +113,21 @@ def resisting_slope(curve, window):
         (angle - x) ** 2 for angle, _ in samples)
 
 
-def analyse_stiffness(path, reference_path=None):
+def analyse_stiffness(path, reference_path=None, *, standard_empty=False):
     loaded = read_run(path)
     if loaded["test_parameters"]["test_type"] != "afo_test":
         raise ValueError("Choose a completed loaded AFO run.")
+    parameters = loaded["test_parameters"]
+    if standard_empty and tuple(parameters.get(key) for key in SETTINGS) != (1.0, 100.0, 10.0, 10.0):
+        raise ValueError("This empty calibration requires 1°/s, ±10°, and 100°/s².")
     use_linked = reference_path is None
-    reference_path = reference_path or linked_reference(path, loaded)
+    if standard_empty:
+        reference_path = linked_reference(path, loaded, STANDARD_EMPTY_BATCH)
+    else:
+        reference_path = reference_path or linked_reference(path, loaded)
+    reference_name = STANDARD_EMPTY_NAME if standard_empty else (
+        (loaded.get("protocol") or {}).get("empty_reference_name") if use_linked else None
+    )
     empty = read_run(reference_path)
     empty_parameters = empty["test_parameters"]
     # The archived EMPTYCalibration batch used the AFO mode with ID 0.
@@ -155,7 +166,7 @@ def analyse_stiffness(path, reference_path=None):
 
     return dict(analysis_version=1, specimen_id=loaded["test_parameters"]["afo_id"],
                 loaded_metadata=str(path), empty_metadata=str(reference_path),
-                reference_name=(loaded.get("protocol") or {}).get("empty_reference_name") if use_linked else None,
+                reference_name=reference_name,
                 requested_speed_deg_s=loaded["test_parameters"][SETTINGS[0]],
                 conditioning_cycle=1, cycles=list(fitted), excluded_cycles=excluded,
                 empty_cycles=list(baseline), empty_excluded_cycles=empty_excluded,

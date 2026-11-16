@@ -8,7 +8,7 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
-from east_stiffness import WINDOWS, analyse_stiffness
+from east_stiffness import STANDARD_EMPTY_NAME, WINDOWS, analyse_stiffness
 
 
 class StiffnessResults:
@@ -27,6 +27,11 @@ class StiffnessResults:
             ctk.CTkButton(controls, text=label, command=command, width=120).pack(side="left", padx=3, pady=4)
         self.export_button = ctk.CTkButton(controls, text="Export", command=self.export, width=66, state="disabled")
         self.export_button.pack(side="left", padx=3)
+
+        self.standard_empty_button = ctk.CTkButton(
+            parent, text=STANDARD_EMPTY_NAME, command=self.choose_standard_empty, state="disabled",
+        )
+        self.standard_empty_button.pack(anchor="w", padx=9, pady=(0, 6))
 
         self.status = ctk.CTkLabel(parent, text="Complete a loaded test or open its saved metadata.",
                                    anchor="w", justify="left", wraplength=520)
@@ -70,8 +75,13 @@ class StiffnessResults:
         if path:
             self.calculate(self.selected, Path(path))
 
-    def calculate(self, path, reference=None):
+    def choose_standard_empty(self):
+        if self.selected is not None:
+            self.calculate(self.selected, standard_empty=True)
+
+    def calculate(self, path, reference=None, *, standard_empty=False):
         self.selected = path
+        self.standard_empty_button.configure(state="normal")
         self.result = None
         self.export_button.configure(state="disabled")
         self.table.delete(*self.table.get_children())
@@ -82,7 +92,7 @@ class StiffnessResults:
 
         def worker():
             try:
-                result = analyse_stiffness(path, reference)
+                result = analyse_stiffness(path, reference, standard_empty=standard_empty)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 self.replies.put((token, None, str(error)))
             else:
