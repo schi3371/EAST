@@ -9,7 +9,7 @@ from tkinter import filedialog, ttk
 
 import customtkinter as ctk
 
-from east_stiffness import STANDARD_EMPTY_NAME, WINDOWS, analyse_stiffness
+from east_stiffness import STANDARD_EMPTY_NAME, analyse_stiffness
 
 
 def latest_loaded_run(folder):
@@ -60,14 +60,26 @@ class StiffnessResults:
         self.standard_empty_button.pack(anchor="w", padx=9, pady=(0, 6))
 
         self.status = ctk.CTkLabel(parent, text="Complete a loaded test or open its saved metadata.",
-                                   anchor="w", justify="left", wraplength=520)
+                                   anchor="w", justify="left", wraplength=520, font=("Arial", 15))
         self.status.pack(fill="x", padx=10)
-        self.table = ttk.Treeview(parent, columns=("sweep", "window", "slope", "sd"), show="headings", height=4)
+        style = ttk.Style(parent)
+        style.configure("Stiffness.Treeview", font=("Arial", 13), rowheight=29)
+        style.configure("Stiffness.Treeview.Heading", font=("Arial", 12, "bold"))
+        self.table = ttk.Treeview(parent, columns=("sweep", "window", "slope", "sd"),
+                                  show="headings", height=4, style="Stiffness.Treeview")
         for key, label, width in (("sweep", "Sweep", 92), ("window", "Fit window (°)", 98),
                                   ("slope", "Stiffness (Nm/°)", 105), ("sd", "Cycle SD (Nm/°)", 115)):
             self.table.heading(key, text=label)
             self.table.column(key, anchor="center", width=width, minwidth=60)
         self.table.pack(fill="x", padx=8, pady=5)
+        self.summary = ctk.CTkLabel(parent, text="", anchor="w", justify="left", font=("Arial", 14))
+        self.summary.pack(fill="x", padx=10)
+        self.fit_choice = ctk.CTkSegmentedButton(
+            parent, values=["Primary fit", "Near-neutral fit"], command=self.show_fit,
+            font=("Arial", 13), state="disabled",
+        )
+        self.fit_choice.set("Primary fit")
+        self.fit_choice.pack(anchor="w", padx=9, pady=5)
 
         self.canvas = tk.Canvas(parent, background="white", highlightthickness=0, height=245)
         self.canvas.pack(fill="both", expand=True, padx=8, pady=4)
@@ -112,6 +124,9 @@ class StiffnessResults:
         self.result = None
         self.export_button.configure(state="disabled")
         self.table.delete(*self.table.get_children())
+        self.summary.configure(text="")
+        self.fit_choice.set("Primary fit")
+        self.fit_choice.configure(state="disabled")
         self.draw()
         self.status.configure(text=f"Analysing {path.name}" if path else "Finding the latest completed loaded run…")
         self.request += 1
@@ -145,10 +160,19 @@ class StiffnessResults:
                 self.status.configure(text=f"{selected.name}\n{error}" if selected else error)
                 continue
             self.result = result
-            for row in result["branches"]:
-                low, high = row["fit_window_deg"]
-                self.table.insert("", "end", values=(row["direction"], f"{low:+} to {high:+}",
-                                 f"{row['mean_nm_per_deg']:.4f}", f"{row['sd_nm_per_deg']:.4f}"))
+            self.fit_choice.configure(state="normal" if result["near_neutral_branches"] else "disabled")
+            self.show_fit("Primary fit")
+            neutral = []
+            torque = []
+            for sweep in result["neutral_by_sweep"]:
+                angle = sweep["angle_deg"]
+                roots = sweep["zero_crossings_deg"]
+                label = f"{angle:+.2f}°" if angle is not None else ("multiple crossings" if roots else "no crossing")
+                neutral.append(f"{sweep['direction']} {label}")
+                torque.append(f"{sweep['resisting_torque_at_zero_nm']:+.2f} Nm")
+            self.summary.configure(text=f"Neutral angle   {'   |   '.join(neutral)}\n"
+                                   f"Torque at 0°   {' / '.join(torque)} (inc. / dec.)\n"
+                                   f"Corrected loop area (±8°)   {result['corrected_loop_area_j']:.3f} J")
             reference = result["reference_name"] or Path(result["empty_metadata"]).name
             excluded = result["excluded_cycles"]
             self.status.configure(text=f"AFO {result['specimen_id']} · {result['requested_speed_deg_s']:g}°/s requested\n"
@@ -158,6 +182,17 @@ class StiffnessResults:
             self.export_button.configure(state="normal")
             self.draw()
         self.parent.after(120, self.poll)
+
+    def show_fit(self, choice):
+        if self.result is None:
+            return
+        key = "near_neutral_branches" if choice == "Near-neutral fit" else "branches"
+        self.table.delete(*self.table.get_children())
+        for row in self.result[key]:
+            low, high = row["fit_window_deg"]
+            self.table.insert("", "end", values=(row["direction"], f"{low:+} to {high:+}",
+                             f"{row['mean_nm_per_deg']:.4f}", f"{row['sd_nm_per_deg']:.4f}"))
+        self.draw()
 
     def export(self):
         if self.result is None:
@@ -185,7 +220,7 @@ class StiffnessResults:
         traces = [self.result[key] for key in ("fitted_torque_nm", "empty_torque_nm", "corrected_torque_nm")]
         values = [-value for pair in traces for curve in pair for value in curve]
         limit = max(max(map(abs, values)) * 1.05, 0.01)
-        left, right, top, bottom = 58, width - 14, 34, height - 48
+        left, right, top, bottom = 72, width - 20, 35, height - 62
 
         def x(angle):
             return left + (angle + 8) / 16 * (right - left)
@@ -193,22 +228,25 @@ class StiffnessResults:
         def y(torque):
             return top + (limit - torque) / (2 * limit) * (bottom - top)
 
-        for low, high in WINDOWS:
+        windows = (self.result["near_neutral_branches"][:2]
+                   if self.fit_choice.get() == "Near-neutral fit" else self.result["branches"][:2])
+        for row in windows:
+            low, high = row["fit_window_deg"]
             canvas.create_rectangle(x(low), top, x(high), bottom, fill="#e6f3eb", outline="")
         for level in (-limit, -limit / 2, 0, limit / 2, limit):
             canvas.create_line(left, y(level), right, y(level), fill="#cbd5e1")
-            canvas.create_text(left - 5, y(level), text=f"{level:.2g}", anchor="e", font=("Arial", 9))
+            canvas.create_text(left - 7, y(level), text=f"{level:.2g}", anchor="e", font=("Arial", 12))
         for angle in (-8, -4, 0, 4, 8):
-            canvas.create_text(x(angle), bottom + 12, text=f"{angle:g}", font=("Arial", 9))
-        canvas.create_text(14, (top + bottom) / 2, text="Resisting torque (Nm)", angle=90, font=("Arial", 9))
-        canvas.create_text((left + right) / 2, bottom + 27, text="Measured rotary angle (°)", font=("Arial", 9))
-        canvas.create_text((left + right) / 2, height - 8, text="Solid increasing · Dashed decreasing", font=("Arial", 8))
+            canvas.create_text(x(angle), bottom + 14, text=f"{angle:g}", font=("Arial", 12))
+        canvas.create_text(14, (top + bottom) / 2, text="Resisting torque (Nm)", angle=90, font=("Arial", 12))
+        canvas.create_text((left + right) / 2, bottom + 34, text="Measured rotary angle (°)", font=("Arial", 12))
+        canvas.create_text((left + right) / 2, height - 9, text="Solid increasing · Dashed decreasing", font=("Arial", 11))
 
         for i, (pair, label, colour) in enumerate(zip(traces, ("Fitted", "Empty", "Corrected"),
                                                      ("#2559a5", "#ad5a20", "#167455"))):
             canvas.create_text(left + i * (right - left) / 3, 15, text=label, anchor="w",
-                               fill=colour, font=("Arial", 10, "bold"))
+                               fill=colour, font=("Arial", 12, "bold"))
             for index, curve in enumerate(pair):
                 points = [coordinate for a, t in zip(self.result["angles_deg"], curve)
                           for coordinate in (x(a), y(-t))]
-                canvas.create_line(*points, fill=colour, width=2, dash=(5, 3) if index else ())
+                canvas.create_line(*points, fill=colour, width=3 if label == "Corrected" else 2, dash=(5, 3) if index else ())
