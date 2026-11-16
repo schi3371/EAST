@@ -4566,7 +4566,7 @@ class MyInterface(OperatorView):
         if self.output_tabs.get() == "Plot":
             self.master.after_idle(self.update_plot)
         elif self.output_tabs.get() == "Stiffness Results":
-            self.stiffness_results.show_latest()
+            self.stiffness_results.show_session_run()
 
     def create_plot_window(self, *, select_plot=True):
         """Initialise the embedded Plot tab; retain the legacy caller name."""

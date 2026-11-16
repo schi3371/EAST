@@ -6,7 +6,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image
 
-from east_core import AFO_MATERIALS, FITTED_SPEED_SCREEN, preset_values_modified
+from east_core import APP_DIR, AFO_MATERIALS, FITTED_SPEED_SCREEN, preset_values_modified
 from east_gui_tabs import OutputTabs
 from east_motion_model import ORIGINAL_METHOD, UPDATED_METHOD, WIDER_METHOD, selected_method
 
@@ -533,7 +533,9 @@ class OperatorView:
         terminal_tab = self.output_tabs.add("Session Terminal")
         self.plot_container = self.output_tabs.add("Plot")
         from east_stiffness_view import StiffnessResults
-        self.stiffness_results = StiffnessResults(self.output_tabs.add("Stiffness Results"))
+        app_base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR
+        logs_folder = app_base / self.system_config["logging"]["output_directory"]
+        self.stiffness_results = StiffnessResults(self.output_tabs.add("Stiffness Results"), logs_folder)
         terminal_tab.grid_columnconfigure(0, weight=1)
         terminal_tab.grid_rowconfigure(0, weight=1)
         self.terminal = ctk.CTkTextbox(

@@ -3,6 +3,7 @@ import json
 import queue
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, ttk
 
@@ -11,9 +12,34 @@ import customtkinter as ctk
 from east_stiffness import STANDARD_EMPTY_NAME, WINDOWS, analyse_stiffness
 
 
+def latest_loaded_run(folder):
+    latest = None
+    for path in folder.glob("*_metadata.json"):
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8-sig"))
+            params = metadata.get("test_parameters") or {}
+            recorder = metadata.get("csv_recorder") or {}
+            if (metadata.get("run_status") != "completed" or metadata.get("outcome_pending_cleanup")
+                    or params.get("test_type") != "afo_test" or recorder.get("error")
+                    or not recorder.get("worker_complete")
+                    or str(params.get("file_prefix", "")).startswith("EMPTYCalibration_Bc5aaf905_")):
+                continue
+            timestamp = metadata.get("completed_at") or metadata.get("started_at")
+            recorded_time = datetime.fromisoformat(timestamp).timestamp() if timestamp else path.stat().st_mtime
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        candidate = (recorded_time, path)
+        if latest is None or candidate > latest:
+            latest = candidate
+    if latest is None:
+        raise ValueError(f"No completed loaded AFO recording found in {folder}.")
+    return latest[1]
+
+
 class StiffnessResults:
-    def __init__(self, parent):
+    def __init__(self, parent, logs_folder):
         self.parent = parent
+        self.logs_folder = logs_folder
         self.latest = None
         self.selected = None
         self.result = None
@@ -50,17 +76,18 @@ class StiffnessResults:
     def completed(self, path, visible):
         self.latest = Path(path)
         if visible:
-            self.show_latest()
+            self.show_session_run()
+
+    def show_session_run(self):
+        if self.latest is not None and self.selected != self.latest:
+            self.calculate(self.latest)
 
     def show_latest(self):
-        if self.latest is not None:
-            if self.selected != self.latest:
-                self.calculate(self.latest)
-        else:
-            self.status.configure(text="No completed loaded run in this session. Open saved run to analyse a recording.")
+        self.calculate(None)
 
     def open_run(self):
         path = filedialog.askopenfilename(parent=self.parent, title="Open loaded run metadata",
+                                          initialdir=self.logs_folder,
                                           filetypes=[("EAST metadata", "*_metadata.json")])
         if path:
             self.calculate(Path(path))
@@ -70,7 +97,7 @@ class StiffnessResults:
             self.status.configure(text="Open a loaded run first.")
             return
         path = filedialog.askopenfilename(parent=self.parent, title="Choose matching empty fixture metadata",
-                                          initialdir=self.selected.parent,
+                                          initialdir=self.logs_folder,
                                           filetypes=[("EAST metadata", "*_metadata.json")])
         if path:
             self.calculate(self.selected, Path(path))
@@ -81,22 +108,24 @@ class StiffnessResults:
 
     def calculate(self, path, reference=None, *, standard_empty=False):
         self.selected = path
-        self.standard_empty_button.configure(state="normal")
+        self.standard_empty_button.configure(state="normal" if path else "disabled")
         self.result = None
         self.export_button.configure(state="disabled")
         self.table.delete(*self.table.get_children())
         self.draw()
-        self.status.configure(text=f"Analysing {path.name}")
+        self.status.configure(text=f"Analysing {path.name}" if path else "Finding the latest completed loaded run…")
         self.request += 1
         token = self.request
 
         def worker():
+            selected = path
             try:
-                result = analyse_stiffness(path, reference, standard_empty=standard_empty)
+                selected = selected or latest_loaded_run(self.logs_folder)
+                result = analyse_stiffness(selected, reference, standard_empty=standard_empty)
             except (OSError, ValueError, KeyError, TypeError) as error:
-                self.replies.put((token, None, str(error)))
+                self.replies.put((token, selected, None, str(error)))
             else:
-                self.replies.put((token, result, None))
+                self.replies.put((token, selected, result, None))
 
         threading.Thread(target=worker, daemon=True).start()
         if token == 1:
@@ -105,13 +134,15 @@ class StiffnessResults:
     def poll(self):
         while True:
             try:
-                token, result, error = self.replies.get_nowait()
+                token, selected, result, error = self.replies.get_nowait()
             except queue.Empty:
                 break
             if token != self.request:
                 continue
+            self.selected = selected
+            self.standard_empty_button.configure(state="normal" if selected else "disabled")
             if error is not None:
-                self.status.configure(text=f"{self.selected.name}\n{error}")
+                self.status.configure(text=f"{selected.name}\n{error}" if selected else error)
                 continue
             self.result = result
             for row in result["branches"]:
