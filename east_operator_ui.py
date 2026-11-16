@@ -739,6 +739,8 @@ def draw_operator_plot(canvas, title, angle_data, torque_data):
         y_min, y_max = min(torque_data), max(torque_data)
     else:
         x_min, x_max, y_min, y_max = 0.0, 1.0, 0.0, 1.0
+    x_min, x_max = min(x_min, 0), max(x_max, 0)
+    y_min, y_max = min(y_min, 0), max(y_max, 0)
     if x_min == x_max:
         x_min -= 0.5
         x_max += 0.5
@@ -750,22 +752,21 @@ def draw_operator_plot(canvas, title, angle_data, torque_data):
     x_min, x_max = x_min - x_pad, x_max + x_pad
     y_min, y_max = y_min - y_pad, y_max + y_pad
 
-    for index in range(6):
-        fraction = index / 5.0
-        x = x0 + fraction * (x1 - x0)
-        y = y1 - fraction * (y1 - y0)
-        canvas.create_line(x, y0, x, y1, fill="#e2e8f0", tags="plot")
-        canvas.create_line(x0, y, x1, y, fill="#e2e8f0", tags="plot")
-        canvas.create_text(
-            x, y1 + 18,
-            text=f"{x_min + fraction * (x_max - x_min):.2f}",
-            fill=MUTED, font=("Arial", 9), tags="plot",
-        )
-        canvas.create_text(
-            x0 - 10, y,
-            text=f"{y_min + fraction * (y_max - y_min):.2f}",
-            fill=MUTED, font=("Arial", 9), anchor="e", tags="plot",
-        )
+    def ticks(lower, upper):
+        spacing = (upper - lower) / 5
+        regular = (lower + i * spacing for i in range(6))
+        return sorted([0] + [v for v in regular if abs(v) >= max(spacing * 0.45, 0.005)])
+
+    for angle in ticks(x_min, x_max):
+        x = x0 + (angle - x_min) / (x_max - x_min) * (x1 - x0)
+        canvas.create_line(x, y0, x, y1, fill="#64748b" if angle == 0 else "#e2e8f0", tags="plot")
+        canvas.create_text(x, y1 + 18, text="0°" if angle == 0 else f"{angle:.2f}",
+                           fill=MUTED, font=("Arial", 9), tags="plot")
+    for torque in ticks(y_min, y_max):
+        y = y1 - (torque - y_min) / (y_max - y_min) * (y1 - y0)
+        canvas.create_line(x0, y, x1, y, fill="#64748b" if torque == 0 else "#e2e8f0", tags="plot")
+        canvas.create_text(x0 - 10, y, text="0 Nm" if torque == 0 else f"{torque:.2f}",
+                           fill=MUTED, font=("Arial", 9), anchor="e", tags="plot")
     canvas.create_rectangle(x0, y0, x1, y1, outline=TEXT, width=2, tags="plot")
     canvas.create_line(
         x1 - 145, y0 + 18, x1 - 105, y0 + 18,

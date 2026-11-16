@@ -236,11 +236,12 @@ class StiffnessResults:
         for row in windows:
             low, high = row["fit_window_deg"]
             canvas.create_rectangle(x(low), top, x(high), bottom, fill="#e6f3eb", outline="")
+        canvas.create_line(x(0), top, x(0), bottom, fill="#64748b")
         for level in (-limit, -limit / 2, 0, limit / 2, limit):
-            canvas.create_line(left, y(level), right, y(level), fill="#cbd5e1")
-            canvas.create_text(left - 7, y(level), text=f"{level:.2g}", anchor="e", font=("Arial", 12))
+            canvas.create_line(left, y(level), right, y(level), fill="#64748b" if level == 0 else "#cbd5e1")
+            canvas.create_text(left - 7, y(level), text="0 Nm" if level == 0 else f"{level:.2g}", anchor="e", font=("Arial", 12))
         for angle in (-8, -4, 0, 4, 8):
-            canvas.create_text(x(angle), bottom + 14, text=f"{angle:g}", font=("Arial", 12))
+            canvas.create_text(x(angle), bottom + 14, text="0°" if angle == 0 else f"{angle:g}", font=("Arial", 12))
         canvas.create_text(14, (top + bottom) / 2, text="Resisting torque (Nm)", angle=90, font=("Arial", 12))
         canvas.create_text((left + right) / 2, bottom + 34, text="Measured rotary angle (°)", font=("Arial", 12))
         canvas.create_text((left + right) / 2, height - 9, text="Solid increasing · Dashed decreasing", font=("Arial", 11))
