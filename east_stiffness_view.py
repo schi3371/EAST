@@ -46,7 +46,10 @@ class StiffnessResults:
         self.replies = queue.Queue()
         self.request = 0
 
-        controls = ctk.CTkFrame(parent)
+        self.content = ctk.CTkScrollableFrame(parent, orientation="vertical", fg_color="transparent")
+        self.content.pack(fill="both", expand=True, padx=4, pady=4)
+        content = self.content
+        controls = ctk.CTkFrame(content)
         controls.pack(fill="x", padx=6, pady=6)
         for label, command in (("Latest run", self.show_latest), ("Open saved run", self.open_run),
                                ("Choose empty reference", self.choose_reference)):
@@ -55,34 +58,34 @@ class StiffnessResults:
         self.export_button.pack(side="left", padx=3)
 
         self.standard_empty_button = ctk.CTkButton(
-            parent, text=STANDARD_EMPTY_NAME, command=self.choose_standard_empty, state="disabled",
+            content, text=STANDARD_EMPTY_NAME, command=self.choose_standard_empty, state="disabled",
         )
         self.standard_empty_button.pack(anchor="w", padx=9, pady=(0, 6))
 
-        self.status = ctk.CTkLabel(parent, text="Complete a loaded test or open its saved metadata.",
+        self.status = ctk.CTkLabel(content, text="Complete a loaded test or open its saved metadata.",
                                    anchor="w", justify="left", wraplength=520, font=("Arial", 15))
         self.status.pack(fill="x", padx=10)
         style = ttk.Style(parent)
         style.configure("Stiffness.Treeview", font=("Arial", 13), rowheight=29)
         style.configure("Stiffness.Treeview.Heading", font=("Arial", 12, "bold"))
-        self.table = ttk.Treeview(parent, columns=("sweep", "window", "slope", "sd"),
+        self.table = ttk.Treeview(content, columns=("sweep", "window", "slope", "sd"),
                                   show="headings", height=4, style="Stiffness.Treeview")
         for key, label, width in (("sweep", "Sweep", 92), ("window", "Fit window (°)", 98),
                                   ("slope", "Stiffness (Nm/°)", 105), ("sd", "Cycle SD (Nm/°)", 115)):
             self.table.heading(key, text=label)
             self.table.column(key, anchor="center", width=width, minwidth=60)
         self.table.pack(fill="x", padx=8, pady=5)
-        self.summary = ctk.CTkLabel(parent, text="", anchor="w", justify="left", font=("Arial", 14))
+        self.summary = ctk.CTkLabel(content, text="", anchor="w", justify="left", font=("Arial", 14))
         self.summary.pack(fill="x", padx=10)
         self.fit_choice = ctk.CTkSegmentedButton(
-            parent, values=["Primary fit", "Near-neutral fit"], command=self.show_fit,
+            content, values=["Primary fit", "Near-neutral fit"], command=self.show_fit,
             font=("Arial", 13), state="disabled",
         )
         self.fit_choice.set("Primary fit")
         self.fit_choice.pack(anchor="w", padx=9, pady=5)
 
-        self.canvas = tk.Canvas(parent, background="white", highlightthickness=0, height=245)
-        self.canvas.pack(fill="both", expand=True, padx=8, pady=4)
+        self.canvas = tk.Canvas(content, background="white", highlightthickness=0, height=460)
+        self.canvas.pack(fill="x", padx=8, pady=4)
         self.canvas.bind("<Configure>", lambda _event: self.draw())
 
     def completed(self, path, visible):
