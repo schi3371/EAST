@@ -193,14 +193,13 @@ def analyse_stiffness(path, reference_path=None, *, standard_empty=False):
     separation = [abs(a - b) for a, b in zip(*corrected_mean)]
     loop_area = sum((a + b) / 2 for a, b in zip(separation, separation[1:])) * math.radians(0.25)
 
-    return dict(analysis_version=2, specimen_id=loaded["test_parameters"]["afo_id"],
+    return dict(analysis_version=3, specimen_id=loaded["test_parameters"]["afo_id"],
                 loaded_metadata=str(path), empty_metadata=str(reference_path),
                 reference_name=reference_name,
                 requested_speed_deg_s=loaded["test_parameters"][SETTINGS[0]],
                 conditioning_cycle=1, cycles=list(fitted), excluded_cycles=excluded,
                 empty_cycles=list(baseline), empty_excluded_cycles=empty_excluded,
                 branches=fit_branches(primary_windows), primary_fit_windows_deg=primary_windows,
-                near_neutral_branches=fit_branches(WINDOWS) if primary_windows == WIDE_WINDOWS else [],
                 neutral_by_sweep=neutral, corrected_loop_area_j=loop_area,
                 loop_area_window_deg=(ANGLES[0], ANGLES[-1]),
                 angles_deg=ANGLES, fitted_torque_nm=mean_curves(fitted.values()),

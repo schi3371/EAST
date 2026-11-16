@@ -77,13 +77,6 @@ class StiffnessResults:
         self.table.pack(fill="x", padx=8, pady=5)
         self.summary = ctk.CTkLabel(content, text="", anchor="w", justify="left", font=("Arial", 14))
         self.summary.pack(fill="x", padx=10)
-        self.fit_choice = ctk.CTkSegmentedButton(
-            content, values=["Primary fit", "Near-neutral fit"], command=self.show_fit,
-            font=("Arial", 13), state="disabled",
-        )
-        self.fit_choice.set("Primary fit")
-        self.fit_choice.pack(anchor="w", padx=9, pady=5)
-
         self.canvas = tk.Canvas(content, background="white", highlightthickness=0, height=460)
         self.canvas.pack(fill="x", padx=8, pady=4)
         self.canvas.bind("<Configure>", lambda _event: self.draw())
@@ -128,8 +121,6 @@ class StiffnessResults:
         self.export_button.configure(state="disabled")
         self.table.delete(*self.table.get_children())
         self.summary.configure(text="")
-        self.fit_choice.set("Primary fit")
-        self.fit_choice.configure(state="disabled")
         self.draw()
         self.status.configure(text=f"Analysing {path.name}" if path else "Finding the latest completed loaded run…")
         self.request += 1
@@ -163,8 +154,10 @@ class StiffnessResults:
                 self.status.configure(text=f"{selected.name}\n{error}" if selected else error)
                 continue
             self.result = result
-            self.fit_choice.configure(state="normal" if result["near_neutral_branches"] else "disabled")
-            self.show_fit("Primary fit")
+            for row in result["branches"]:
+                low, high = row["fit_window_deg"]
+                self.table.insert("", "end", values=(row["direction"], f"{low:+} to {high:+}",
+                                  f"{row['mean_nm_per_deg']:.4f}", f"{row['sd_nm_per_deg']:.4f}"))
             neutral = []
             torque = []
             for sweep in result["neutral_by_sweep"]:
@@ -185,17 +178,6 @@ class StiffnessResults:
             self.export_button.configure(state="normal")
             self.draw()
         self.parent.after(120, self.poll)
-
-    def show_fit(self, choice):
-        if self.result is None:
-            return
-        key = "near_neutral_branches" if choice == "Near-neutral fit" else "branches"
-        self.table.delete(*self.table.get_children())
-        for row in self.result[key]:
-            low, high = row["fit_window_deg"]
-            self.table.insert("", "end", values=(row["direction"], f"{low:+} to {high:+}",
-                             f"{row['mean_nm_per_deg']:.4f}", f"{row['sd_nm_per_deg']:.4f}"))
-        self.draw()
 
     def export(self):
         if self.result is None:
@@ -231,10 +213,7 @@ class StiffnessResults:
         def y(torque):
             return top + (limit - torque) / (2 * limit) * (bottom - top)
 
-        windows = (self.result["near_neutral_branches"][:2]
-                   if self.fit_choice.get() == "Near-neutral fit" else self.result["branches"][:2])
-        for row in windows:
-            low, high = row["fit_window_deg"]
+        for low, high in self.result["primary_fit_windows_deg"]:
             canvas.create_rectangle(x(low), top, x(high), bottom, fill="#e6f3eb", outline="")
         canvas.create_line(x(0), top, x(0), bottom, fill="#64748b")
         for level in (-limit, -limit / 2, 0, limit / 2, limit):
