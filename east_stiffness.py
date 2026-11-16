@@ -149,8 +149,8 @@ def analyse_stiffness(path, reference_path=None, *, standard_empty=False):
 
     fitted, excluded = read_curves(path, loaded)
     baseline, empty_excluded = read_curves(reference_path, empty)
-    if len(fitted) < 3:
-        raise ValueError(f"Need at least three usable cycles after conditioning. Found {len(fitted)}.")
+    if len(fitted) < 2:
+        raise ValueError(f"Need at least two usable cycles after conditioning. Found {len(fitted)}.")
     if len(baseline) < 2:
         raise ValueError("The empty reference needs at least two usable cycles after conditioning.")
     empty_mean = mean_curves(baseline.values())
