@@ -1,0 +1,1453 @@
+{
+  "candidate_zero_motor_turns": 5.960464477539062e-07,
+  "centring_mean_limit_deg": 0.04,
+  "centring_target_deg": 0.0,
+  "completed_at": "2026-11-23T12:53:48.075404+11:00",
+  "control_settings": {
+    "acceleration_deg_s2": 5.0,
+    "nominal_deg_per_turn": 2.055,
+    "speed_deg_s": 1.0
+  },
+  "corrections": [],
+  "final_observation": {
+    "completed_at_monotonic_s": 1818923.203,
+    "duration_s": 0.5,
+    "max_deg": 0.021411000125027613,
+    "mean_deg": 0.006670565351649957,
+    "min_deg": -0.01621620629566678,
+    "motor_final_turns": 5.960464477539062e-07,
+    "motor_max_turns": 1.519918441772461e-05,
+    "motor_min_turns": -5.364418029785156e-07,
+    "observation_elapsed_s": 1.0,
+    "samples": 31,
+    "settle_grace_s": 0.5,
+    "stationary_resets": 0
+  },
+  "fixture_condition": "AFO fitted",
+  "fixture_id": "1",
+  "idle_confirmed": true,
+  "machine_zero_after": {
+    "confidence": "verified",
+    "reason": "Machine zero verified for this controller session",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-23T12:53:48.050+11:00",
+      "established_by": "TLC",
+      "fixture_id": "1",
+      "generation": 443,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "adb185e0-1888-4df8-8063-027c03b56a6e",
+      "schema_version": 1
+    },
+    "session_mapping": {
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "neutral_position_turns": 5.960464477539062e-07,
+      "reference_generation": 443,
+      "reference_id": "adb185e0-1888-4df8-8063-027c03b56a6e",
+      "verification_method": "rotary_sensor_homing:bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9:1830ac9515e74c9e8b57d7fbf040ef74",
+      "verified_at": "2026-11-23T12:53:48.065+11:00"
+    },
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "machine_zero_before": {
+    "confidence": "recovery_required",
+    "reason": "Monitoring recovered; coordinate continuity not proven. Verify physical machine zero.",
+    "record": {
+      "afo_degrees_per_odrive_turn": 2.055,
+      "established_at": "2026-11-23T12:45:56.346+11:00",
+      "established_by": "TLC",
+      "fixture_id": "1",
+      "generation": 442,
+      "hardware_fingerprint": {
+        "axis": 0,
+        "configuration_digest": "b789cd07ca58f881ccf7583511dad0ccf66d50457ad3bcf9103897e5248c8831",
+        "details": {
+          "absolute_setpoints": false,
+          "circular_setpoint_range": 1.0,
+          "circular_setpoints": false,
+          "commutation_encoder": 10,
+          "commutation_mapper_offset_valid": true,
+          "commutation_mapper_scale": 7.0,
+          "load_encoder": 10,
+          "motor_type": 0,
+          "pos_vel_mapper_offset_valid": false,
+          "pos_vel_mapper_scale": 1.0,
+          "rs485_encoder_protocol_mode": 2
+        },
+        "firmware": "0.6.8",
+        "odrive_serial": "62960821023281"
+      },
+      "phase_at_neutral": null,
+      "phase_uncertainty_turns": null,
+      "phase_units": null,
+      "physical_definition": "Fixture homed to calibrated rotary zero within \u00b10.10 degrees; motor mapping anchored after stationary post-idle observation.",
+      "reference_id": "02c1c59d-0dff-4a59-b019-ec356f6076b6",
+      "schema_version": 1
+    },
+    "session_mapping": null,
+    "state_directory": "C:\\Users\\schi3371\\AppData\\Local\\EAST"
+  },
+  "motion_owner_after_cleanup": null,
+  "nominal_travel_deg": 0.0,
+  "observations": [
+    {
+      "angle_deg": 0.02611440092761086,
+      "host_monotonic_s": 1818921.156,
+      "motor_feedback_host_s": 1818921.14,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00024451559875160456,
+      "rotary_sample_host_s": 1818921.156,
+      "rotary_sequence": 165268,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013089598705050776,
+      "host_monotonic_s": 1818921.187,
+      "motor_feedback_host_s": 1818921.171,
+      "motor_turns": 5.960464477539062e-07,
+      "motor_velocity_turns_s": -0.0010044738883152604,
+      "rotary_sample_host_s": 1818921.171,
+      "rotary_sequence": 165270,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.006938997655538515,
+      "host_monotonic_s": 1818921.203,
+      "motor_feedback_host_s": 1818921.187,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.00013275595847517252,
+      "rotary_sample_host_s": 1818921.187,
+      "rotary_sequence": 165272,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009471598087685607,
+      "host_monotonic_s": 1818921.218,
+      "motor_feedback_host_s": 1818921.203,
+      "motor_turns": 4.649162292480469e-06,
+      "motor_velocity_turns_s": -0.0007884065853431821,
+      "rotary_sample_host_s": 1818921.203,
+      "rotary_sequence": 165274,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.019240199754591458,
+      "host_monotonic_s": 1818921.234,
+      "motor_feedback_host_s": 1818921.203,
+      "motor_turns": 4.649162292480469e-06,
+      "motor_velocity_turns_s": -0.0007884065853431821,
+      "rotary_sample_host_s": 1818921.234,
+      "rotary_sequence": 165276,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.016707599322444366,
+      "host_monotonic_s": 1818921.25,
+      "motor_feedback_host_s": 1818921.234,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 2.370776201132685e-05,
+      "rotary_sample_host_s": 1818921.234,
+      "rotary_sequence": 165278,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0021060038879170406,
+      "host_monotonic_s": 1818921.265,
+      "motor_feedback_host_s": 1818921.25,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.0004754801047965884,
+      "rotary_sample_host_s": 1818921.25,
+      "rotary_sequence": 165280,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.007662597778988811,
+      "host_monotonic_s": 1818921.296,
+      "motor_feedback_host_s": 1818921.25,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.0004754801047965884,
+      "rotary_sample_host_s": 1818921.265,
+      "rotary_sequence": 165282,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.003191404073135118,
+      "host_monotonic_s": 1818921.312,
+      "motor_feedback_host_s": 1818921.296,
+      "motor_turns": -4.172325134277344e-07,
+      "motor_velocity_turns_s": -0.0014813065063208342,
+      "rotary_sample_host_s": 1818921.296,
+      "rotary_sequence": 165284,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.023220000433695986,
+      "host_monotonic_s": 1818921.328,
+      "motor_feedback_host_s": 1818921.312,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00019980664364993572,
+      "rotary_sample_host_s": 1818921.312,
+      "rotary_sequence": 165286,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.017792999507634022,
+      "host_monotonic_s": 1818921.343,
+      "motor_feedback_host_s": 1818921.328,
+      "motor_turns": 1.138448715209961e-05,
+      "motor_velocity_turns_s": -0.0015409091720357537,
+      "rotary_sample_host_s": 1818921.328,
+      "rotary_sequence": 165288,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0013824037644383225,
+      "host_monotonic_s": 1818921.359,
+      "motor_feedback_host_s": 1818921.328,
+      "motor_turns": 1.138448715209961e-05,
+      "motor_velocity_turns_s": -0.0015409091720357537,
+      "rotary_sample_host_s": 1818921.343,
+      "rotary_sequence": 165290,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013451398766790135,
+      "host_monotonic_s": 1818921.375,
+      "motor_feedback_host_s": 1818921.359,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 1.3615496072816313e-06,
+      "rotary_sample_host_s": 1818921.359,
+      "rotary_sequence": 165292,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.007662597778988811,
+      "host_monotonic_s": 1818921.39,
+      "motor_feedback_host_s": 1818921.359,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 1.3615496072816313e-06,
+      "rotary_sample_host_s": 1818921.375,
+      "rotary_sequence": 165294,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.006085804567021569,
+      "host_monotonic_s": 1818921.406,
+      "motor_feedback_host_s": 1818921.39,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00012802275887224823,
+      "rotary_sample_host_s": 1818921.39,
+      "rotary_sequence": 165296,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.007300797717249452,
+      "host_monotonic_s": 1818921.421,
+      "motor_feedback_host_s": 1818921.406,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00012057217099936679,
+      "rotary_sample_host_s": 1818921.406,
+      "rotary_sequence": 165298,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.010918798334643043,
+      "host_monotonic_s": 1818921.437,
+      "motor_feedback_host_s": 1818921.421,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00018762740364763886,
+      "rotary_sample_host_s": 1818921.421,
+      "rotary_sequence": 165300,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.008747997964206888,
+      "host_monotonic_s": 1818921.453,
+      "motor_feedback_host_s": 1818921.437,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00013547368871513754,
+      "rotary_sample_host_s": 1818921.437,
+      "rotary_sequence": 165302,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0051299973468132976,
+      "host_monotonic_s": 1818921.468,
+      "motor_feedback_host_s": 1818921.437,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00013547368871513754,
+      "rotary_sample_host_s": 1818921.453,
+      "rotary_sequence": 165304,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.006938997655538515,
+      "host_monotonic_s": 1818921.484,
+      "motor_feedback_host_s": 1818921.468,
+      "motor_turns": 1.5079975128173828e-05,
+      "motor_velocity_turns_s": -0.0014962017303332686,
+      "rotary_sample_host_s": 1818921.468,
+      "rotary_sequence": 165306,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0010206037026989634,
+      "host_monotonic_s": 1818921.5,
+      "motor_feedback_host_s": 1818921.484,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00021743193792644888,
+      "rotary_sample_host_s": 1818921.484,
+      "rotary_sequence": 165308,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.021281407159989385,
+      "host_monotonic_s": 1818921.515,
+      "motor_feedback_host_s": 1818921.5,
+      "motor_turns": 2.2649765014648438e-06,
+      "motor_velocity_turns_s": -0.0013173861661925912,
+      "rotary_sample_host_s": 1818921.5,
+      "rotary_sequence": 165310,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00042659654425847293,
+      "host_monotonic_s": 1818921.531,
+      "motor_feedback_host_s": 1818921.5,
+      "motor_turns": 2.2649765014648438e-06,
+      "motor_velocity_turns_s": -0.0013173861661925912,
+      "rotary_sample_host_s": 1818921.515,
+      "rotary_sequence": 165312,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00802439784072817,
+      "host_monotonic_s": 1818921.546,
+      "motor_feedback_host_s": 1818921.531,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 4.607055234373547e-05,
+      "rotary_sample_host_s": 1818921.531,
+      "rotary_sequence": 165314,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00476819728510236,
+      "host_monotonic_s": 1818921.562,
+      "motor_feedback_host_s": 1818921.546,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 9.077450522454455e-05,
+      "rotary_sample_host_s": 1818921.546,
+      "rotary_sequence": 165316,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00838619790246753,
+      "host_monotonic_s": 1818921.578,
+      "motor_feedback_host_s": 1818921.546,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 9.077450522454455e-05,
+      "rotary_sample_host_s": 1818921.562,
+      "rotary_sequence": 165318,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.004406397223363001,
+      "host_monotonic_s": 1818921.593,
+      "motor_feedback_host_s": 1818921.578,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 1.626962512091268e-05,
+      "rotary_sample_host_s": 1818921.578,
+      "rotary_sequence": 165320,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0022355968529268466,
+      "host_monotonic_s": 1818921.609,
+      "motor_feedback_host_s": 1818921.593,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -5.078560207039118e-05,
+      "rotary_sample_host_s": 1818921.593,
+      "rotary_sequence": 165322,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.008256604937457723,
+      "host_monotonic_s": 1818921.625,
+      "motor_feedback_host_s": 1818921.609,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.000195084503502585,
+      "rotary_sample_host_s": 1818921.609,
+      "rotary_sequence": 165324,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0029591969764055648,
+      "host_monotonic_s": 1818921.64,
+      "motor_feedback_host_s": 1818921.625,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 1.3694076415049494e-06,
+      "rotary_sample_host_s": 1818921.625,
+      "rotary_sequence": 165326,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009109798025946247,
+      "host_monotonic_s": 1818921.656,
+      "motor_feedback_host_s": 1818921.625,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 1.3694076415049494e-06,
+      "rotary_sample_host_s": 1818921.64,
+      "rotary_sequence": 165328,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.005491797408581078,
+      "host_monotonic_s": 1818921.671,
+      "motor_feedback_host_s": 1818921.656,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00013547985872719437,
+      "rotary_sample_host_s": 1818921.671,
+      "rotary_sequence": 165330,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0011501966677087694,
+      "host_monotonic_s": 1818921.687,
+      "motor_feedback_host_s": 1818921.656,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00013547985872719437,
+      "rotary_sample_host_s": 1818921.671,
+      "rotary_sequence": 165332,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0051299973468132976,
+      "host_monotonic_s": 1818921.703,
+      "motor_feedback_host_s": 1818921.687,
+      "motor_turns": 4.708766937255859e-06,
+      "motor_velocity_turns_s": -0.0008107429603114724,
+      "rotary_sample_host_s": 1818921.687,
+      "rotary_sequence": 165334,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.004044597161623642,
+      "host_monotonic_s": 1818921.718,
+      "motor_feedback_host_s": 1818921.703,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -9.54872157308273e-05,
+      "rotary_sample_host_s": 1818921.703,
+      "rotary_sequence": 165336,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.006938997655538515,
+      "host_monotonic_s": 1818921.734,
+      "motor_feedback_host_s": 1818921.718,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 2.3722534024273045e-05,
+      "rotary_sample_host_s": 1818921.734,
+      "rotary_sequence": 165338,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.010195198211164325,
+      "host_monotonic_s": 1818921.75,
+      "motor_feedback_host_s": 1818921.734,
+      "motor_turns": 4.589557647705078e-06,
+      "motor_velocity_turns_s": -0.0008256431319750845,
+      "rotary_sample_host_s": 1818921.734,
+      "rotary_sequence": 165340,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.017069399384155304,
+      "host_monotonic_s": 1818921.765,
+      "motor_feedback_host_s": 1818921.734,
+      "motor_turns": 4.589557647705078e-06,
+      "motor_velocity_turns_s": -0.0008256431319750845,
+      "rotary_sample_host_s": 1818921.75,
+      "rotary_sequence": 165342,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.030817801730194105,
+      "host_monotonic_s": 1818921.781,
+      "motor_feedback_host_s": 1818921.734,
+      "motor_turns": 4.589557647705078e-06,
+      "motor_velocity_turns_s": -0.0008256431319750845,
+      "rotary_sample_host_s": 1818921.765,
+      "rotary_sequence": 165344,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.012004198519832698,
+      "host_monotonic_s": 1818921.796,
+      "motor_feedback_host_s": 1818921.765,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020253834372851998,
+      "rotary_sample_host_s": 1818921.796,
+      "rotary_sequence": 165346,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.003320997038144924,
+      "host_monotonic_s": 1818921.812,
+      "motor_feedback_host_s": 1818921.765,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020253834372851998,
+      "rotary_sample_host_s": 1818921.812,
+      "rotary_sequence": 165348,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0021060038879170406,
+      "host_monotonic_s": 1818921.828,
+      "motor_feedback_host_s": 1818921.765,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020253834372851998,
+      "rotary_sample_host_s": 1818921.828,
+      "rotary_sequence": 165350,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.006577197593770734,
+      "host_monotonic_s": 1818921.843,
+      "motor_feedback_host_s": 1818921.828,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 9.823253640206531e-05,
+      "rotary_sample_host_s": 1818921.843,
+      "rotary_sequence": 165352,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009833398149424966,
+      "host_monotonic_s": 1818921.859,
+      "motor_feedback_host_s": 1818921.828,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 9.823253640206531e-05,
+      "rotary_sample_host_s": 1818921.859,
+      "rotary_sequence": 165354,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013089598705050776,
+      "host_monotonic_s": 1818921.875,
+      "motor_feedback_host_s": 1818921.859,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.0029071038588881493,
+      "rotary_sample_host_s": 1818921.875,
+      "rotary_sequence": 165356,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00838619790246753,
+      "host_monotonic_s": 1818921.89,
+      "motor_feedback_host_s": 1818921.859,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.0029071038588881493,
+      "rotary_sample_host_s": 1818921.89,
+      "rotary_sequence": 165358,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.014174998890268853,
+      "host_monotonic_s": 1818921.906,
+      "motor_feedback_host_s": 1818921.906,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00018019102571997792,
+      "rotary_sample_host_s": 1818921.906,
+      "rotary_sequence": 165360,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.016707599322444366,
+      "host_monotonic_s": 1818921.921,
+      "motor_feedback_host_s": 1818921.906,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00018019102571997792,
+      "rotary_sample_host_s": 1818921.921,
+      "rotary_sequence": 165362,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01815479956937338,
+      "host_monotonic_s": 1818921.937,
+      "motor_feedback_host_s": 1818921.937,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020254305854905397,
+      "rotary_sample_host_s": 1818921.937,
+      "rotary_sequence": 165364,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009109798025946247,
+      "host_monotonic_s": 1818921.953,
+      "motor_feedback_host_s": 1818921.937,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020254305854905397,
+      "rotary_sample_host_s": 1818921.953,
+      "rotary_sequence": 165366,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.003553204134874477,
+      "host_monotonic_s": 1818921.984,
+      "motor_feedback_host_s": 1818921.968,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -4.3325697333784774e-05,
+      "rotary_sample_host_s": 1818921.968,
+      "rotary_sequence": 165368,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01164239845809334,
+      "host_monotonic_s": 1818922.0,
+      "motor_feedback_host_s": 1818921.968,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -4.3325697333784774e-05,
+      "rotary_sample_host_s": 1818921.984,
+      "rotary_sequence": 165370,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0188783996928521,
+      "host_monotonic_s": 1818922.015,
+      "motor_feedback_host_s": 1818922.0,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.00023703998886048794,
+      "rotary_sample_host_s": 1818922.0,
+      "rotary_sequence": 165372,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.006577197593770734,
+      "host_monotonic_s": 1818922.031,
+      "motor_feedback_host_s": 1818922.0,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.00023703998886048794,
+      "rotary_sample_host_s": 1818922.015,
+      "rotary_sequence": 165374,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0015119967294481285,
+      "host_monotonic_s": 1818922.046,
+      "motor_feedback_host_s": 1818922.031,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.0001801931211957708,
+      "rotary_sample_host_s": 1818922.031,
+      "rotary_sequence": 165376,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.02611440092761086,
+      "host_monotonic_s": 1818922.062,
+      "motor_feedback_host_s": 1818922.031,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.0001801931211957708,
+      "rotary_sample_host_s": 1818922.046,
+      "rotary_sequence": 165378,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.003682797099884283,
+      "host_monotonic_s": 1818922.078,
+      "motor_feedback_host_s": 1818922.062,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.00011782965157181025,
+      "rotary_sample_host_s": 1818922.062,
+      "rotary_sequence": 165380,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01164239845809334,
+      "host_monotonic_s": 1818922.093,
+      "motor_feedback_host_s": 1818922.062,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.00011782965157181025,
+      "rotary_sample_host_s": 1818922.078,
+      "rotary_sequence": 165382,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009471598087685607,
+      "host_monotonic_s": 1818922.109,
+      "motor_feedback_host_s": 1818922.093,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00014018046204000711,
+      "rotary_sample_host_s": 1818922.093,
+      "rotary_sequence": 165384,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.010918798334643043,
+      "host_monotonic_s": 1818922.125,
+      "motor_feedback_host_s": 1818922.093,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00014018046204000711,
+      "rotary_sample_host_s": 1818922.109,
+      "rotary_sequence": 165386,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0062153975320597965,
+      "host_monotonic_s": 1818922.14,
+      "motor_feedback_host_s": 1818922.109,
+      "motor_turns": 3.2782554626464844e-06,
+      "motor_velocity_turns_s": 0.00023979997786227614,
+      "rotary_sample_host_s": 1818922.125,
+      "rotary_sequence": 165388,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.008980205060936441,
+      "host_monotonic_s": 1818922.156,
+      "motor_feedback_host_s": 1818922.14,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -5.8223249652655795e-05,
+      "rotary_sample_host_s": 1818922.14,
+      "rotary_sequence": 165390,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013813198828529494,
+      "host_monotonic_s": 1818922.203,
+      "motor_feedback_host_s": 1818922.187,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 8.33393496577628e-05,
+      "rotary_sample_host_s": 1818922.203,
+      "rotary_sequence": 165398,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0062153975320597965,
+      "host_monotonic_s": 1818922.234,
+      "motor_feedback_host_s": 1818922.203,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.0001950978912645951,
+      "rotary_sample_host_s": 1818922.218,
+      "rotary_sequence": 165400,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.012004198519832698,
+      "host_monotonic_s": 1818922.25,
+      "motor_feedback_host_s": 1818922.234,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00019978289492428303,
+      "rotary_sample_host_s": 1818922.234,
+      "rotary_sequence": 165402,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01815479956937338,
+      "host_monotonic_s": 1818922.265,
+      "motor_feedback_host_s": 1818922.234,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00019978289492428303,
+      "rotary_sample_host_s": 1818922.25,
+      "rotary_sequence": 165404,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.014898599013747571,
+      "host_monotonic_s": 1818922.281,
+      "motor_feedback_host_s": 1818922.265,
+      "motor_turns": -1.7881393432617188e-07,
+      "motor_velocity_turns_s": -0.0007213206263259053,
+      "rotary_sample_host_s": 1818922.281,
+      "rotary_sequence": 165407,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.014536798952008212,
+      "host_monotonic_s": 1818922.296,
+      "motor_feedback_host_s": 1818922.281,
+      "motor_turns": 4.172325134277344e-07,
+      "motor_velocity_turns_s": -4.331654781708494e-05,
+      "rotary_sample_host_s": 1818922.296,
+      "rotary_sequence": 165409,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.007300797717249452,
+      "host_monotonic_s": 1818922.312,
+      "motor_feedback_host_s": 1818922.281,
+      "motor_turns": 4.172325134277344e-07,
+      "motor_velocity_turns_s": -4.331654781708494e-05,
+      "rotary_sample_host_s": 1818922.312,
+      "rotary_sequence": 165411,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0051299973468132976,
+      "host_monotonic_s": 1818922.328,
+      "motor_feedback_host_s": 1818922.312,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.000840528984554112,
+      "rotary_sample_host_s": 1818922.328,
+      "rotary_sequence": 165413,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0013824037644383225,
+      "host_monotonic_s": 1818922.343,
+      "motor_feedback_host_s": 1818922.312,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.000840528984554112,
+      "rotary_sample_host_s": 1818922.328,
+      "rotary_sequence": 165415,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.005853597470292016,
+      "host_monotonic_s": 1818922.359,
+      "motor_feedback_host_s": 1818922.343,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00018487696070224047,
+      "rotary_sample_host_s": 1818922.343,
+      "rotary_sequence": 165417,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013089598705050776,
+      "host_monotonic_s": 1818922.375,
+      "motor_feedback_host_s": 1818922.343,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.00018487696070224047,
+      "rotary_sample_host_s": 1818922.359,
+      "rotary_sequence": 165419,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009471598087685607,
+      "host_monotonic_s": 1818922.39,
+      "motor_feedback_host_s": 1818922.375,
+      "motor_turns": 5.841255187988281e-06,
+      "motor_velocity_turns_s": -0.000989539665170014,
+      "rotary_sample_host_s": 1818922.375,
+      "rotary_sequence": 165421,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0051299973468132976,
+      "host_monotonic_s": 1818922.406,
+      "motor_feedback_host_s": 1818922.375,
+      "motor_turns": 5.841255187988281e-06,
+      "motor_velocity_turns_s": -0.000989539665170014,
+      "rotary_sample_host_s": 1818922.39,
+      "rotary_sequence": 165423,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.010918798334643043,
+      "host_monotonic_s": 1818922.421,
+      "motor_feedback_host_s": 1818922.406,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.0003338876413181424,
+      "rotary_sample_host_s": 1818922.406,
+      "rotary_sequence": 165425,
+      "stationary": true
+    },
+    {
+      "angle_deg": 6.479648249069214e-05,
+      "host_monotonic_s": 1818922.437,
+      "motor_feedback_host_s": 1818922.406,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.0003338876413181424,
+      "rotary_sample_host_s": 1818922.421,
+      "rotary_sequence": 165426,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.017431199445923085,
+      "host_monotonic_s": 1818922.453,
+      "motor_feedback_host_s": 1818922.437,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00023980707919690758,
+      "rotary_sample_host_s": 1818922.437,
+      "rotary_sequence": 165429,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00838619790246753,
+      "host_monotonic_s": 1818922.468,
+      "motor_feedback_host_s": 1818922.437,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00023980707919690758,
+      "rotary_sample_host_s": 1818922.468,
+      "rotary_sequence": 165431,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0024678039496563997,
+      "host_monotonic_s": 1818922.484,
+      "motor_feedback_host_s": 1818922.468,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00010569662117632106,
+      "rotary_sample_host_s": 1818922.468,
+      "rotary_sequence": 165432,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.017431199445923085,
+      "host_monotonic_s": 1818922.5,
+      "motor_feedback_host_s": 1818922.484,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 3.119081156910397e-05,
+      "rotary_sample_host_s": 1818922.484,
+      "rotary_sequence": 165434,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.010427405307865456,
+      "host_monotonic_s": 1818922.515,
+      "motor_feedback_host_s": 1818922.5,
+      "motor_turns": -1.1920928955078125e-07,
+      "motor_velocity_turns_s": -6.062094598746626e-06,
+      "rotary_sample_host_s": 1818922.5,
+      "rotary_sequence": 165436,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00476819728510236,
+      "host_monotonic_s": 1818922.531,
+      "motor_feedback_host_s": 1818922.5,
+      "motor_turns": -1.1920928955078125e-07,
+      "motor_velocity_turns_s": -6.062094598746626e-06,
+      "rotary_sample_host_s": 1818922.531,
+      "rotary_sequence": 165438,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.016345799260676586,
+      "host_monotonic_s": 1818922.546,
+      "motor_feedback_host_s": 1818922.531,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00020255464187357575,
+      "rotary_sample_host_s": 1818922.531,
+      "rotary_sequence": 165440,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013089598705050776,
+      "host_monotonic_s": 1818922.578,
+      "motor_feedback_host_s": 1818922.546,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -9.546824730932713e-05,
+      "rotary_sample_host_s": 1818922.546,
+      "rotary_sequence": 165442,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0093420051226758,
+      "host_monotonic_s": 1818922.593,
+      "motor_feedback_host_s": 1818922.578,
+      "motor_turns": -1.1920928955078125e-07,
+      "motor_velocity_turns_s": -0.0001252704532817006,
+      "rotary_sample_host_s": 1818922.578,
+      "rotary_sequence": 165444,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0015119967294481285,
+      "host_monotonic_s": 1818922.609,
+      "motor_feedback_host_s": 1818922.593,
+      "motor_turns": 3.337860107421875e-06,
+      "motor_velocity_turns_s": -0.0017792981816455722,
+      "rotary_sample_host_s": 1818922.593,
+      "rotary_sequence": 165446,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013813198828529494,
+      "host_monotonic_s": 1818922.625,
+      "motor_feedback_host_s": 1818922.609,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 8.334773156093433e-05,
+      "rotary_sample_host_s": 1818922.609,
+      "rotary_sequence": 165448,
+      "stationary": true
+    },
+    {
+      "angle_deg": 6.479648249069214e-05,
+      "host_monotonic_s": 1818922.64,
+      "motor_feedback_host_s": 1818922.625,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": -0.0009299308294430375,
+      "rotary_sample_host_s": 1818922.625,
+      "rotary_sequence": 165450,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0025973969146662057,
+      "host_monotonic_s": 1818922.656,
+      "motor_feedback_host_s": 1818922.64,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 8.334848826052621e-05,
+      "rotary_sample_host_s": 1818922.64,
+      "rotary_sequence": 165452,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.008747997964206888,
+      "host_monotonic_s": 1818922.671,
+      "motor_feedback_host_s": 1818922.64,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 8.334848826052621e-05,
+      "rotary_sample_host_s": 1818922.656,
+      "rotary_sequence": 165454,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00802439784072817,
+      "host_monotonic_s": 1818922.687,
+      "motor_feedback_host_s": 1818922.671,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.0009969854727387428,
+      "rotary_sample_host_s": 1818922.671,
+      "rotary_sequence": 165456,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.00029700357922024523,
+      "host_monotonic_s": 1818922.703,
+      "motor_feedback_host_s": 1818922.687,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -5.8212317526340485e-05,
+      "rotary_sample_host_s": 1818922.703,
+      "rotary_sequence": 165459,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.005853597470292016,
+      "host_monotonic_s": 1818922.718,
+      "motor_feedback_host_s": 1818922.703,
+      "motor_turns": 7.748603820800781e-07,
+      "motor_velocity_turns_s": -0.00016996939666569233,
+      "rotary_sample_host_s": 1818922.703,
+      "rotary_sequence": 165460,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.007533004813979005,
+      "host_monotonic_s": 1818922.734,
+      "motor_feedback_host_s": 1818922.703,
+      "motor_turns": 7.748603820800781e-07,
+      "motor_velocity_turns_s": -0.00016996939666569233,
+      "rotary_sample_host_s": 1818922.718,
+      "rotary_sequence": 165462,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.014536798952008212,
+      "host_monotonic_s": 1818922.75,
+      "motor_feedback_host_s": 1818922.734,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.00047544314293190837,
+      "rotary_sample_host_s": 1818922.734,
+      "rotary_sequence": 165465,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.004044597161623642,
+      "host_monotonic_s": 1818922.765,
+      "motor_feedback_host_s": 1818922.734,
+      "motor_turns": -2.980232238769531e-07,
+      "motor_velocity_turns_s": -0.00047544314293190837,
+      "rotary_sample_host_s": 1818922.75,
+      "rotary_sequence": 165467,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.01621620629566678,
+      "host_monotonic_s": 1818922.781,
+      "motor_feedback_host_s": 1818922.765,
+      "motor_turns": 7.152557373046875e-07,
+      "motor_velocity_turns_s": -0.0012875545071437955,
+      "rotary_sample_host_s": 1818922.765,
+      "rotary_sequence": 165469,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.003553204134874477,
+      "host_monotonic_s": 1818922.796,
+      "motor_feedback_host_s": 1818922.765,
+      "motor_turns": 7.152557373046875e-07,
+      "motor_velocity_turns_s": -0.0012875545071437955,
+      "rotary_sample_host_s": 1818922.781,
+      "rotary_sequence": 165471,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009109798025946247,
+      "host_monotonic_s": 1818922.812,
+      "motor_feedback_host_s": 1818922.796,
+      "motor_turns": 5.960464477539063e-08,
+      "motor_velocity_turns_s": 8.335233724210411e-05,
+      "rotary_sample_host_s": 1818922.796,
+      "rotary_sequence": 165473,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0021060038879170406,
+      "host_monotonic_s": 1818922.828,
+      "motor_feedback_host_s": 1818922.812,
+      "motor_turns": -4.172325134277344e-07,
+      "motor_velocity_turns_s": -0.0009895294206216931,
+      "rotary_sample_host_s": 1818922.812,
+      "rotary_sequence": 165475,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00838619790246753,
+      "host_monotonic_s": 1818922.843,
+      "motor_feedback_host_s": 1818922.828,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00021746453421656042,
+      "rotary_sample_host_s": 1818922.828,
+      "rotary_sequence": 165477,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.017069399384155304,
+      "host_monotonic_s": 1818922.859,
+      "motor_feedback_host_s": 1818922.843,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00021746465063188225,
+      "rotary_sample_host_s": 1818922.843,
+      "rotary_sequence": 165479,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0025973969146662057,
+      "host_monotonic_s": 1818922.875,
+      "motor_feedback_host_s": 1818922.859,
+      "motor_turns": -4.172325134277344e-07,
+      "motor_velocity_turns_s": -0.00019231683108955622,
+      "rotary_sample_host_s": 1818922.859,
+      "rotary_sequence": 165481,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.0017442038261776815,
+      "host_monotonic_s": 1818922.906,
+      "motor_feedback_host_s": 1818922.89,
+      "motor_turns": 8.344650268554688e-07,
+      "motor_velocity_turns_s": -0.0015855750534683466,
+      "rotary_sample_host_s": 1818922.89,
+      "rotary_sequence": 165483,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.004044597161623642,
+      "host_monotonic_s": 1818922.921,
+      "motor_feedback_host_s": 1818922.906,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.0011161869624629617,
+      "rotary_sample_host_s": 1818922.906,
+      "rotary_sequence": 165485,
+      "stationary": true
+    },
+    {
+      "angle_deg": -0.006447604628760928,
+      "host_monotonic_s": 1818922.937,
+      "motor_feedback_host_s": 1818922.906,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.0011161869624629617,
+      "rotary_sample_host_s": 1818922.921,
+      "rotary_sequence": 165487,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00802439784072817,
+      "host_monotonic_s": 1818922.953,
+      "motor_feedback_host_s": 1818922.937,
+      "motor_turns": 7.62939453125e-06,
+      "motor_velocity_turns_s": -0.001771837007254362,
+      "rotary_sample_host_s": 1818922.937,
+      "rotary_sequence": 165490,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0015119967294481285,
+      "host_monotonic_s": 1818922.968,
+      "motor_feedback_host_s": 1818922.953,
+      "motor_turns": 4.172325134277344e-07,
+      "motor_velocity_turns_s": -0.0004083808744326234,
+      "rotary_sample_host_s": 1818922.953,
+      "rotary_sequence": 165492,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.008747997964206888,
+      "host_monotonic_s": 1818922.984,
+      "motor_feedback_host_s": 1818922.953,
+      "motor_turns": 4.172325134277344e-07,
+      "motor_velocity_turns_s": -0.0004083808744326234,
+      "rotary_sample_host_s": 1818922.968,
+      "rotary_sequence": 165494,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009833398149424966,
+      "host_monotonic_s": 1818923.0,
+      "motor_feedback_host_s": 1818922.984,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.00010290660429745913,
+      "rotary_sample_host_s": 1818922.984,
+      "rotary_sequence": 165496,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.009109798025946247,
+      "host_monotonic_s": 1818923.015,
+      "motor_feedback_host_s": 1818923.0,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 5.355652319849469e-05,
+      "rotary_sample_host_s": 1818923.0,
+      "rotary_sequence": 165498,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.008747997964206888,
+      "host_monotonic_s": 1818923.031,
+      "motor_feedback_host_s": 1818923.015,
+      "motor_turns": -1.1920928955078125e-07,
+      "motor_velocity_turns_s": -6.565276999026537e-05,
+      "rotary_sample_host_s": 1818923.015,
+      "rotary_sequence": 165500,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.007300797717249452,
+      "host_monotonic_s": 1818923.046,
+      "motor_feedback_host_s": 1818923.031,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": -5.8201258070766926e-05,
+      "rotary_sample_host_s": 1818923.031,
+      "rotary_sequence": 165502,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.0062153975320597965,
+      "host_monotonic_s": 1818923.062,
+      "motor_feedback_host_s": 1818923.046,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00012061256711604074,
+      "rotary_sample_host_s": 1818923.046,
+      "rotary_sequence": 165504,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01128059839635398,
+      "host_monotonic_s": 1818923.078,
+      "motor_feedback_host_s": 1818923.062,
+      "motor_turns": 1.519918441772461e-05,
+      "motor_velocity_turns_s": -0.0010193238267675042,
+      "rotary_sample_host_s": 1818923.062,
+      "rotary_sequence": 165506,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.016707599322444366,
+      "host_monotonic_s": 1818923.093,
+      "motor_feedback_host_s": 1818923.078,
+      "motor_turns": -5.364418029785156e-07,
+      "motor_velocity_turns_s": -0.0005648374790325761,
+      "rotary_sample_host_s": 1818923.078,
+      "rotary_sequence": 165508,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.021411000125027613,
+      "host_monotonic_s": 1818923.109,
+      "motor_feedback_host_s": 1818923.093,
+      "motor_turns": 9.715557098388672e-06,
+      "motor_velocity_turns_s": -0.0008926625014282763,
+      "rotary_sample_host_s": 1818923.093,
+      "rotary_sequence": 165510,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.016707599322444366,
+      "host_monotonic_s": 1818923.14,
+      "motor_feedback_host_s": 1818923.109,
+      "motor_turns": -2.384185791015625e-07,
+      "motor_velocity_turns_s": -0.00017740554176270962,
+      "rotary_sample_host_s": 1818923.125,
+      "rotary_sequence": 165513,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.013089598705050776,
+      "host_monotonic_s": 1818923.156,
+      "motor_feedback_host_s": 1818923.14,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00042609358206391335,
+      "rotary_sample_host_s": 1818923.14,
+      "rotary_sequence": 165515,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.01164239845809334,
+      "host_monotonic_s": 1818923.171,
+      "motor_feedback_host_s": 1818923.14,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.00042609358206391335,
+      "rotary_sample_host_s": 1818923.156,
+      "rotary_sequence": 165517,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.00802439784072817,
+      "host_monotonic_s": 1818923.187,
+      "motor_feedback_host_s": 1818923.171,
+      "motor_turns": -5.960464477539063e-08,
+      "motor_velocity_turns_s": 0.004091781098395586,
+      "rotary_sample_host_s": 1818923.171,
+      "rotary_sequence": 165519,
+      "stationary": true
+    },
+    {
+      "angle_deg": 0.020687400001548895,
+      "host_monotonic_s": 1818923.203,
+      "motor_feedback_host_s": 1818923.187,
+      "motor_turns": 5.960464477539062e-07,
+      "motor_velocity_turns_s": -0.00020720367319881916,
+      "rotary_sample_host_s": 1818923.187,
+      "rotary_sequence": 165521,
+      "stationary": true
+    }
+  ],
+  "official_zero_method": true,
+  "operator": "TLC",
+  "outcome": "sensor_zero_reached",
+  "policy": {
+    "dwell_s": 0.5,
+    "maximum_corrections": 80,
+    "maximum_step_deg": 0.5,
+    "maximum_travel_deg": 20.0,
+    "timeout_s": 120.0,
+    "tolerance_deg": 0.1
+  },
+  "post_idle_observation": {
+    "completed_at_monotonic_s": 1818923.203,
+    "duration_s": 0.5,
+    "max_deg": 0.021411000125027613,
+    "mean_deg": 0.006670565351649957,
+    "min_deg": -0.01621620629566678,
+    "motor_final_turns": 5.960464477539062e-07,
+    "motor_max_turns": 1.519918441772461e-05,
+    "motor_min_turns": -5.364418029785156e-07,
+    "observation_elapsed_s": 1.0,
+    "samples": 31,
+    "settle_grace_s": 0.5,
+    "stationary_resets": 0
+  },
+  "raw_rotary_file": "C:\\Users\\schi3371\\Desktop\\EAST-main\\EAST Logs\\rotary_home_20261123T125345_932750_rotary_samples.csv",
+  "reference_id": "adb185e0-1888-4df8-8063-027c03b56a6e",
+  "rotary_calibration": {
+    "motor_control_changed": false,
+    "profile": {
+      "accepted_on": "2026-10-14",
+      "calibration_id": "P3022_RATIO_20261014_V1",
+      "channel": 0,
+      "checked_angle_range_deg": [
+        -15.33,
+        15.4
+      ],
+      "fit_angle_range_deg": [
+        -5.7,
+        15.4
+      ],
+      "fit_max_abs_error_deg": 0.10805882011706025,
+      "fit_method": "OLS on equal-weight means of first 12 positions (36 captures); sensor-derived extensions excluded",
+      "fit_r_squared": 0.9999028472198792,
+      "fit_rmse_deg": 0.06436985602580216,
+      "hub_port": 0,
+      "hub_serial": 750256,
+      "input_mode": "Voltage ratio",
+      "intercept_deg": -143.89867375834794,
+      "motor_conversion_changed": false,
+      "mounting_reference": "Existing EAST fixture-shaft coupling at physical 90 degrees; operator confirmed unchanged 2026-10-14",
+      "original_export_sha256": "756458fa13cf215af9afae19db6de589016fe455ce45be55be9a8c6d124539e4",
+      "reference_instrument": "WOLF WDAM425 digital angle measure",
+      "schema_version": 1,
+      "sensor_label_serial": "20211220116",
+      "sensor_model": "P3022-V1-CW360",
+      "sign_convention": "Dorsiflexion positive; plantarflexion negative; physical 90 degrees is zero",
+      "slope_deg_per_ratio": 361.80006173743607,
+      "source_data": "analysis/rotary_sensor_calibration/calibration_results.csv",
+      "source_data_sha256": "7c36281ccc4f5d25c49697ca5234c8a84313477c7f9b1b8d489c7db7d8c8f18c",
+      "status": "accepted_for_measurement",
+      "validation": {
+        "basis": "Operator reported independent remeasurement agreed with six negative sensor-derived estimates",
+        "dynamic_validation": "pending Windows hardware bench test",
+        "quantified_validation_error_deg": null,
+        "raw_remeasurement_values_supplied": false
+      }
+    },
+    "profile_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+    "range_margin_deg": 0.25
+  },
+  "rotary_calibration_sha256": "bf6af002589b5e9f1da180437bcfff5eff212c7788578fa9a6ba0dc1a3b461f9",
+  "rotary_recording_statistics": {
+    "achieved_event_rate_hz": 125.0,
+    "delivered_samples": 253,
+    "extrapolated_samples": 0,
+    "extrapolation_accuracy": "not independently checked beyond calibration range",
+    "invalid_samples": 0,
+    "linear_extrapolation_allowed": false,
+    "maximum_inter_sample_gap_s": 0.032,
+    "recording_error": null,
+    "tied_timestamp_events": 125
+  },
+  "schema": "east-rotary-home-2",
+  "sensor_connection_id": "1830ac9515e74c9e8b57d7fbf040ef74",
+  "started_at": "2026-11-23T12:53:45.932750+11:00",
+  "stationary_observation_resets": 0,
+  "verification_only_no_motion": true,
+  "zero_reference_written": true
+}
