@@ -69,8 +69,8 @@ class StiffnessResults:
         style.configure("Stiffness.Treeview", font=("Arial", 13), rowheight=29)
         style.configure("Stiffness.Treeview.Heading", font=("Arial", 12, "bold"))
         self.table = ttk.Treeview(content, columns=("sweep", "window", "slope", "sd"),
-                                  show="headings", height=4, style="Stiffness.Treeview")
-        for key, label, width in (("sweep", "Sweep", 92), ("window", "Fit window (°)", 98),
+                                  show="headings", height=2, style="Stiffness.Treeview")
+        for key, label, width in (("sweep", "Loading", 92), ("window", "Fit window (°)", 98),
                                   ("slope", "Stiffness (Nm/°)", 105), ("sd", "Cycle SD (Nm/°)", 115)):
             self.table.heading(key, text=label)
             self.table.column(key, anchor="center", width=width, minwidth=60)
@@ -156,25 +156,27 @@ class StiffnessResults:
             self.result = result
             for row in result["branches"]:
                 low, high = row["fit_window_deg"]
-                self.table.insert("", "end", values=(row["direction"], f"{low:+} to {high:+}",
+                self.table.insert("", "end", values=(row["outcome"], f"{low:+.2f} to {high:+.2f}",
                                   f"{row['mean_nm_per_deg']:.4f}", f"{row['sd_nm_per_deg']:.4f}"))
             neutral = []
             torque = []
             for sweep in result["neutral_by_sweep"]:
-                angle = sweep["angle_deg"]
-                roots = sweep["zero_crossings_deg"]
-                label = f"{angle:+.2f}°" if angle is not None else ("multiple crossings" if roots else "no crossing")
-                neutral.append(f"{sweep['direction']} {label}")
+                neutral.append(f"{sweep['direction']} {sweep['angle_deg']:+.2f} ± {sweep['sd_angle_deg']:.2f}°")
                 torque.append(f"{sweep['resisting_torque_at_zero_nm']:+.2f} Nm")
-            self.summary.configure(text=f"Neutral angle   {'   |   '.join(neutral)}\n"
+            self.summary.configure(text=f"Neutral angle (mean ± cycle SD)\n{'   |   '.join(neutral)}\n"
                                    f"Torque at 0°   {' / '.join(torque)} (inc. / dec.)\n"
-                                   f"Corrected loop area (±8°)   {result['corrected_loop_area_j']:.3f} J")
+                                   f"Corrected loop area (±8°)   {result['corrected_loop_area_j']:.3f}"
+                                   f" ± {result['corrected_loop_area_sd_j']:.3f} J\n"
+                                   "Fit limits use mean neutral angles; per-cycle limits are exported.")
             reference = result["reference_name"] or Path(result["empty_metadata"]).name
             excluded = result["excluded_cycles"]
             self.status.configure(text=f"AFO {result['specimen_id']} · {result['requested_speed_deg_s']:g}°/s requested\n"
                                   f"Reference: {reference}\n"
                                   f"Analysed cycles: {', '.join(map(str, result['cycles']))}"
-                                  + (f" · Excluded for sweep coverage: {excluded}" if excluded else ""))
+                                  + (f" · Excluded cycles: {excluded}" if excluded else ""))
+            if excluded:
+                reasons = "; ".join(f"{cycle}: {reason}" for cycle, reason in result["excluded_cycle_reasons"].items())
+                self.status.configure(text=self.status.cget("text") + "\n" + reasons)
             self.export_button.configure(state="normal")
             self.draw()
         self.parent.after(120, self.poll)
@@ -218,12 +220,12 @@ class StiffnessResults:
         canvas.create_line(x(0), top, x(0), bottom, fill="#64748b")
         for level in (-limit, -limit / 2, 0, limit / 2, limit):
             canvas.create_line(left, y(level), right, y(level), fill="#64748b" if level == 0 else "#cbd5e1")
-            canvas.create_text(left - 7, y(level), text="0 Nm" if level == 0 else f"{level:.2g}", anchor="e", font=("Arial", 12))
+            canvas.create_text(left - 7, y(level), text="0 Nm" if level == 0 else f"{level:.2g}", anchor="e", font=("Arial", 12), fill="#0f172a")
         for angle in (-8, -4, 0, 4, 8):
-            canvas.create_text(x(angle), bottom + 14, text="0°" if angle == 0 else f"{angle:g}", font=("Arial", 12))
-        canvas.create_text(14, (top + bottom) / 2, text="Resisting torque (Nm)", angle=90, font=("Arial", 12))
-        canvas.create_text((left + right) / 2, bottom + 34, text="Measured rotary angle (°)", font=("Arial", 12))
-        canvas.create_text((left + right) / 2, height - 9, text="Solid increasing · Dashed decreasing", font=("Arial", 11))
+            canvas.create_text(x(angle), bottom + 14, text="0°" if angle == 0 else f"{angle:g}", font=("Arial", 12), fill="#0f172a")
+        canvas.create_text(14, (top + bottom) / 2, text="Resisting torque (Nm)", angle=90, font=("Arial", 12), fill="#0f172a")
+        canvas.create_text((left + right) / 2, bottom + 34, text="Measured rotary angle (°)", font=("Arial", 12), fill="#0f172a")
+        canvas.create_text((left + right) / 2, height - 9, text="Solid increasing · Dashed decreasing", font=("Arial", 11), fill="#0f172a")
 
         for i, (pair, label, colour) in enumerate(zip(traces, ("Fitted", "Empty", "Corrected"),
                                                      ("#2559a5", "#ad5a20", "#167455"))):

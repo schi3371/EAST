@@ -15,8 +15,6 @@ SETTINGS = ("commanded_afo_speed_deg_s", "commanded_afo_acceleration_deg_s2",
             "min_angle_deg", "max_angle_deg")
 CALIBRATION = ("mass_kg_per_voltage_ratio", "standard_gravity_m_s2", "lever_arm_m",
                "force_angle_polynomial_deg")
-WINDOWS = ((1, 4), (-4, -1))
-WIDE_WINDOWS = ((1, 8), (-8, -1))
 STANDARD_EMPTY_BATCH = "c5aaf9052435437bb2ccb050e453b92c"
 STANDARD_EMPTY_NAME = "Empty calibration · 1°/s Standard AFO Test"
 
@@ -115,7 +113,7 @@ def resisting_slope(curve, window):
 
 
 def zero_crossings(curve):
-    """Find sign-changing roots without extrapolating the corrected sweep."""
+    """Locate unique sign-changing roots, including an exact grid-point zero."""
     crossings = []
     previous = None
     for angle, torque in zip(ANGLES, curve):
@@ -127,6 +125,37 @@ def zero_crossings(curve):
                 crossings.append(x0 - y0 * (angle - x0) / (torque - y0))
         previous = angle, torque
     return crossings
+
+
+def loading_fit(curve, neutral, increasing):
+    """OLS resisting-torque fit with the interpolated zero point included."""
+    samples = [(angle, -torque) for angle, torque in zip(ANGLES, curve)
+               if (angle >= neutral if increasing else angle <= neutral)]
+    samples.insert(0 if increasing else len(samples), (neutral, 0.0))
+    if len(set(angle for angle, _ in samples)) < 4:
+        raise ValueError("Fewer than four distinct angles in the loading interval")
+    x_mean, y_mean = map(mean, zip(*samples))
+    slope = sum((x - x_mean) * (y - y_mean) for x, y in samples) / sum(
+        (x - x_mean) ** 2 for x, _ in samples)
+    return dict(stiffness_nm_per_deg=slope, intercept_nm=y_mean - slope * x_mean,
+                fit_window_deg=(neutral, ANGLES[-1]) if increasing else (ANGLES[0], neutral))
+
+
+def cycle_properties(traces):
+    """Calculate the thesis's five properties independently for one cycle."""
+    fits = []
+    for index, (direction, outcome) in enumerate((("Increasing", "DF loading"), ("Decreasing", "PF loading"))):
+        crossings = zero_crossings(traces[index])
+        if len(crossings) != 1:
+            reason = "no crossing" if not crossings else "multiple crossings"
+            raise ValueError(f"{direction} sweep has {reason} within measured ±8°")
+        neutral = crossings[0]
+        fit = loading_fit(traces[index], neutral, index == 0)
+        fits.append(dict(direction=direction, outcome=outcome, neutral_angle_deg=neutral,
+                         resisting_torque_at_zero_nm=-traces[index][ANGLES.index(0)], **fit))
+    difference = [a - b for a, b in zip(*traces)]
+    area = abs(sum((a + b) / 2 for a, b in zip(difference, difference[1:])) * math.radians(0.25))
+    return dict(loading_branches=fits, corrected_loop_area_j=area)
 
 
 def analyse_stiffness(path, reference_path=None, *, standard_empty=False):
@@ -173,34 +202,49 @@ def analyse_stiffness(path, reference_path=None, *, standard_empty=False):
     corrected = {cycle: [[f - e for f, e in zip(trace, ref)]
                          for trace, ref in zip(traces, empty_mean)]
                  for cycle, traces in fitted.items()}
-    primary_windows = WIDE_WINDOWS if (parameters["min_angle_deg"], parameters["max_angle_deg"]) == (10, 10) else WINDOWS
-
-    def fit_branches(windows):
-        branches = []
-        for index, direction in enumerate(("Increasing", "Decreasing")):
-            for window in windows:
-                slopes = {cycle: resisting_slope(traces[index], window) for cycle, traces in corrected.items()}
-                branches.append(dict(direction=direction, fit_window_deg=window, mean_nm_per_deg=mean(slopes.values()),
-                                     sd_nm_per_deg=stdev(slopes.values()), cycle_slopes_nm_per_deg=slopes))
-        return branches
-
-    corrected_mean = mean_curves(corrected.values())
+    properties = {}
+    exclusion_reasons = {cycle: "Insufficient measured-angle coverage" for cycle in excluded}
+    for cycle, traces in corrected.items():
+        try:
+            properties[cycle] = cycle_properties(traces)
+        except ValueError as error:
+            exclusion_reasons[cycle] = str(error)
+    if len(properties) < 2:
+        details = "; ".join(f"cycle {cycle}: {reason}" for cycle, reason in exclusion_reasons.items())
+        raise ValueError(f"Need at least two usable cycles with unique neutral crossings. "
+                         f"Found {len(properties)}. {details}")
+    fitted = {cycle: fitted[cycle] for cycle in properties}
+    corrected = {cycle: corrected[cycle] for cycle in properties}
+    branches = []
     neutral = []
-    for direction, curve in zip(("Increasing", "Decreasing"), corrected_mean):
-        crossings = zero_crossings(curve)
-        neutral.append(dict(direction=direction, angle_deg=crossings[0] if len(crossings) == 1 else None,
-                            zero_crossings_deg=crossings, resisting_torque_at_zero_nm=-curve[ANGLES.index(0)]))
-    separation = [abs(a - b) for a, b in zip(*corrected_mean)]
-    loop_area = sum((a + b) / 2 for a, b in zip(separation, separation[1:])) * math.radians(0.25)
-
-    return dict(analysis_version=3, specimen_id=loaded["test_parameters"]["afo_id"],
-                loaded_metadata=str(path), empty_metadata=str(reference_path),
-                reference_name=reference_name,
-                requested_speed_deg_s=loaded["test_parameters"][SETTINGS[0]],
-                conditioning_cycle=1, cycles=list(fitted), excluded_cycles=excluded,
+    for index, direction in enumerate(("Increasing", "Decreasing")):
+        cycle_fits = {cycle: values["loading_branches"][index] for cycle, values in properties.items()}
+        slopes = {cycle: fit["stiffness_nm_per_deg"] for cycle, fit in cycle_fits.items()}
+        roots = {cycle: fit["neutral_angle_deg"] for cycle, fit in cycle_fits.items()}
+        torques = {cycle: fit["resisting_torque_at_zero_nm"] for cycle, fit in cycle_fits.items()}
+        representative_neutral = mean(roots.values())
+        window = ((representative_neutral, ANGLES[-1]) if index == 0
+                  else (ANGLES[0], representative_neutral))
+        branches.append(dict(outcome="DF loading" if index == 0 else "PF loading",
+                             direction=direction, fit_window_deg=window,
+                             cycle_fit_windows_deg={cycle: fit["fit_window_deg"] for cycle, fit in cycle_fits.items()},
+                             mean_nm_per_deg=mean(slopes.values()), sd_nm_per_deg=stdev(slopes.values()),
+                             cycle_slopes_nm_per_deg=slopes))
+        neutral.append(dict(direction=direction, angle_deg=representative_neutral,
+                            sd_angle_deg=stdev(roots.values()), cycle_angles_deg=roots,
+                            resisting_torque_at_zero_nm=mean(torques.values()),
+                            sd_torque_at_zero_nm=stdev(torques.values())))
+    areas = {cycle: values["corrected_loop_area_j"] for cycle, values in properties.items()}
+    return dict(analysis_version=4, specimen_id=loaded["test_parameters"]["afo_id"],
+                method="Per-cycle neutral-referenced DF/PF loading; magnitude of signed sweep-difference integral",
+                loaded_metadata=str(path), empty_metadata=str(reference_path), reference_name=reference_name,
+                requested_speed_deg_s=parameters[SETTINGS[0]], conditioning_cycle=1,
+                cycles=list(properties), excluded_cycles=sorted(exclusion_reasons),
+                excluded_cycle_reasons=exclusion_reasons,
                 empty_cycles=list(baseline), empty_excluded_cycles=empty_excluded,
-                branches=fit_branches(primary_windows), primary_fit_windows_deg=primary_windows,
-                neutral_by_sweep=neutral, corrected_loop_area_j=loop_area,
-                loop_area_window_deg=(ANGLES[0], ANGLES[-1]),
-                angles_deg=ANGLES, fitted_torque_nm=mean_curves(fitted.values()),
-                empty_torque_nm=empty_mean, corrected_torque_nm=corrected_mean)
+                branches=branches, primary_fit_windows_deg=[branch["fit_window_deg"] for branch in branches],
+                neutral_by_sweep=neutral, corrected_loop_area_j=mean(areas.values()),
+                corrected_loop_area_sd_j=stdev(areas.values()), cycle_properties=properties,
+                loop_area_window_deg=(ANGLES[0], ANGLES[-1]), angles_deg=ANGLES,
+                fitted_torque_nm=mean_curves(fitted.values()), empty_torque_nm=empty_mean,
+                corrected_torque_nm=mean_curves(corrected.values()))

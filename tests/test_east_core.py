@@ -107,17 +107,17 @@ class EastCoreTests(unittest.TestCase):
 
     def test_standard_presets_have_the_approved_provisional_values(self):
         expected_motion = {
-            "cycles": 3,
+            "cycles": 5,
             "minimum_angle_deg": 10.0,
             "maximum_angle_deg": 10.0,
-            "speed_deg_s": 5.0,
+            "speed_deg_s": 1.0,
             "acceleration_deg_s2": 100.0,
         }
         afo = self.config["test_presets"]["standard_afo_test"]
         baseline = self.config["test_presets"]["standard_empty_machine_baseline"]
         self.assertEqual(preset_motion_values(afo), expected_motion)
         self.assertEqual(preset_motion_values(baseline), expected_motion)
-        self.assertEqual(afo["version"], "1.0")
+        self.assertEqual(afo["version"], "1.1")
         self.assertEqual(afo["test_type"], "afo_test")
         self.assertEqual(baseline["test_type"], "empty_machine_baseline")
 
@@ -276,9 +276,9 @@ class EastCoreTests(unittest.TestCase):
             preset_metadata=protocol,
         )
         self.assertEqual(metadata["protocol"]["preset_key"], "standard_afo_test")
-        self.assertEqual(metadata["protocol"]["preset_version"], "1.0")
+        self.assertEqual(metadata["protocol"]["preset_version"], "1.1")
         self.assertEqual(metadata["protocol"]["test_type"], "afo_test")
-        self.assertEqual(metadata["protocol"]["original_preset_values"]["speed_deg_s"], 5.0)
+        self.assertEqual(metadata["protocol"]["original_preset_values"]["speed_deg_s"], 1.0)
         self.assertEqual(metadata["protocol"]["actual_commanded_values"]["speed_deg_s"], 6.0)
         self.assertTrue(metadata["protocol"]["preset_modified"])
 
